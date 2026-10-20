@@ -55,6 +55,11 @@ pub enum Kind {
     /// (minetest_game's apple_mark: airlike, can't be pointed at, and
     /// anything placed there replaces it).
     Mark,
+    /// A chest: a cube turned to face whoever placed it, opened with a
+    /// right-click.
+    Chest,
+    /// A chest while someone has it open: minetest_game's open-lid model.
+    ChestOpen,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -85,6 +90,10 @@ pub const CONTENT_APPLE: u16 = 24;
 pub const CONTENT_APPLE_MARK: u16 = 25;
 pub const CONTENT_APPLE_SAPLING: u16 = 26;
 pub const CONTENT_APPLE_WOOD: u16 = 27;
+pub const CONTENT_CHEST: u16 = 28;
+pub const CONTENT_CHEST_OPEN: u16 = 29;
+pub const CONTENT_CHEST_LOCKED: u16 = 30;
+pub const CONTENT_CHEST_LOCKED_OPEN: u16 = 31;
 /// Health an apple gives (minetest_game's item_eat(2)).
 pub const APPLE_HP: u16 = 2;
 /// Leaves give a sapling one time in this many (minetest_game's rarity).
@@ -457,6 +466,50 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Solid,
     },
+    // minetest_game's chests, with its textures and open-lid model
+    // (CC BY-SA 3.0, see media/LICENSE-items.txt). Closed, the faces are
+    // arranged as minetest_game does for its plain cube: the front at -Z
+    // (towards whoever placed it), the side texture mirrored at +X.
+    Node {
+        id: CONTENT_CHEST,
+        name: "esp:chest",
+        description: "Chest",
+        tiles: CHEST_CLOSED_TILES,
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2)],
+        drop: CONTENT_CHEST,
+        drop_count: 1,
+        kind: Kind::Chest,
+    },
+    Node {
+        id: CONTENT_CHEST_OPEN,
+        name: "esp:chest_open",
+        description: "Chest",
+        tiles: CHEST_OPEN_TILES,
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("not_in_creative_inventory", 1)],
+        drop: CONTENT_CHEST,
+        drop_count: 1,
+        kind: Kind::ChestOpen,
+    },
+    Node {
+        id: CONTENT_CHEST_LOCKED,
+        name: "esp:chest_locked",
+        description: "Locked Chest",
+        tiles: CHEST_LOCKED_CLOSED_TILES,
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2)],
+        drop: CONTENT_CHEST_LOCKED,
+        drop_count: 1,
+        kind: Kind::Chest,
+    },
+    Node {
+        id: CONTENT_CHEST_LOCKED_OPEN,
+        name: "esp:chest_locked_open",
+        description: "Locked Chest",
+        tiles: CHEST_LOCKED_OPEN_TILES,
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("not_in_creative_inventory", 1)],
+        drop: CONTENT_CHEST_LOCKED,
+        drop_count: 1,
+        kind: Kind::ChestOpen,
+    },
 ];
 
 // Saplings, from leaves (one time in SAPLING_RARITY), as minetest_game's
@@ -464,6 +517,63 @@ pub const NODES: &[Node] = &[
 // media/LICENSE-items.txt).
 const SAPLING_GROUPS: &[(&str, i16)] =
     &[("snappy", 2), ("dig_immediate", 3), ("flammable", 3), ("attached_node", 1), ("sapling", 1)];
+
+const CHEST_CLOSED_TILES: [&str; 6] = [
+    "default_chest_top.png",
+    "default_chest_top.png",
+    "default_chest_side.png^[transformFX",
+    "default_chest_side.png",
+    "default_chest_side.png",
+    "default_chest_front.png",
+];
+const CHEST_LOCKED_CLOSED_TILES: [&str; 6] = [
+    "default_chest_top.png",
+    "default_chest_top.png",
+    "default_chest_side.png^[transformFX",
+    "default_chest_side.png",
+    "default_chest_side.png",
+    "default_chest_lock.png",
+];
+/// The open model's materials, in minetest_game's order.
+const CHEST_OPEN_TILES: [&str; 6] = [
+    "default_chest_top.png",
+    "default_chest_top.png",
+    "default_chest_side.png",
+    "default_chest_side.png",
+    "default_chest_front.png",
+    "default_chest_inside.png",
+];
+const CHEST_LOCKED_OPEN_TILES: [&str; 6] = [
+    "default_chest_top.png",
+    "default_chest_top.png",
+    "default_chest_side.png",
+    "default_chest_side.png",
+    "default_chest_lock.png",
+    "default_chest_inside.png",
+];
+
+/// The open and closed nodes of a chest: (closed, open).
+pub fn chest_pair(id: u16) -> Option<(u16, u16)> {
+    match id {
+        CONTENT_CHEST | CONTENT_CHEST_OPEN => Some((CONTENT_CHEST, CONTENT_CHEST_OPEN)),
+        CONTENT_CHEST_LOCKED | CONTENT_CHEST_LOCKED_OPEN => Some((CONTENT_CHEST_LOCKED, CONTENT_CHEST_LOCKED_OPEN)),
+        _ => None,
+    }
+}
+
+pub fn is_chest(id: u16) -> bool {
+    chest_pair(id).is_some()
+}
+
+pub fn is_locked_chest(id: u16) -> bool {
+    matches!(id, CONTENT_CHEST_LOCKED | CONTENT_CHEST_LOCKED_OPEN)
+}
+
+/// minetest_game's chest_lid_obstructed: the lid can't open under a block
+/// (air, torches and the like are fine).
+pub fn lid_obstructed(above: u16) -> bool {
+    !(above == crate::world::CONTENT_AIR || is_torch(above) || def(above).is_some_and(|n| n.kind == Kind::Mark))
+}
 
 /// minetest_game's burning furnace front: 8 frames of fire, one above
 /// another, 1.5 seconds for the cycle.
@@ -842,7 +952,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen))
 }
 
 /// Whether direct sunlight carries on down through a node at full
@@ -853,7 +963,7 @@ pub fn passes_sunlight(id: u16) -> bool {
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -1129,6 +1239,14 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_cool_lava.1.ogg", include_bytes!("../media/default_cool_lava.1.ogg")),
     ("default_cool_lava.2.ogg", include_bytes!("../media/default_cool_lava.2.ogg")),
     ("default_cool_lava.3.ogg", include_bytes!("../media/default_cool_lava.3.ogg")),
+    ("chest_open.obj", include_bytes!("../media/chest_open.obj")),
+    ("default_chest_top.png", include_bytes!("../media/default_chest_top.png")),
+    ("default_chest_side.png", include_bytes!("../media/default_chest_side.png")),
+    ("default_chest_front.png", include_bytes!("../media/default_chest_front.png")),
+    ("default_chest_inside.png", include_bytes!("../media/default_chest_inside.png")),
+    ("default_chest_lock.png", include_bytes!("../media/default_chest_lock.png")),
+    ("default_chest_open.ogg", include_bytes!("../media/default_chest_open.ogg")),
+    ("default_chest_close.ogg", include_bytes!("../media/default_chest_close.ogg")),
     ("esp_apple_tree.png", include_bytes!("../media/esp_apple_tree.png")),
     ("esp_apple_tree_top.png", include_bytes!("../media/esp_apple_tree_top.png")),
     ("esp_apple_leaves.png", include_bytes!("../media/esp_apple_leaves.png")),
@@ -1256,6 +1374,7 @@ fn sounds_of(id: u16) -> Sounds {
             place: ("default_place_node", 1.0),
         },
         CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD | CONTENT_APPLE_TREE | CONTENT_APPLE_WOOD => wood,
+        id if is_chest(id) => wood,
         id if is_torch(id) => wood,
         // stone, sandstone, ores
         _ => stone,
@@ -1458,6 +1577,17 @@ fn sapling_selection_box(w: &mut Writer) {
     }
 }
 
+/// minetest_game's open chest box (the body, without the lid), in BS units.
+fn open_chest_selection_box(w: &mut Writer) {
+    w.u8(6).u8(NODEBOX_FIXED).u16(1);
+    for v in [-0.5, -0.5, -0.5, 0.5, 3.0 / 16.0, 0.5] {
+        w.f32(v * 10.0);
+    }
+}
+
+/// minetest_game's open chest model.
+const CHEST_OPEN_MESH: &str = "chest_open.obj";
+
 /// minetest_game's apple box, in BS units.
 fn apple_selection_box(w: &mut Writer) {
     w.u8(6).u8(NODEBOX_FIXED).u16(1);
@@ -1482,12 +1612,16 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // Saplings and apples: plants, drawn as two crossed pictures.
     let sapling = matches!(n.kind, Kind::Sapling | Kind::Apple);
     let mark = n.kind == Kind::Mark;
+    let chest = matches!(n.kind, Kind::Chest | Kind::ChestOpen);
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
         w.u8(CPT_LIGHT).u8(0);
     } else if n.kind == Kind::Furnace {
         w.u8(0).u8(CPT2_FACEDIR);
+    } else if matches!(n.kind, Kind::Chest | Kind::ChestOpen) {
+        // paramtype "light", as minetest_game's chests.
+        w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else if sapling || mark {
         w.u8(CPT_LIGHT).u8(0);
     } else {
@@ -1499,7 +1633,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let (drawtype, mesh) = match n.kind {
         Kind::Torch => (NDT_MESH, torch_mesh(n.id)),
         Kind::Leaves => (NDT_ALLFACES_OPTIONAL, ""),
-        Kind::Solid | Kind::Furnace => (NDT_NORMAL, ""),
+        Kind::Solid | Kind::Furnace | Kind::Chest => (NDT_NORMAL, ""),
+        Kind::ChestOpen => (NDT_MESH, CHEST_OPEN_MESH),
         Kind::Sapling | Kind::Apple => (NDT_PLANTLIKE, ""),
         Kind::Mark => (NDT_AIRLIKE, ""),
     };
@@ -1541,7 +1676,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0); // leveled
 
     // lighting
-    w.u8((torch || leaves || sapling || mark) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest) as u8) // light_propagates
         .u8((torch || sapling || mark) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
@@ -1554,7 +1689,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(!mark as u8) // diggable
         .u8(0) // climbable
         .u8(mark as u8) // buildable_to
-        .u8((n.kind == Kind::Furnace) as u8) // rightclickable
+        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen) as u8) // rightclickable
         .u32(0); // damage_per_second
 
     // liquid
@@ -1572,6 +1707,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         torch_selection_box(&mut w);
     } else if n.kind == Kind::Apple {
         apple_selection_box(&mut w);
+    } else if n.kind == Kind::ChestOpen {
+        open_chest_selection_box(&mut w);
     } else if sapling {
         sapling_selection_box(&mut w);
     } else {

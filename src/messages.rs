@@ -1156,6 +1156,21 @@ pub fn furnace_formspec(inv: &str, display: Option<(u8, u8)>) -> String {
     )
 }
 
+/// The chest window's form name, sent back when it is closed.
+pub const CHEST_FORM: &str = "esp:chest";
+
+/// minetest_game's chest window: the chest's 32 slots above the player's
+/// inventory, with a listring so shift-click moves items between them.
+pub fn chest_formspec(inv: &str) -> String {
+    let at = format!("detached:{inv}");
+    format!(
+        "formspec_version[6]size[10.75,11]\
+         list[{at};main;0.5,0.5;8,4;]\
+         list[current_player;main;0.5,5.75;8,4;]\
+         listring[{at};main]listring[current_player;main]"
+    )
+}
+
 /// Luanti's inventory text: each list as (name, width, item strings).
 fn inventory_text(lists: &[(&str, u32, Vec<Option<String>>)]) -> String {
     let mut text = String::new();

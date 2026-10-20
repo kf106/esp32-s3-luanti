@@ -61,6 +61,10 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &shovel(I(ITEM_STEEL_INGOT)), output: TOOL_SHOVEL_STEEL, count: 1 },
     Recipe { width: 2, pattern: &axe(I(ITEM_STEEL_INGOT)), output: TOOL_AXE_STEEL, count: 1 },
     Recipe { width: 1, pattern: &sword(I(ITEM_STEEL_INGOT)), output: TOOL_SWORD_STEEL, count: 1 },
+    // Chests: a ring of planks, with a steel ingot in the middle for a
+    // locked one (chests.lua).
+    Recipe { width: 3, pattern: &ring(G("wood"), E), output: CONTENT_CHEST, count: 1 },
+    Recipe { width: 3, pattern: &ring(G("wood"), I(ITEM_STEEL_INGOT)), output: CONTENT_CHEST_LOCKED, count: 1 },
     // A ring of stone (furnace.lua).
     Recipe {
         width: 3,
@@ -102,7 +106,45 @@ pub fn burn_time(id: u16) -> f32 {
         TOOL_PICK_WOOD | TOOL_AXE_WOOD => 6.0,
         TOOL_SWORD_WOOD => 5.0,
         TOOL_SHOVEL_WOOD => 4.0,
+        CONTENT_CHEST | CONTENT_CHEST_LOCKED => 30.0,
         _ => 0.0,
+    }
+}
+
+/// Eight of `m` round the edge of the grid, `middle` in the middle.
+const fn ring(m: Ingredient, middle: Ingredient) -> [Ingredient; 9] {
+    [m, m, m, m, middle, m, m, m, m]
+}
+
+/// A shapeless recipe: these items, one each, anywhere in the grid and
+/// nothing else (CraftDefinitionShapeless).
+pub struct Shapeless {
+    pub items: &'static [Ingredient],
+    pub output: u16,
+    pub count: u16,
+}
+
+/// minetest_game's shapeless recipes for what we have.
+pub const SHAPELESS: &[Shapeless] = &[
+    // A chest and a steel ingot make a locked chest (chests.lua).
+    Shapeless { items: &[I(CONTENT_CHEST), I(ITEM_STEEL_INGOT)], output: CONTENT_CHEST_LOCKED, count: 1 },
+];
+
+impl Shapeless {
+    fn fits(&self, grid: &[Option<Stack>; GRID_SIZE]) -> bool {
+        let filled: Vec<Stack> = grid.iter().flatten().copied().collect();
+        if filled.len() != self.items.len() {
+            return false;
+        }
+        // Match each ingredient to a different filled cell (few enough to
+        // try greedily, most specific ingredients first).
+        let mut used = vec![false; filled.len()];
+        let mut wanted: Vec<Ingredient> = self.items.to_vec();
+        wanted.sort_by_key(|i| matches!(i, G(_)));
+        wanted.iter().all(|&want| {
+            let found = filled.iter().enumerate().find(|(n, s)| !used[*n] && matches(Some(**s), want));
+            found.map(|(n, _)| used[n] = true).is_some()
+        })
     }
 }
 
@@ -169,7 +211,11 @@ impl Recipe {
 
 /// What the grid would make: (item, count).
 pub fn result(grid: &[Option<Stack>; GRID_SIZE]) -> Option<(u16, u16)> {
-    RECIPES.iter().find(|r| r.fits(grid)).map(|r| (r.output, r.count))
+    RECIPES
+        .iter()
+        .find(|r| r.fits(grid))
+        .map(|r| (r.output, r.count))
+        .or_else(|| SHAPELESS.iter().find(|r| r.fits(grid)).map(|r| (r.output, r.count)))
 }
 
 /// Craft once: use one item from each filled cell and give the result.
@@ -229,6 +275,15 @@ mod tests {
         let ring: Vec<(usize, u16, u16)> =
             [0, 1, 2, 3, 5, 6, 7, 8].iter().map(|&i| (i, if i % 2 == 0 { c } else { CONTENT_STONE }, 1)).collect();
         assert_eq!(result(&grid(&ring)), Some((CONTENT_FURNACE, 1)));
+        // Chests from planks; locked with a steel ingot in the middle, or
+        // from a chest and an ingot anywhere.
+        let planks: Vec<(usize, u16, u16)> = [0, 1, 2, 3, 5, 6, 7, 8].iter().map(|&i| (i, w, 1)).collect();
+        assert_eq!(result(&grid(&planks)), Some((CONTENT_CHEST, 1)));
+        let mut locked = planks.clone();
+        locked.push((4, ITEM_STEEL_INGOT, 1));
+        assert_eq!(result(&grid(&locked)), Some((CONTENT_CHEST_LOCKED, 1)));
+        assert_eq!(result(&grid(&[(7, CONTENT_CHEST, 1), (2, ITEM_STEEL_INGOT, 1)])), Some((CONTENT_CHEST_LOCKED, 1)));
+        assert_eq!(result(&grid(&[(7, CONTENT_CHEST, 1), (2, ITEM_STEEL_INGOT, 1), (3, ITEM_STICK, 1)])), None);
         let mut full = ring.clone();
         full.push((4, c, 1));
         assert_eq!(result(&grid(&full)), None);

@@ -19,6 +19,7 @@ use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
 use crate::status::{self, SharedStatus};
+use crate::chest::{self, Chests};
 use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
 use crate::nature::{self, Job, Rng, Timers};
 use crate::world::{self, BlockPos, NodePos, World};
@@ -31,6 +32,8 @@ const FURNACE_STEP_INTERVAL: Duration = Duration::from_secs(1);
 /// Leaf decay and sapling timers handled per tick, at most (each may look
 /// at a few hundred nodes).
 const TIMERS_PER_TICK: usize = 8;
+/// How far chest sounds carry, in nodes (minetest_game's max_hear_distance).
+const CHEST_HEARING: f32 = 10.0;
 /// How far furnace sounds carry, in nodes (minetest_game's max_hear_distance).
 const FURNACE_HEARING: f32 = 16.0;
 /// How far sounds carry by default (Luanti's max_hear_distance).
@@ -204,6 +207,8 @@ struct Peer {
     furnace_form_sent: Option<Instant>,
     /// Keys held, as last reported.
     keys: u32,
+    /// The chest whose window they have open.
+    chest: Option<NodePos>,
 }
 
 impl Peer {
@@ -239,6 +244,7 @@ impl Peer {
             furnace: None,
             furnace_form_sent: None,
             keys: 0,
+            chest: None,
         }
     }
 
@@ -286,6 +292,9 @@ pub struct Server {
     inventories: InventoryStore,
     players: PlayerStore,
     furnaces: Furnaces,
+    chests: Chests,
+    /// Chests shown with their lids up (someone has them open).
+    open_chests: HashSet<NodePos>,
     status: SharedStatus,
     content: Content,
     peers: HashMap<SocketAddr, Peer>,
@@ -342,6 +351,7 @@ pub struct Setup {
     pub inventories: InventoryStore,
     pub players: PlayerStore,
     pub furnaces: Furnaces,
+    pub chests: Chests,
     pub media: Media,
     pub status: SharedStatus,
 }
@@ -520,7 +530,7 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, motd, auth, world, inventories, players, furnaces, media, status } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, media, status } = setup;
         let itemdef = build_itemdef(&content::itemdef_bytes());
         let nodedef = build_nodedef(&content::nodedef_bytes());
         let announce_media = build_announce_media(
@@ -552,6 +562,15 @@ impl Server {
         for pos in world.changed_nodes(content::is_mark) {
             timers.start(pos, Job::Regrow, nature::grow_delay(&mut rng));
         }
+        // Chests left open when the server stopped are closed again
+        // (minetest_game's "close opened chests on load").
+        let mut world = world;
+        for pos in world.changed_nodes(|id| content::chest_pair(id).is_some_and(|(_, open)| open == id)) {
+            if let Some((closed, _)) = content::chest_pair(world.node(pos)) {
+                let param2 = world.param2(pos);
+                world.set_node(pos, closed, param2);
+            }
+        }
         Self {
             socket,
             auth,
@@ -559,6 +578,8 @@ impl Server {
             inventories,
             players,
             furnaces,
+            chests,
+            open_chests: HashSet::new(),
             status,
             content: Content {
                 itemdef,
@@ -790,6 +811,7 @@ impl Server {
                         self.event(format!("{} left", peer.display_name()));
                         status::lock(&self.status).leaves += 1;
                     }
+                    self.close_unwatched_lids();
                     self.refresh_players();
                 }
             }
@@ -1019,6 +1041,7 @@ impl Server {
                     self.remove_player_object(old.id);
                 }
             }
+            self.close_unwatched_lids();
             self.refresh_players();
         }
         info!("Sending TOCLIENT_AUTH_ACCEPT to {name}");
@@ -1502,6 +1525,19 @@ impl Server {
                     self.resend_node(from, under);
                     return;
                 }
+                // A chest must be emptied first, and isn't dug while open; a
+                // locked one only by its owner.
+                if content::is_chest(current) {
+                    let record = self.chests.get(furnace_at);
+                    let open = content::chest_pair(current).is_some_and(|(_, o)| o == current);
+                    if open || record.is_some_and(|c| !c.is_empty() || !c.allows(&name)) {
+                        info!("{name}: can't dig the chest at {under:?} (open, not empty, or not theirs)");
+                        self.resend_node(from, under);
+                        return;
+                    }
+                    self.close_chest_windows(furnace_at);
+                    self.chests.remove(furnace_at);
+                }
                 if content::is_furnace(current) {
                     self.close_furnace(furnace_at);
                     if let Some(gone) = self.furnaces.remove(furnace_at) {
@@ -1573,6 +1609,12 @@ impl Server {
                     }
                     return;
                 }
+                if content::is_chest(self.world.node(node_pos(under))) && !sneaking {
+                    if in_reach(under) {
+                        self.open_chest(from, node_pos(under));
+                    }
+                    return;
+                }
                 // The client predicts placing the wielded item, if it is a
                 // node. An empty slot predicts nothing.
                 let slot = msg.item as usize;
@@ -1606,7 +1648,7 @@ impl Server {
                 // A furnace faces the player who places it.
                 let param2 = if torch {
                     content::wallmounted_param2(under, above)
-                } else if content::is_furnace(id) {
+                } else if content::is_furnace(id) || content::is_chest(id) {
                     content::facedir_param2(above, body)
                 } else if content::is_leaves(id) || content::is_apple(id) {
                     // Placed leaves never decay (minetest_game's
@@ -1634,6 +1676,11 @@ impl Server {
                 if content::is_sapling(node) {
                     let after = nature::grow_delay(&mut self.rng);
                     self.timers.start(node_pos(above), Job::Grow, after);
+                }
+                // A locked chest belongs to whoever placed it.
+                if content::is_locked_chest(node) {
+                    self.chests.get_or_add(node_pos(above)).owner = Some(name.clone());
+                    self.chests.save();
                 }
             }
             // Starting and stopping digging need nothing from us; the mining
@@ -1970,6 +2017,12 @@ impl Server {
             return;
         };
         let pressed = |name: &str| fields.iter().any(|(f, _)| f == name);
+        if form == CHEST_FORM {
+            if pressed("quit") {
+                self.close_chest_for(from);
+            }
+            return;
+        }
         if form == FURNACE_FORM {
             // The furnace window was closed.
             if pressed("quit") {
@@ -2204,15 +2257,21 @@ impl Server {
         let text = String::from_utf8_lossy(&payload[2..]).into_owned();
         let name = peer.display_name().to_string();
         let open_furnace = peer.furnace;
+        let open_chest = peer.chest;
         let throw = drop_motion(peer.pos_bs, peer.yaw, peer.pitch);
         // Which list an action names: the player's own (not "craftpreview":
         // taking from it is a Craft action, and nothing can be put into it,
         // as Luanti's serverpackethandler has it), or a list of the furnace
         // they have open.
         let furnaces = &self.furnaces;
+        let chests = &self.chests;
         let place = |loc: &str, list: &str| -> Option<Place> {
             if inventory::is_own(loc, &name) {
                 return List::from_name(list).map(Place::Own);
+            }
+            if let Some(pos) = chest::pos_of_location(loc) {
+                let ok = open_chest == Some(pos) && chests.get(pos).is_some() && list == "main";
+                return ok.then_some(Place::Chest(pos));
             }
             let pos = furnace::pos_of_location(loc).filter(|&p| open_furnace == Some(p) && furnaces.get(p).is_some())?;
             FurnaceList::from_name(list).map(|l| Place::Furnace(pos, l))
@@ -2225,11 +2284,11 @@ impl Server {
             Some(Action::Craft { inv, .. }) => (inventory::is_own(inv, &name).then_some(Place::Own(List::Craft)), None),
             _ => (None, None),
         };
-        let Self { peers, furnaces, .. } = self;
+        let Self { peers, furnaces, chests, .. } = self;
         let Some(peer) = peers.get_mut(&from) else {
             return;
         };
-        let mut lists = Lists { player: &mut peer.inventory, furnaces };
+        let mut lists = Lists { player: &mut peer.inventory, furnaces, chests };
         let mut dropped = None;
         let ok = match (action, places) {
             (Some(Action::Move { count, from: (_, _, fs), to: (_, _, ts) }), (Some(f), Some(t))) => {
@@ -2264,8 +2323,18 @@ impl Server {
         };
         let furnace_used = [places.0, places.1].into_iter().flatten().find_map(|p| match p {
             Place::Furnace(pos, _) => Some(pos),
-            Place::Own(_) => None,
+            _ => None,
         });
+        let chest_used = [places.0, places.1].into_iter().flatten().find_map(|p| match p {
+            Place::Chest(pos) => Some(pos),
+            _ => None,
+        });
+        if let Some(pos) = chest_used {
+            if ok {
+                self.chests.save();
+            }
+            self.send_chest(pos);
+        }
         if let Some((stack, motion)) = dropped {
             self.spawn_item(stack, motion);
         }
@@ -2286,6 +2355,115 @@ impl Server {
             }
             self.send_furnace(pos);
         }
+    }
+
+    /// Open a chest for a player (minetest_game's on_rightclick): a locked
+    /// chest only for its owner. The open sound plays and, unless a block
+    /// sits on it, the lid goes up while anyone has it open.
+    fn open_chest(&mut self, addr: SocketAddr, pos: NodePos) {
+        let node = self.world.node(pos);
+        let Some((closed, open)) = content::chest_pair(node) else {
+            return;
+        };
+        let Some(name) = self.peers.get(&addr).map(|p| p.display_name().to_string()) else {
+            return;
+        };
+        let record = self.chests.get_or_add(pos);
+        if !record.allows(&name) {
+            let owner = record.owner.clone().unwrap_or_default();
+            self.tell(addr, &format!("This chest is locked; it belongs to {owner}."));
+            return;
+        }
+        // One chest at a time: a chest they had open closes.
+        if let Some(old) = self.peers.get_mut(&addr).and_then(|p| p.chest.take()) {
+            self.close_unwatched_lids_at(old);
+        }
+        if let Some(peer) = self.peers.get_mut(&addr) {
+            peer.chest = Some(pos);
+        }
+        info!("{name} opened the chest at {pos:?}");
+        let at = [pos.0 as f32 * 10.0, pos.1 as f32 * 10.0, pos.2 as f32 * 10.0];
+        self.play_sound_near(-1, "default_chest_open", 0.3, at, CHEST_HEARING);
+        let above = self.world.node((pos.0, pos.1 + 1, pos.2));
+        if node == closed && !content::lid_obstructed(above) {
+            let param2 = self.world.param2(pos);
+            self.swap_node(pos, open, param2);
+            self.open_chests.insert(pos);
+        }
+        if let Some(packet) = self.chest_packet(pos) {
+            self.send_command(addr, 0, &packet);
+        }
+        let form = chest_formspec(&chest::detached_name(pos));
+        self.send_command(addr, 0, &build_show_formspec(&form, CHEST_FORM));
+    }
+
+    /// A player closed their chest window.
+    fn close_chest_for(&mut self, addr: SocketAddr) {
+        if let Some(pos) = self.peers.get_mut(&addr).and_then(|p| p.chest.take()) {
+            self.close_unwatched_lids_at(pos);
+        }
+    }
+
+    /// Lower the lid of the chest at `pos` if nobody has it open any more,
+    /// with the closing sound (minetest_game's chest_lid_close).
+    fn close_unwatched_lids_at(&mut self, pos: NodePos) {
+        if self.peers.values().any(|p| p.chest == Some(pos)) || !self.open_chests.remove(&pos) {
+            return;
+        }
+        let node = self.world.node(pos);
+        if let Some((closed, open)) = content::chest_pair(node) {
+            if node == open {
+                let param2 = self.world.param2(pos);
+                self.swap_node(pos, closed, param2);
+                let at = [pos.0 as f32 * 10.0, pos.1 as f32 * 10.0, pos.2 as f32 * 10.0];
+                self.play_sound_near(-1, "default_chest_close", 0.3, at, CHEST_HEARING);
+            }
+        }
+    }
+
+    /// Players left: lower the lids nobody is watching any more.
+    fn close_unwatched_lids(&mut self) {
+        let open: Vec<NodePos> = self.open_chests.iter().copied().collect();
+        for pos in open {
+            self.close_unwatched_lids_at(pos);
+        }
+    }
+
+    /// Close a chest's window for everyone who has it open (it was dug).
+    fn close_chest_windows(&mut self, pos: NodePos) {
+        let viewers: Vec<SocketAddr> = self.peers.iter().filter(|(_, p)| p.chest == Some(pos)).map(|(a, _)| *a).collect();
+        for addr in viewers {
+            if let Some(peer) = self.peers.get_mut(&addr) {
+                peer.chest = None;
+            }
+            self.send_command(addr, 0, &build_show_formspec("", CHEST_FORM));
+        }
+        self.open_chests.remove(&pos);
+    }
+
+    /// TOCLIENT_DETACHED_INVENTORY with a chest's contents.
+    fn chest_packet(&self, pos: NodePos) -> Option<Vec<u8>> {
+        let c = self.chests.get(pos)?;
+        let slots = c.main.iter().map(|s| s.map(|s| s.item_string())).collect();
+        Some(build_detached_inventory(&chest::detached_name(pos), &[("main", 0, slots)]))
+    }
+
+    /// Send a chest's contents to everyone who has it open.
+    fn send_chest(&mut self, pos: NodePos) {
+        let Some(packet) = self.chest_packet(pos) else {
+            return;
+        };
+        let viewers: Vec<SocketAddr> = self.peers.iter().filter(|(_, p)| p.chest == Some(pos)).map(|(a, _)| *a).collect();
+        for addr in viewers {
+            self.send_command(addr, 0, &packet);
+        }
+    }
+
+    /// Change a node's look and nothing else (minetest_game's swap_node).
+    fn swap_node(&mut self, pos: NodePos, id: u16, param2: u8) {
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.world.set_node(pos, id, param2);
+        self.broadcast_node(p16, &build_addnode(p16, id, param2));
     }
 
     /// Open a furnace's window for a player: its contents, then the form.
@@ -2899,6 +3077,7 @@ impl Server {
             status::lock(&self.status).leaves += 1;
         }
         if self.peers.len() != before {
+            self.close_unwatched_lids();
             self.refresh_players();
         }
 

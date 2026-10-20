@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 use log::warn;
 
+use crate::chest::Chests;
 use crate::crafting;
 use crate::inventory::{self, Inventory, List, Stack};
 use crate::storage;
@@ -370,13 +371,17 @@ fn parse(text: &str) -> BTreeMap<NodePos, Furnace> {
 pub enum Place {
     Own(List),
     Furnace(NodePos, FurnaceList),
+    /// A chest's one list, "main".
+    Chest(NodePos),
 }
 
-/// A player's inventory and the furnaces, for inventory actions that may
-/// move items between them (IMoveAction, with minetest_game's rules).
+/// A player's inventory, the furnaces and the chests, for inventory actions
+/// that may move items between them (IMoveAction, with minetest_game's
+/// rules).
 pub struct Lists<'a> {
     pub player: &'a mut Inventory,
     pub furnaces: &'a mut Furnaces,
+    pub chests: &'a mut Chests,
 }
 
 impl Lists<'_> {
@@ -384,6 +389,7 @@ impl Lists<'_> {
         match place {
             Place::Own(list) => Some(self.player.list_mut(list)),
             Place::Furnace(pos, list) => self.furnaces.get_mut(pos).map(|f| f.list_mut(list)),
+            Place::Chest(pos) => self.chests.get_mut(pos).map(|c| &mut c.main[..]),
         }
     }
 
@@ -403,6 +409,7 @@ impl Lists<'_> {
         match place {
             Place::Own(list) => list != List::CraftResult,
             Place::Furnace(_, list) => may_put(list, stack),
+            Place::Chest(_) => true,
         }
     }
 
