@@ -35,6 +35,7 @@ pub const RECIPES: &[Recipe] = &[
     // Trunk to four planks.
     Recipe { width: 1, pattern: &[I(CONTENT_BIRCH_TREE)], output: CONTENT_BIRCH_WOOD, count: 4 },
     Recipe { width: 1, pattern: &[I(CONTENT_FIR_TREE)], output: CONTENT_FIR_WOOD, count: 4 },
+    Recipe { width: 1, pattern: &[I(CONTENT_APPLE_TREE)], output: CONTENT_APPLE_WOOD, count: 4 },
     // Any planks to four sticks.
     Recipe { width: 1, pattern: &[G("wood")], output: ITEM_STICK, count: 4 },
     // Coal lump on a stick: four torches.
@@ -86,6 +87,10 @@ pub fn burn_time(id: u16) -> f32 {
     match id {
         ITEM_COAL_LUMP => 40.0,
         CONTENT_FIR_TREE => 26.0,
+        CONTENT_APPLE_TREE => 30.0,
+        CONTENT_APPLE_WOOD => 7.0,
+        CONTENT_APPLE_SAPLING => 5.0,
+        CONTENT_APPLE_LEAVES => 4.0,
         CONTENT_BIRCH_TREE => 22.0,
         CONTENT_FIR_WOOD => 6.0,
         CONTENT_BIRCH_WOOD => 5.0,

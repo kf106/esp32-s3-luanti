@@ -11,6 +11,11 @@
 //!   a tree like the generated ones, filling only air (and leaves, for the
 //!   trunk).
 //!
+//! - Apples hang among apple tree leaves. A picked apple leaves an invisible
+//!   mark where an apple grows again after 5 to 25 minutes, if apple leaves
+//!   are still next to it (minetest_game's apple_mark). Apples placed by
+//!   players (param2 1) don't regrow, and like leaves never decay.
+//!
 //! The pure parts are here; the server applies the changes.
 
 use std::collections::{BTreeSet, HashSet};
@@ -30,6 +35,8 @@ pub enum Job {
     Decay,
     /// Try to grow a sapling.
     Grow,
+    /// Try to grow an apple again where one was picked.
+    Regrow,
 }
 
 /// Node timers (minetest_game's are per node; here they are kept in one
@@ -112,6 +119,8 @@ pub fn grow_delay(rng: &mut Rng) -> Duration {
 
 /// minetest_game's on_grow_failed: try again in 300 seconds.
 pub const GROW_RETRY: Duration = Duration::from_secs(300);
+/// An apple mark in the dark tries again after 200 seconds.
+pub const REGROW_RETRY: Duration = Duration::from_secs(200);
 
 /// What a leaf gives when dug or decayed: a sapling one time in
 /// SAPLING_RARITY, otherwise the leaf (minetest_game's drop table, which
@@ -123,6 +132,36 @@ pub fn leaf_drop(leaf: u16, rng: &mut Rng) -> u16 {
     }
 }
 
+/// What a node drops when it decays (leafdecay_on_timer drops everything
+/// the node would drop except the leaves themselves, and apples, which
+/// are leafdecay_drop): a sapling now and then, or the apple.
+pub fn decay_drop(id: u16, rng: &mut Rng) -> Option<u16> {
+    if content::is_apple(id) {
+        return Some(id);
+    }
+    let drop = leaf_drop(id, rng);
+    (drop != id).then_some(drop)
+}
+
+/// minetest_game's apple_mark timer: with no apple leaves next to it the
+/// mark just goes; in the dark it waits; otherwise the apple is back.
+#[derive(Debug, PartialEq)]
+pub enum Regrow {
+    Gone,
+    Wait,
+    Apple,
+}
+
+pub fn regrow(pos: NodePos, node: &dyn Fn(NodePos) -> u16, daylight: bool) -> Regrow {
+    if !around(pos, 1).any(|p| node(p) == CONTENT_APPLE_LEAVES) {
+        Regrow::Gone
+    } else if !daylight {
+        Regrow::Wait
+    } else {
+        Regrow::Apple
+    }
+}
+
 fn around(pos: NodePos, r: i32) -> impl Iterator<Item = NodePos> {
     (-r..=r).flat_map(move |dy| (-r..=r).flat_map(move |dz| (-r..=r).map(move |dx| (pos.0 + dx, pos.1 + dy, pos.2 + dz))))
 }
@@ -130,13 +169,13 @@ fn around(pos: NodePos, r: i32) -> impl Iterator<Item = NodePos> {
 /// After a trunk was dug at `pos`: the leaves of its tree near it that may
 /// now decay (leafdecay_after_destruct). `node` gives (content, param2).
 pub fn leaves_to_check(pos: NodePos, trunk: u16, node: &dyn Fn(NodePos) -> (u16, u8)) -> Vec<NodePos> {
-    let Some(leaves) = content::leaves_of_trunk(trunk) else {
+    if !content::is_trunk(trunk) {
         return Vec::new();
-    };
+    }
     around(pos, LEAF_DECAY_RADIUS)
         .filter(|&p| {
             let (id, param2) = node(p);
-            id == leaves && param2 != PLACED_LEAVES
+            content::decay_trunk(id) == Some(trunk) && param2 != PLACED_LEAVES
         })
         .collect()
 }
@@ -146,7 +185,7 @@ pub fn leaves_to_check(pos: NodePos, trunk: u16, node: &dyn Fn(NodePos) -> (u16,
 /// (leafdecay_on_timer).
 pub fn should_decay(pos: NodePos, node: &dyn Fn(NodePos) -> (u16, u8)) -> bool {
     let (id, param2) = node(pos);
-    let Some((_, trunk)) = content::tree_of_leaves(id) else {
+    let Some(trunk) = content::decay_trunk(id) else {
         return false;
     };
     param2 != PLACED_LEAVES && !around(pos, LEAF_DECAY_RADIUS).any(|p| node(p).0 == trunk)
@@ -163,7 +202,11 @@ pub fn can_grow(pos: NodePos, node: &dyn Fn(NodePos) -> u16, sky_above: bool, da
 /// tree schematics, which aren't force-placed). The tree is like the ones
 /// the map generator makes; `height` is its trunk length.
 pub fn grow(pos: NodePos, sapling: u16, height: i32, node: &dyn Fn(NodePos) -> u16) -> Vec<(NodePos, u16)> {
-    let kind = if sapling == CONTENT_FIR_SAPLING { TreeKind::Fir } else { TreeKind::Birch };
+    let kind = match sapling {
+        CONTENT_FIR_SAPLING => TreeKind::Fir,
+        CONTENT_APPLE_SAPLING => TreeKind::Apple,
+        _ => TreeKind::Birch,
+    };
     let tree = Tree { x: pos.0, z: pos.2, ground: pos.1 - 1, kind, height };
     let mut out = Vec::new();
     for y in pos.1..=tree.top() {
@@ -173,7 +216,7 @@ pub fn grow(pos: NodePos, sapling: u16, height: i32, node: &dyn Fn(NodePos) -> u
                     continue;
                 };
                 let here = node((x, y, z));
-                let trunk = id == CONTENT_BIRCH_TREE || id == CONTENT_FIR_TREE;
+                let trunk = content::is_trunk(id);
                 let fits = here == CONTENT_AIR || (trunk && ((x, y, z) == pos || content::is_leaves(here)));
                 if fits && here != id {
                     out.push(((x, y, z), id));
@@ -186,10 +229,10 @@ pub fn grow(pos: NodePos, sapling: u16, height: i32, node: &dyn Fn(NodePos) -> u
 
 /// A height for a grown tree, in the generator's range.
 pub fn tree_height(sapling: u16, rng: &mut Rng) -> i32 {
-    if sapling == CONTENT_FIR_SAPLING {
-        rng.range(7, 10) as i32
-    } else {
-        rng.range(5, 7) as i32
+    match sapling {
+        CONTENT_FIR_SAPLING => rng.range(7, 10) as i32,
+        CONTENT_APPLE_SAPLING => rng.range(4, 5) as i32,
+        _ => rng.range(5, 7) as i32,
     }
 }
 
@@ -238,6 +281,33 @@ mod tests {
         assert!(tree.contains(&((0, 1, 0), CONTENT_FIR_TREE)), "trunk replaces the sapling");
         assert!(tree.contains(&((0, 8, 0), CONTENT_FIR_TREE)));
         assert!(tree.iter().filter(|(_, id)| *id == CONTENT_FIR_NEEDLES).count() > 30);
+    }
+
+    #[test]
+    fn apples() {
+        let mut rng = Rng::new();
+        // Apples decay with their tree's leaves, and drop as apples.
+        let w = world(&[((0, 6, 1), CONTENT_APPLE, 0), ((0, 5, 0), CONTENT_APPLE_TREE, 0)]);
+        fn node(w: &HashMap<NodePos, (u16, u8)>) -> impl Fn(NodePos) -> (u16, u8) + '_ {
+            move |p| w.get(&p).copied().unwrap_or((CONTENT_AIR, 0))
+        }
+        assert!(!should_decay((0, 6, 1), &node(&w)));
+        assert_eq!(leaves_to_check((0, 5, 0), CONTENT_APPLE_TREE, &node(&w)), vec![(0, 6, 1)]);
+        assert_eq!(decay_drop(CONTENT_APPLE, &mut rng), Some(CONTENT_APPLE));
+        // A mark regrows next to apple leaves, in daylight.
+        let leaves = |p: NodePos| if p == (1, 6, 1) { CONTENT_APPLE_LEAVES } else { CONTENT_AIR };
+        assert_eq!(regrow((0, 6, 1), &leaves, true), Regrow::Apple);
+        assert_eq!(regrow((0, 6, 1), &leaves, false), Regrow::Wait);
+        assert_eq!(regrow((5, 6, 1), &leaves, true), Regrow::Gone);
+        // An apple sapling grows an apple tree with apples on it.
+        let ground = |p: NodePos| match p.1 {
+            0 => CONTENT_GRASS,
+            1 if p.0 == 0 && p.2 == 0 => CONTENT_APPLE_SAPLING,
+            _ => CONTENT_AIR,
+        };
+        let tree = grow((0, 1, 0), CONTENT_APPLE_SAPLING, 5, &ground);
+        assert!(tree.contains(&((0, 5, 0), CONTENT_APPLE_TREE)));
+        assert!(tree.iter().filter(|(_, id)| *id == CONTENT_APPLE_LEAVES).count() > 20);
     }
 
     #[test]

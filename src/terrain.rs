@@ -9,7 +9,7 @@
 //! plain + and *, so it gives identical results on any machine.
 
 use crate::content::{
-    CONTENT_BIRCH_LEAVES, CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_FIR_NEEDLES,
+    CONTENT_APPLE, CONTENT_APPLE_LEAVES, CONTENT_APPLE_TREE, CONTENT_BIRCH_LEAVES, CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_FIR_NEEDLES,
     CONTENT_FIR_TREE, CONTENT_GRASS, CONTENT_IRON, CONTENT_SAND, CONTENT_SANDSTONE, CONTENT_SNOW,
     CONTENT_STONE,
 };
@@ -370,6 +370,7 @@ const TREE_LINE: i32 = 70;
 pub enum TreeKind {
     Birch,
     Fir,
+    Apple,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -387,7 +388,17 @@ pub struct Tree {
 impl Tree {
     /// The highest y any part of the tree reaches.
     pub fn top(&self) -> i32 {
-        self.ground + self.height + 1
+        self.ground + self.crown_top()
+    }
+
+    /// The highest part of the tree, above the ground.
+    fn crown_top(&self) -> i32 {
+        match self.kind {
+            // minetest_game's apple tree: leaves one node above the trunk's
+            // top and its last node.
+            TreeKind::Apple => self.height + 2,
+            _ => self.height + 1,
+        }
     }
 
     /// The tree's node at (x, y, z), if it has one there.
@@ -395,7 +406,7 @@ impl Tree {
         let (dx, dz) = (x - self.x, z - self.z);
         let dy = y - self.ground; // 1 = just above the ground
         let h = self.height;
-        if dx.abs() > TREE_REACH || dz.abs() > TREE_REACH || dy < 1 || dy > h + 1 {
+        if dx.abs() > TREE_REACH || dz.abs() > TREE_REACH || dy < 1 || dy > self.crown_top() {
             return None;
         }
         let trunk = dx == 0 && dz == 0 && dy <= h;
@@ -435,6 +446,35 @@ impl Tree {
                 };
                 leafy.then_some(CONTENT_FIR_NEEDLES)
             }
+            TreeKind::Apple => {
+                if trunk {
+                    return Some(CONTENT_APPLE_TREE);
+                }
+                // minetest_game's add_trunk_and_leaves (size 2): a 3x4x3
+                // block of leaves around the top of the trunk, from two below
+                // its top to one above, then 2x2x2 clusters scattered within
+                // two nodes, here picked by hashing. One leaf in eight is an
+                // apple.
+                let (ax, az) = (dx.abs(), dz.abs());
+                let rel = dy - h; // 0: level with the trunk's last node
+                if !(-2..=2).contains(&rel) || ax > 2 || az > 2 {
+                    return None;
+                }
+                let core = ax <= 1 && az <= 1 && rel <= 1;
+                let cluster = || {
+                    // Clusters are 2x2x2: share one hash per pair of nodes.
+                    let (cx, cy, cz) = (x.div_euclid(2), y.div_euclid(2), z.div_euclid(2));
+                    hash(cx, cy, cz, SEED_TREES ^ 2) % 3 == 0
+                };
+                if !core && !cluster() {
+                    return None;
+                }
+                if hash(x, y, z, SEED_TREES ^ 3) % 8 == 0 {
+                    Some(CONTENT_APPLE)
+                } else {
+                    Some(CONTENT_APPLE_LEAVES)
+                }
+            }
         }
     }
 }
@@ -458,12 +498,22 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
     // A few percent of patches in the open, most of them in a wood.
     let forest = fbm2(x as f32 / 220.0, z as f32 / 220.0, 2, SEED_FOREST);
     let chance = 4 + ((forest - 0.05) * 300.0).clamp(0.0, 66.0) as u32;
-    if (h >> 16) % 100 >= chance {
+    let roll = (h >> 16) % 100;
+    // Apple trees came later: they grow only in lowland patches that had
+    // no tree, so the trees of worlds made before stay as they were. About
+    // one lowland tree in three is an apple tree.
+    let kind = if roll < chance {
+        kind
+    } else if kind == TreeKind::Birch && roll < chance + chance / 2 {
+        TreeKind::Apple
+    } else {
         return None;
-    }
+    };
     let height = match kind {
         TreeKind::Birch => 5 + ((h >> 24) % 3) as i32,
         TreeKind::Fir => 7 + ((h >> 24) % 4) as i32,
+        // minetest_game: random(4, 5).
+        TreeKind::Apple => 4 + ((h >> 24) % 2) as i32,
     };
     Some(Tree { x, z, ground: col.height, kind, height })
 }
@@ -488,14 +538,19 @@ pub fn trees_in(x0: i32, z0: i32, x1: i32, z1: i32) -> Vec<Tree> {
 
 /// The tree node at (x, y, z) among `trees`, if any; a trunk wins over
 /// another tree's leaves. The caller makes sure the terrain is air there.
+/// Birches and firs come first: apple trees (added later) only fill what
+/// they leave empty, so the trees of older worlds stay exactly as they were.
 pub fn tree_node_in(trees: &[Tree], x: i32, y: i32, z: i32) -> Option<u16> {
-    let mut found = None;
-    for t in trees {
-        match t.node_at(x, y, z) {
-            Some(id) if id == CONTENT_BIRCH_TREE || id == CONTENT_FIR_TREE => return Some(id),
-            Some(id) => found = found.or(Some(id)),
-            None => {}
+    let pick = |apple: bool| {
+        let mut found = None;
+        for t in trees.iter().filter(|t| (t.kind == TreeKind::Apple) == apple) {
+            match t.node_at(x, y, z) {
+                Some(id) if id == CONTENT_BIRCH_TREE || id == CONTENT_FIR_TREE || id == CONTENT_APPLE_TREE => return Some(id),
+                Some(id) => found = found.or(Some(id)),
+                None => {}
+            }
         }
-    }
-    found
+        found
+    };
+    pick(false).or_else(|| pick(true))
 }

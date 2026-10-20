@@ -549,6 +549,9 @@ impl Server {
         if !saplings.is_empty() {
             info!("{} saplings growing", saplings.len());
         }
+        for pos in world.changed_nodes(content::is_mark) {
+            timers.start(pos, Job::Regrow, nature::grow_delay(&mut rng));
+        }
         Self {
             socket,
             auth,
@@ -1445,6 +1448,12 @@ impl Server {
         let name = peer.display_name().to_string();
         let body = [peer.pos_bs[0] / 10.0, peer.pos_bs[1] / 10.0 + 1.0, peer.pos_bs[2] / 10.0];
         let dead = peer.hp == 0;
+        if msg.action == INTERACT_USE {
+            if !dead {
+                self.use_item(from, msg.item as usize);
+            }
+            return;
+        }
         if let Pointed::Object(id) = msg.pointed {
             if msg.action == INTERACT_START_DIGGING && !dead {
                 self.pick_up(from, id, body);
@@ -1515,8 +1524,17 @@ impl Server {
                     self.inventory_changed(from);
                 }
                 self.edit_event(&name, "dug", current);
-                self.world.set_node(node_pos(under), world::CONTENT_AIR, 0);
-                self.broadcast_node(under, &build_removenode(under));
+                // A picked apple that grew on a tree leaves a mark where a
+                // new one grows (minetest_game's after_dig_node).
+                if content::is_apple(current) && self.world.param2(node_pos(under)) == 0 {
+                    self.world.set_node(node_pos(under), content::CONTENT_APPLE_MARK, 0);
+                    self.broadcast_node(under, &build_addnode(under, content::CONTENT_APPLE_MARK, 0));
+                    let after = nature::grow_delay(&mut self.rng);
+                    self.timers.start(node_pos(under), Job::Regrow, after);
+                } else {
+                    self.world.set_node(node_pos(under), world::CONTENT_AIR, 0);
+                    self.broadcast_node(under, &build_removenode(under));
+                }
                 // Items resting on the dug node fall.
                 self.wake_items(node_pos(under));
                 // Torches hanging on the dug node, and saplings standing on
@@ -1568,7 +1586,9 @@ impl Server {
                     return;
                 };
                 let id = stack.id;
-                let free = self.world.node(node_pos(above)) == world::CONTENT_AIR;
+                // Air, or an apple mark (buildable_to: placing replaces it).
+                let target = self.world.node(node_pos(above));
+                let free = target == world::CONTENT_AIR || content::is_mark(target);
                 let support = self.world.node(node_pos(under));
                 // A torch hangs on something solid (the client checks the
                 // same); anything else just needs something to build on.
@@ -1588,9 +1608,9 @@ impl Server {
                     content::wallmounted_param2(under, above)
                 } else if content::is_furnace(id) {
                     content::facedir_param2(above, body)
-                } else if content::is_leaves(id) {
+                } else if content::is_leaves(id) || content::is_apple(id) {
                     // Placed leaves never decay (minetest_game's
-                    // after_place_leaves).
+                    // after_place_leaves), and placed apples don't regrow.
                     nature::PLACED_LEAVES
                 } else {
                     0
@@ -1668,6 +1688,7 @@ impl Server {
             match job {
                 Job::Decay => self.decay_leaf(pos),
                 Job::Grow => self.grow_sapling(pos),
+                Job::Regrow => self.regrow_apple(pos),
             }
         }
     }
@@ -1686,12 +1707,55 @@ impl Server {
         self.broadcast_node(p16, &build_removenode(p16));
         self.wake_items(pos);
         self.drop_attached(p16);
-        let drop = nature::leaf_drop(leaf, &mut self.rng);
-        if drop != leaf {
+        if let Some(drop) = nature::decay_drop(leaf, &mut self.rng) {
             let r = |rng: &mut Rng| rng.range(0, 99) as f32 / 100.0 - 0.5;
             let at = [pos.0 as f32 + r(&mut self.rng), pos.1 as f32 + r(&mut self.rng), pos.2 as f32 + r(&mut self.rng)];
             self.spawn_item(Stack::new(drop, 1), (at, [0.0; 3]));
         }
+    }
+
+    /// minetest_game's apple_mark timer: an apple grows again if apple
+    /// leaves are still next to the mark and it is light; in the dark it
+    /// waits; with no leaves left the mark goes.
+    fn regrow_apple(&mut self, pos: NodePos) {
+        if !content::is_mark(self.world.node(pos)) {
+            return; // something was placed there
+        }
+        let daylight = (6000..18000).contains(&self.time_of_day());
+        let world = &self.world;
+        let node = |p: NodePos| world.node(p);
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        match nature::regrow(pos, &node, daylight) {
+            nature::Regrow::Gone => {
+                self.world.set_node(pos, world::CONTENT_AIR, 0);
+                self.broadcast_node(p16, &build_removenode(p16));
+            }
+            nature::Regrow::Wait => self.timers.start(pos, Job::Regrow, nature::REGROW_RETRY),
+            nature::Regrow::Apple => {
+                self.world.set_node(pos, content::CONTENT_APPLE, 0);
+                self.broadcast_node(p16, &build_addnode(p16, content::CONTENT_APPLE, 0));
+            }
+        }
+    }
+
+    /// Left-click with a usable item: eating an apple restores 2 HP
+    /// (minetest_game's item_eat(2): one is used up even at full health).
+    fn use_item(&mut self, addr: SocketAddr, slot: usize) {
+        let Some(peer) = self.peers.get_mut(&addr) else {
+            return;
+        };
+        let wielded = peer.inventory.get(slot).filter(|_| slot < HOTBAR_SIZE);
+        if !wielded.is_some_and(|s| content::is_apple(s.id)) {
+            return;
+        }
+        peer.inventory.take_one(slot);
+        peer.hp = (peer.hp + content::APPLE_HP).min(PLAYER_MAX_HP);
+        let (hp, name) = (peer.hp, peer.display_name().to_string());
+        peer.save(&self.players);
+        info!("{name} ate an apple: {hp} HP");
+        self.send_command(addr, 0, &build_hp(hp, false));
+        self.send_command(addr, 0, &build_health_bar_change(hp));
+        self.inventory_changed(addr);
     }
 
     /// minetest_game's grow_sapling: on soil and in daylight it becomes a

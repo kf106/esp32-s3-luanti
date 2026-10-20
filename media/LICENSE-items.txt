@@ -1,8 +1,8 @@
 default_stick.png, default_coal_lump.png, default_iron_lump.png, gui_furnace_arrow_bg.png,
 default_steel_ingot.png, gui_furnace_arrow_fg.png, the tool pictures
 default_tool_{wood,stone,steel}{pick,shovel,axe,sword}.png, the furnace textures
-default_furnace_*.png and the saplings default_aspen_sapling.png and default_pine_sapling.png
-are from the default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
+default_furnace_*.png, default_apple.png and the saplings default_aspen_sapling.png,
+default_pine_sapling.png and default_sapling.png are from the default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
 mods/default/textures), unmodified and under their original names. Their licence and
 credits, from that mod's license.txt:
 

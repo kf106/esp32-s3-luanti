@@ -1012,6 +1012,8 @@ pub const INTERACT_START_DIGGING: u8 = 0;
 // Also 1 (stop digging), which needs no handling.
 pub const INTERACT_DIGGING_COMPLETED: u8 = 2;
 pub const INTERACT_PLACE: u8 = 3;
+/// Left-click with a usable item (an apple): use it instead of digging.
+pub const INTERACT_USE: u8 = 4;
 
 #[derive(Debug)]
 pub enum Pointed {

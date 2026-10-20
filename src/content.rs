@@ -49,6 +49,12 @@ pub enum Kind {
     /// A sapling: a small plant (plantlike, two crossed pictures) that can
     /// be walked through, stands on the node below and grows into a tree.
     Sapling,
+    /// An apple hanging in a tree (plantlike, walked through, eaten).
+    Apple,
+    /// Where an apple was picked: invisible, and an apple grows there again
+    /// (minetest_game's apple_mark: airlike, can't be pointed at, and
+    /// anything placed there replaces it).
+    Mark,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -73,6 +79,14 @@ pub const CONTENT_FURNACE: u16 = 18;
 pub const CONTENT_FURNACE_ACTIVE: u16 = 19;
 pub const CONTENT_BIRCH_SAPLING: u16 = 20;
 pub const CONTENT_FIR_SAPLING: u16 = 21;
+pub const CONTENT_APPLE_TREE: u16 = 22;
+pub const CONTENT_APPLE_LEAVES: u16 = 23;
+pub const CONTENT_APPLE: u16 = 24;
+pub const CONTENT_APPLE_MARK: u16 = 25;
+pub const CONTENT_APPLE_SAPLING: u16 = 26;
+pub const CONTENT_APPLE_WOOD: u16 = 27;
+/// Health an apple gives (minetest_game's item_eat(2)).
+pub const APPLE_HP: u16 = 2;
 /// Leaves give a sapling one time in this many (minetest_game's rarity).
 pub const SAPLING_RARITY: u32 = 20;
 /// Light a burning furnace gives (minetest_game's furnace_active).
@@ -374,6 +388,74 @@ pub const NODES: &[Node] = &[
         drop: CONTENT_FIR_SAPLING,
         drop_count: 1,
         kind: Kind::Sapling,
+    },
+    Node {
+        id: CONTENT_APPLE_TREE,
+        name: "esp:apple_tree",
+        description: "Apple Tree",
+        tiles: [
+            "esp_apple_tree_top.png",
+            "esp_apple_tree_top.png",
+            "esp_apple_tree.png",
+            "esp_apple_tree.png",
+            "esp_apple_tree.png",
+            "esp_apple_tree.png",
+        ],
+        groups: &[("tree", 1), ("choppy", 2), ("oddly_breakable_by_hand", 1), ("flammable", 2)],
+        drop: CONTENT_APPLE_TREE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_APPLE_LEAVES,
+        name: "esp:apple_leaves",
+        description: "Apple Tree Leaves",
+        tiles: ["esp_apple_leaves.png"; 6],
+        groups: &[("snappy", 3), ("leafdecay", 3), ("flammable", 2), ("leaves", 1)],
+        drop: CONTENT_APPLE_LEAVES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    // minetest_game's apple and its picture (CC BY-SA 3.0).
+    Node {
+        id: CONTENT_APPLE,
+        name: "esp:apple",
+        description: "Apple",
+        tiles: ["default_apple.png"; 6],
+        groups: &[("fleshy", 3), ("dig_immediate", 3), ("flammable", 2), ("leafdecay", 3), ("leafdecay_drop", 1), ("food_apple", 1)],
+        drop: CONTENT_APPLE,
+        drop_count: 1,
+        kind: Kind::Apple,
+    },
+    Node {
+        id: CONTENT_APPLE_MARK,
+        name: "esp:apple_mark",
+        description: "Apple Marker",
+        tiles: [""; 6],
+        groups: &[("not_in_creative_inventory", 1)],
+        drop: CONTENT_APPLE_MARK,
+        drop_count: 0,
+        kind: Kind::Mark,
+    },
+    Node {
+        id: CONTENT_APPLE_SAPLING,
+        name: "esp:apple_sapling",
+        description: "Apple Tree Sapling",
+        tiles: ["default_sapling.png"; 6],
+        groups: SAPLING_GROUPS,
+        drop: CONTENT_APPLE_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
+    Node {
+        id: CONTENT_APPLE_WOOD,
+        name: "esp:apple_wood",
+        description: "Apple Wood Planks",
+        tiles: ["esp_apple_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("wood", 1)],
+        drop: CONTENT_APPLE_WOOD,
+        drop_count: 1,
+        kind: Kind::Solid,
     },
 ];
 
@@ -760,13 +842,13 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark))
 }
 
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
@@ -814,17 +896,31 @@ pub fn tree_of_leaves(id: u16) -> Option<(u16, u16)> {
     match id {
         CONTENT_BIRCH_LEAVES => Some((CONTENT_BIRCH_SAPLING, CONTENT_BIRCH_TREE)),
         CONTENT_FIR_NEEDLES => Some((CONTENT_FIR_SAPLING, CONTENT_FIR_TREE)),
+        CONTENT_APPLE_LEAVES => Some((CONTENT_APPLE_SAPLING, CONTENT_APPLE_TREE)),
         _ => None,
     }
 }
 
-/// The leaves a trunk keeps alive.
-pub fn leaves_of_trunk(id: u16) -> Option<u16> {
+/// The trunk that keeps a node from decaying: leaves' own tree, and apples
+/// on apple trees (minetest_game registers both for leafdecay).
+pub fn decay_trunk(id: u16) -> Option<u16> {
     match id {
-        CONTENT_BIRCH_TREE => Some(CONTENT_BIRCH_LEAVES),
-        CONTENT_FIR_TREE => Some(CONTENT_FIR_NEEDLES),
-        _ => None,
+        CONTENT_APPLE => Some(CONTENT_APPLE_TREE),
+        _ => tree_of_leaves(id).map(|(_, trunk)| trunk),
     }
+}
+
+/// Whether a node is a trunk whose digging may make leaves decay.
+pub fn is_trunk(id: u16) -> bool {
+    matches!(id, CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_APPLE_TREE)
+}
+
+pub fn is_apple(id: u16) -> bool {
+    id == CONTENT_APPLE
+}
+
+pub fn is_mark(id: u16) -> bool {
+    id == CONTENT_APPLE_MARK
 }
 
 /// minetest_game's leafdecay radius for pine and aspen.
@@ -923,7 +1019,7 @@ pub fn group_of(id: u16, group: &str) -> i16 {
 
 /// The item digging a node gives, if any, and how many.
 pub fn drop_of(id: u16) -> Option<(u16, u16)> {
-    def(id).map(|n| (n.drop, n.drop_count))
+    def(id).filter(|n| n.drop_count > 0).map(|n| (n.drop, n.drop_count))
 }
 
 /// Default textures compiled into the firmware. Files in the SD card's media
@@ -1033,6 +1129,12 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_cool_lava.1.ogg", include_bytes!("../media/default_cool_lava.1.ogg")),
     ("default_cool_lava.2.ogg", include_bytes!("../media/default_cool_lava.2.ogg")),
     ("default_cool_lava.3.ogg", include_bytes!("../media/default_cool_lava.3.ogg")),
+    ("esp_apple_tree.png", include_bytes!("../media/esp_apple_tree.png")),
+    ("esp_apple_tree_top.png", include_bytes!("../media/esp_apple_tree_top.png")),
+    ("esp_apple_leaves.png", include_bytes!("../media/esp_apple_leaves.png")),
+    ("esp_apple_wood.png", include_bytes!("../media/esp_apple_wood.png")),
+    ("default_apple.png", include_bytes!("../media/default_apple.png")),
+    ("default_sapling.png", include_bytes!("../media/default_sapling.png")),
     ("default_aspen_sapling.png", include_bytes!("../media/default_aspen_sapling.png")),
     ("default_pine_sapling.png", include_bytes!("../media/default_pine_sapling.png")),
     ("default_tool_breaks.1.ogg", include_bytes!("../media/default_tool_breaks.1.ogg")),
@@ -1064,6 +1166,8 @@ struct Item<'a> {
     place_sound: Sound,
     stack_max: u16,
     groups: &'a [(&'a str, i16)],
+    /// Left-click uses it (an apple is eaten) instead of digging.
+    usable: bool,
 }
 
 /// Serialised ToolCapabilities (version 5, protocol >= 38).
@@ -1144,13 +1248,14 @@ fn sounds_of(id: u16) -> Sounds {
             dug: ("default_sand_footstep", 0.15),
             place: ("default_place_node", 1.0),
         },
-        CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES | CONTENT_BIRCH_SAPLING | CONTENT_FIR_SAPLING => Sounds {
+        CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES | CONTENT_BIRCH_SAPLING | CONTENT_FIR_SAPLING | CONTENT_APPLE_LEAVES
+        | CONTENT_APPLE | CONTENT_APPLE_SAPLING => Sounds {
             footstep: ("default_grass_footstep", 0.45),
             dig: GROUP_DIG,
             dug: ("default_grass_footstep", 0.7),
             place: ("default_place_node", 1.0),
         },
-        CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD => wood,
+        CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD | CONTENT_APPLE_TREE | CONTENT_APPLE_WOOD => wood,
         id if is_torch(id) => wood,
         // stone, sandstone, ores
         _ => stone,
@@ -1169,7 +1274,7 @@ fn serialize_item(item: &Item) -> Vec<u8> {
         w.f32(v);
     }
     w.i16(item.stack_max as i16)
-        .u8(0) // usable
+        .u8(item.usable as u8)
         .u8(0) // liquids_pointable
         .bytes16(&item.tool_capabilities)
         .u16(item.groups.len() as u16);
@@ -1209,6 +1314,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
         place_sound: ("", 1.0),
         stack_max: 99,
         groups: &[],
+        usable: false,
     }];
     for n in NODES {
         items.push(Item {
@@ -1218,12 +1324,12 @@ pub fn itemdef_bytes() -> Vec<u8> {
             // A torch or sapling is a flat picture, not a cube.
             inventory_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
-                Kind::Sapling => n.tiles[0],
+                Kind::Sapling | Kind::Apple => n.tiles[0],
                 _ => "",
             },
             wield_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
-                Kind::Sapling => n.tiles[0],
+                Kind::Sapling | Kind::Apple => n.tiles[0],
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
@@ -1232,6 +1338,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             place_sound: sounds_of(n.id).place,
             stack_max: stack_max(n.id),
             groups: n.groups,
+            usable: n.kind == Kind::Apple,
         });
     }
     for c in CRAFTITEMS {
@@ -1247,6 +1354,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             place_sound: ("", 1.0),
             stack_max: stack_max(c.id),
             groups: c.groups,
+            usable: false,
         });
     }
     for t in TOOLS {
@@ -1262,6 +1370,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             place_sound: ("", 1.0),
             stack_max: stack_max(t.id),
             groups: t.groups,
+            usable: false,
         });
     }
 
@@ -1288,6 +1397,7 @@ const ALPHAMODE_OPAQUE: u8 = 2;
 const ALPHAMODE_CLIP: u8 = 1;
 const NDT_MESH: u8 = 16;
 const NDT_PLANTLIKE: u8 = 9;
+const NDT_AIRLIKE: u8 = 1;
 const NODEBOX_FIXED: u8 = 1;
 const TILE_FLAG_TILEABLE_HORIZONTAL: u16 = 1 << 1;
 const TILE_FLAG_TILEABLE_VERTICAL: u16 = 1 << 2;
@@ -1348,6 +1458,14 @@ fn sapling_selection_box(w: &mut Writer) {
     }
 }
 
+/// minetest_game's apple box, in BS units.
+fn apple_selection_box(w: &mut Writer) {
+    w.u8(6).u8(NODEBOX_FIXED).u16(1);
+    for v in [-3.0 / 16.0, -7.0 / 16.0, -3.0 / 16.0, 3.0 / 16.0, 4.0 / 16.0, 3.0 / 16.0] {
+        w.f32(v * 10.0);
+    }
+}
+
 fn regular_nodebox(w: &mut Writer) {
     w.u8(6).u8(NODEBOX_REGULAR);
 }
@@ -1361,14 +1479,16 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     }
     let torch = n.kind == Kind::Torch;
     let leaves = n.kind == Kind::Leaves;
-    let sapling = n.kind == Kind::Sapling;
+    // Saplings and apples: plants, drawn as two crossed pictures.
+    let sapling = matches!(n.kind, Kind::Sapling | Kind::Apple);
+    let mark = n.kind == Kind::Mark;
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
         w.u8(CPT_LIGHT).u8(0);
     } else if n.kind == Kind::Furnace {
         w.u8(0).u8(CPT2_FACEDIR);
-    } else if n.kind == Kind::Sapling {
+    } else if sapling || mark {
         w.u8(CPT_LIGHT).u8(0);
     } else {
         w.u8(0) // param_type: none
@@ -1380,7 +1500,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Torch => (NDT_MESH, torch_mesh(n.id)),
         Kind::Leaves => (NDT_ALLFACES_OPTIONAL, ""),
         Kind::Solid | Kind::Furnace => (NDT_NORMAL, ""),
-        Kind::Sapling => (NDT_PLANTLIKE, ""),
+        Kind::Sapling | Kind::Apple => (NDT_PLANTLIKE, ""),
+        Kind::Mark => (NDT_AIRLIKE, ""),
     };
     w.u8(drawtype).string16(mesh).f32(1.0); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
@@ -1420,8 +1541,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0); // leveled
 
     // lighting
-    w.u8((torch || leaves || sapling) as u8) // light_propagates
-        .u8((torch || sapling) as u8) // sunlight_propagates
+    w.u8((torch || leaves || sapling || mark) as u8) // light_propagates
+        .u8((torch || sapling || mark) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
     let tree = n.groups.iter().any(|(g, _)| *g == "tree");
@@ -1429,10 +1550,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // interaction
     w.u8(walkable(n.id) as u8) // walkable
-        .u8(POINTABLE)
-        .u8(1) // diggable
+        .u8(if mark { 0 } else { POINTABLE })
+        .u8(!mark as u8) // diggable
         .u8(0) // climbable
-        .u8(0) // buildable_to
+        .u8(mark as u8) // buildable_to
         .u8((n.kind == Kind::Furnace) as u8) // rightclickable
         .u32(0); // damage_per_second
 
@@ -1449,6 +1570,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     regular_nodebox(&mut w); // node_box (unused by meshes)
     if torch {
         torch_selection_box(&mut w);
+    } else if n.kind == Kind::Apple {
+        apple_selection_box(&mut w);
     } else if sapling {
         sapling_selection_box(&mut w);
     } else {
@@ -1466,7 +1589,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     w.string16("air") // node_dig_prediction
         .u8(LEVELED_MAX)
-        .u8(if torch || leaves || sapling { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
+        .u8(if torch || leaves || sapling || mark { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
         .u8(0) // move_resistance
         .u8(0) // liquid_move_physics
         .u8(0); // post_effect_color_shaded
