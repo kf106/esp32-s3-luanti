@@ -45,6 +45,8 @@ pub struct Status {
     pub block_us: u64,
     /// Packets that couldn't be sent (Wi-Fi transmit buffers full).
     pub send_failures: u64,
+    /// Wi-Fi power saving is on (nobody doing anything).
+    pub wifi_dozing: bool,
     /// Running counts of players joining and leaving and of chat lines,
     /// for the LED to flash on.
     pub joins: u64,
@@ -86,6 +88,7 @@ impl Status {
             blocks_built: 0,
             block_us: 0,
             send_failures: 0,
+            wifi_dozing: false,
             joins: 0,
             leaves: 0,
             chats: 0,

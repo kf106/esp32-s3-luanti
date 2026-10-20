@@ -282,7 +282,9 @@ fn render_device(f: &mut Frame, st: &Status, sys: &System) {
     y += line;
 
     // Network
+    // "doze": power saving, nobody doing anything (see server.rs).
     let wifi = match (sys.rssi, sys.channel) {
+        (Some(r), _) if st.wifi_dozing => format!("{r} dBm doze"),
         (Some(r), Some(c)) => format!("{r} dBm ch {c}"),
         (Some(r), None) => format!("{r} dBm"),
         _ => "down".to_string(),

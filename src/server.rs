@@ -31,6 +31,9 @@ const FURNACE_STEP_INTERVAL: Duration = Duration::from_secs(1);
 const FURNACE_HEARING: f32 = 16.0;
 /// How far sounds carry by default (Luanti's max_hear_distance).
 const HEARING: f32 = 32.0;
+/// Wi-Fi power saving goes on after this long with nobody doing anything
+/// (no one connected, or every player standing still).
+const IDLE_POWER_SAVE: Duration = Duration::from_secs(30);
 /// How many reliable packets may be in flight (unacknowledged) per channel.
 /// Luanti's own minimum window is 32.
 const RELIABLE_WINDOW: usize = 32;
@@ -195,6 +198,8 @@ struct Peer {
     furnace: Option<NodePos>,
     /// When the furnace window was last sent (opened or updated).
     furnace_form_sent: Option<Instant>,
+    /// Keys held, as last reported.
+    keys: u32,
 }
 
 impl Peer {
@@ -229,6 +234,7 @@ impl Peer {
             chat_times: VecDeque::new(),
             furnace: None,
             furnace_form_sent: None,
+            keys: 0,
         }
     }
 
@@ -305,6 +311,10 @@ pub struct Server {
     furnaces_stepped: Instant,
     /// Id for the next sound that may need fading out.
     next_sound_id: i32,
+    /// When a player last did something (moved, looked, dug, chatted...)
+    /// or a client was logging in, and whether Wi-Fi power saving is on.
+    last_activity: Instant,
+    power_saving: bool,
     skins: Skins,
     /// Welcome message lines.
     welcome: Vec<String>,
@@ -548,6 +558,8 @@ impl Server {
             items_stepped: Instant::now(),
             furnaces_stepped: Instant::now(),
             next_sound_id: 1,
+            last_activity: Instant::now(),
+            power_saving: false,
             skins,
             welcome: motd
                 .as_deref()
@@ -783,6 +795,22 @@ impl Server {
         let Some(cmd) = messages::command_id(payload) else {
             return; // empty ORIGINAL packet: the client's "hello", nothing to do
         };
+        // Logging in and loading, and anything a player does, keep Wi-Fi
+        // fully awake. (Positions count only if something changed: see
+        // on_playerpos.)
+        let ready = self.peers.get(&from).is_some_and(|p| p.ready);
+        let acting = matches!(
+            cmd,
+            TOSERVER_INTERACT
+                | TOSERVER_INVENTORY_ACTION
+                | TOSERVER_INVENTORY_FIELDS
+                | TOSERVER_CHAT_MESSAGE
+                | TOSERVER_DAMAGE
+                | TOSERVER_RESPAWN_LEGACY
+        );
+        if !ready || acting {
+            self.wake();
+        }
         match cmd {
             TOSERVER_INIT => self.on_init(from, payload),
             TOSERVER_FIRST_SRP => self.on_first_srp(from, payload),
@@ -1327,6 +1355,8 @@ impl Server {
             return;
         };
         let moved = peer.pos_bs != pp.pos_bs || peer.speed_bs != pp.speed_bs || peer.yaw != pp.yaw;
+        let active = moved || peer.pitch != pp.pitch || peer.keys != pp.keys;
+        peer.keys = pp.keys;
         peer.pos_bs = pp.pos_bs;
         peer.speed_bs = pp.speed_bs;
         peer.yaw = pp.yaw;
@@ -1348,6 +1378,9 @@ impl Server {
             for addr in others {
                 self.send_command(addr, 0, &packet);
             }
+        }
+        if active {
+            self.wake();
         }
         if !moved {
             return;
@@ -2598,6 +2631,39 @@ impl Server {
         }
     }
 
+    /// Someone is doing something: Wi-Fi fully awake, at once.
+    fn wake(&mut self) {
+        self.last_activity = Instant::now();
+        if self.power_saving {
+            self.power_saving = false;
+            set_wifi_power_save(false);
+            status::lock(&self.status).wifi_dozing = false;
+            info!("Wi-Fi power saving off");
+        }
+    }
+
+    /// Let the Wi-Fi radio doze between the router's beacons once nobody
+    /// has done anything for IDLE_POWER_SAVE: no one connected, or every
+    /// player idle with their map loaded. It saves power and heat (the
+    /// board's 3.3 V regulator gets hot), at the cost of delaying packets
+    /// by up to a few hundred milliseconds, which only the first move after
+    /// a pause will notice.
+    fn update_power_saving(&mut self) {
+        if self.power_saving || self.last_activity.elapsed() < IDLE_POWER_SAVE {
+            return;
+        }
+        // Not while a player is still being sent their map: it would load
+        // slowly, the client's acknowledgements being delayed.
+        let loading = self.peers.values().any(|p| !p.ready || !p.pending_blocks.is_empty() || !p.awaiting.is_empty());
+        if loading {
+            return;
+        }
+        self.power_saving = true;
+        set_wifi_power_save(true);
+        status::lock(&self.status).wifi_dozing = true;
+        info!("Wi-Fi power saving on: nobody has done anything for {}s", IDLE_POWER_SAVE.as_secs());
+    }
+
     fn congested(&self) -> bool {
         Instant::now() < self.congested_until
     }
@@ -2613,6 +2679,7 @@ impl Server {
             self.items_stepped = now;
             self.step_items(dt);
         }
+        self.update_power_saving();
         if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
             let dt = now.duration_since(self.furnaces_stepped).as_secs_f32();
             self.furnaces_stepped = now;
@@ -2760,6 +2827,21 @@ fn send_datagram(socket: &UdpSocket, addr: SocketAddr, data: &[u8]) -> bool {
         }
     }
 }
+
+/// Wi-Fi modem power saving (WIFI_PS_MIN_MODEM): the radio sleeps between
+/// the router's beacons, which holds incoming packets until it wakes.
+/// Off (WIFI_PS_NONE) keeps it listening all the time.
+#[cfg(target_os = "espidf")]
+fn set_wifi_power_save(on: bool) {
+    use esp_idf_svc::sys::{esp_wifi_set_ps, wifi_ps_type_t_WIFI_PS_MIN_MODEM, wifi_ps_type_t_WIFI_PS_NONE};
+    let mode = if on { wifi_ps_type_t_WIFI_PS_MIN_MODEM } else { wifi_ps_type_t_WIFI_PS_NONE };
+    if let Err(e) = esp_idf_svc::sys::esp!(unsafe { esp_wifi_set_ps(mode) }) {
+        warn!("Setting Wi-Fi power saving: {e}");
+    }
+}
+
+#[cfg(not(target_os = "espidf"))]
+fn set_wifi_power_save(_on: bool) {}
 
 /// For testing on a PC: with LUANTI_FAIL_SENDS=n set, every nth send
 /// fails, as sends do on the ESP32 when its Wi-Fi buffers are full.
