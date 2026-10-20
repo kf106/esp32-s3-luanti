@@ -77,7 +77,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - extra skins can be added on the SD card;
   - 64×64 Minecraft skins are accepted.
 - **Saving:** player positions, health, skins and inventories are saved and restored.
-- **Status light:** while the screen is off, the board's RGB LED shows what is happening. It never goes above 60% of full power.
+- **Status light:** the board's RGB LED shows what is happening, whether the screen is on or off. It never goes above 60% of full power.
   - slow green breathing while the server runs, a little quicker with players on;
   - two blue flashes when a player joins, two purple when one leaves, and a white flash for chat;
   - three red flashes when something goes wrong, such as failing to save to the SD card;
@@ -161,6 +161,7 @@ Each `network` line starts an entry. Its `password` line is optional; leave it o
 
 How the server chooses a network:
 - **Which one:** at start-up it scans, then joins the networks it can see, in the file's order. If none are in range it also tries the rest, in case one is hidden, and keeps retrying every 10 seconds. The LCD shows what it is doing.
+- **If the connection drops** (the router restarts, or the signal goes), the server notices within a couple of seconds, tries the same network again, and then looks for any known network as at start-up. The game keeps running meanwhile; the LCD header shows "Wi-Fi..." and the status light blinks amber until it is back. Players whose clients haven't given up (after 30 seconds) carry on where they were.
 - **Building with Wi-Fi details:** if you build with `WIFI_SSID` and `WIFI_PASS`, that network is written to the top of `wifi.txt` the first time the new firmware starts, or its password is updated if it is already listed. After that the file is yours: later edits are kept, even through reflashing the same firmware. It is only rewritten if you build with a different network or password.
 - **Building without them:** plain `cargo run --release` uses whatever `wifi.txt` holds.
 

@@ -203,8 +203,8 @@ fn run(lcd: Lcd, status: SharedStatus) {
         (st.joins, st.leaves, st.chats, status::problems())
     };
     loop {
-        // The LED: dark while the screen is on (the screen says it all),
-        // otherwise breathing and flashing (see indicator.rs).
+        // The LED, whether the screen is on or off: breathing and flashing
+        // (see indicator.rs).
         let (state, counts) = {
             let st = status::lock(&status);
             let state = if st.address.starts_with("Wi-Fi") {
@@ -224,17 +224,13 @@ fn run(lcd: Lcd, status: SharedStatus) {
         let dt = ticked.elapsed();
         ticked = Instant::now();
         if let Some(led) = &led {
-            let bytes = if screen_on {
-                [0; 3]
-            } else {
-                for (new, e) in news {
-                    if new {
-                        indicator.event(e);
-                    }
+            for (new, e) in news {
+                if new {
+                    indicator.event(e);
                 }
-                let c = indicator.colour(dt, state);
-                [indicator::to_byte(c.0), indicator::to_byte(c.1), indicator::to_byte(c.2)]
-            };
+            }
+            let c = indicator.colour(dt, state);
+            let bytes = [indicator::to_byte(c.0), indicator::to_byte(c.1), indicator::to_byte(c.2)];
             if shown != Some(bytes) {
                 led.set(bytes);
                 shown = Some(bytes);

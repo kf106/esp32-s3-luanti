@@ -1,4 +1,4 @@
-//! What the board's RGB LED shows while the screen is off: a slow green
+//! What the board's RGB LED shows: a slow green
 //! "breathing" while the server runs (a little quicker with players on),
 //! flashes when players join (blue) or leave (purple) and on chat (white),
 //! red flashes on problems, and amber blinking while looking for Wi-Fi.

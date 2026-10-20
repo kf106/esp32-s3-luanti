@@ -46,6 +46,8 @@ const WIFI_FILE: &str = "/sd/wifi.txt";
 const WIFI_WRITTEN: &str = "/sd/wifi-written";
 /// How long to wait before looking for known networks again.
 const WIFI_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+/// How often to check that the Wi-Fi connection is still there.
+const WIFI_CHECK: std::time::Duration = std::time::Duration::from_secs(2);
 const PORT: u16 = 30000;
 
 fn main() -> anyhow::Result<()> {
@@ -116,6 +118,17 @@ fn main() -> anyhow::Result<()> {
         esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE)
     })?;
     log_heap("after Wi-Fi");
+    // ESP-IDF doesn't rejoin a network on its own: a thread watches the
+    // connection and rejoins if it drops (the router restarts, or the board
+    // loses signal). The server carries on meanwhile, and players whose
+    // clients don't time out (30 s) carry on playing.
+    std::thread::Builder::new()
+        .name("wifi".into())
+        .stack_size(8 * 1024)
+        .spawn({
+            let status = status.clone();
+            move || watch_wifi(wifi, &networks, &status, joined)
+        })?;
 
     // Luanti server
     let auth = auth::AuthStore::open(format!("{MOUNT}/auth"))?;
@@ -266,6 +279,42 @@ fn join_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>, networks: &[wifi_config:
             }
         }
         std::thread::sleep(WIFI_RETRY);
+    }
+}
+
+/// Keep the Wi-Fi connection: check it every WIFI_CHECK, and when it has
+/// gone, try the same network again (most drop-outs are short), then the
+/// known networks as at startup, until one works.
+fn watch_wifi(mut wifi: BlockingWifi<EspWifi<'static>>, networks: &[wifi_config::Network], status: &status::SharedStatus, mut joined: String) {
+    loop {
+        std::thread::sleep(WIFI_CHECK);
+        if wifi.is_up().unwrap_or(false) {
+            continue;
+        }
+        let text = format!("Lost Wi-Fi {joined}");
+        log::warn!("{text}");
+        {
+            // The screen's header and the status light show it's offline.
+            let mut st = status::lock(status);
+            st.event(text);
+            st.address = "Wi-Fi...".to_string();
+        }
+        info!("Rejoining {joined}...");
+        let again = wifi.connect().and_then(|_| wifi.wait_netif_up());
+        if let Err(e) = again {
+            log::warn!("Rejoining {joined} failed: {e}");
+            let _ = wifi.disconnect();
+            joined = join_wifi(&mut wifi, networks, status);
+        }
+        match wifi.wifi().sta_netif().get_ip_info() {
+            Ok(info) => {
+                info!("Back on Wi-Fi {joined}, IP address {}", info.ip);
+                let mut st = status::lock(status);
+                st.address = format!("{}:{PORT}", info.ip);
+                st.event(format!("Rejoined Wi-Fi {joined}"));
+            }
+            Err(e) => log::warn!("Rejoined {joined}, but no IP address: {e}"),
+        }
     }
 }
 
