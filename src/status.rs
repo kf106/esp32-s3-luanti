@@ -7,6 +7,17 @@ use std::time::Instant;
 
 /// How many recent events the screen keeps.
 const EVENTS: usize = 3;
+/// How many chat lines the Chat page keeps.
+const CHAT_LINES: usize = 20;
+
+/// A line of public chat, for the Chat page.
+#[derive(Clone)]
+pub struct ChatLine {
+    pub name: String,
+    pub text: String,
+    /// A "/me" action ("* Jim waves") rather than something said.
+    pub action: bool,
+}
 
 #[derive(Clone)]
 pub struct Status {
@@ -39,6 +50,8 @@ pub struct Status {
     pub joins: u64,
     pub leaves: u64,
     pub chats: u64,
+    /// Recent public chat, oldest first.
+    pub chat: VecDeque<ChatLine>,
 }
 
 /// Problems (such as failing to save to the SD card), counted from
@@ -76,7 +89,18 @@ impl Status {
             joins: 0,
             leaves: 0,
             chats: 0,
+            chat: VecDeque::new(),
         }))
+    }
+
+    /// A line of public chat: counted (for the LED) and kept for the Chat
+    /// page.
+    pub fn chat_line(&mut self, line: ChatLine) {
+        self.chats += 1;
+        if self.chat.len() == CHAT_LINES {
+            self.chat.pop_front();
+        }
+        self.chat.push_back(line);
     }
 
     pub fn event(&mut self, text: String) {

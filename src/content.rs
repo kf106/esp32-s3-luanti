@@ -397,6 +397,45 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("esp_fir_tree.png", include_bytes!("../media/esp_fir_tree.png")),
     ("esp_fir_tree_top.png", include_bytes!("../media/esp_fir_tree_top.png")),
     ("esp_fir_needles.png", include_bytes!("../media/esp_fir_needles.png")),
+    // Sounds from minetest_game's default mod (see media/LICENSE-sounds.txt),
+    // under their original names: the client asks for some by name
+    // ("default_dig_<group>" while digging, "player_damage").
+    ("default_dig_choppy.1.ogg", include_bytes!("../media/default_dig_choppy.1.ogg")),
+    ("default_dig_choppy.2.ogg", include_bytes!("../media/default_dig_choppy.2.ogg")),
+    ("default_dig_choppy.3.ogg", include_bytes!("../media/default_dig_choppy.3.ogg")),
+    ("default_dig_cracky.1.ogg", include_bytes!("../media/default_dig_cracky.1.ogg")),
+    ("default_dig_cracky.2.ogg", include_bytes!("../media/default_dig_cracky.2.ogg")),
+    ("default_dig_cracky.3.ogg", include_bytes!("../media/default_dig_cracky.3.ogg")),
+    ("default_dig_crumbly.ogg", include_bytes!("../media/default_dig_crumbly.ogg")),
+    ("default_dig_dig_immediate.ogg", include_bytes!("../media/default_dig_dig_immediate.ogg")),
+    ("default_dig_oddly_breakable_by_hand.ogg", include_bytes!("../media/default_dig_oddly_breakable_by_hand.ogg")),
+    ("default_dig_snappy.ogg", include_bytes!("../media/default_dig_snappy.ogg")),
+    ("default_dirt_footstep.1.ogg", include_bytes!("../media/default_dirt_footstep.1.ogg")),
+    ("default_dirt_footstep.2.ogg", include_bytes!("../media/default_dirt_footstep.2.ogg")),
+    ("default_dug_node.1.ogg", include_bytes!("../media/default_dug_node.1.ogg")),
+    ("default_dug_node.2.ogg", include_bytes!("../media/default_dug_node.2.ogg")),
+    ("default_grass_footstep.1.ogg", include_bytes!("../media/default_grass_footstep.1.ogg")),
+    ("default_grass_footstep.2.ogg", include_bytes!("../media/default_grass_footstep.2.ogg")),
+    ("default_grass_footstep.3.ogg", include_bytes!("../media/default_grass_footstep.3.ogg")),
+    ("default_hard_footstep.1.ogg", include_bytes!("../media/default_hard_footstep.1.ogg")),
+    ("default_hard_footstep.2.ogg", include_bytes!("../media/default_hard_footstep.2.ogg")),
+    ("default_hard_footstep.3.ogg", include_bytes!("../media/default_hard_footstep.3.ogg")),
+    ("default_place_node.1.ogg", include_bytes!("../media/default_place_node.1.ogg")),
+    ("default_place_node.2.ogg", include_bytes!("../media/default_place_node.2.ogg")),
+    ("default_place_node.3.ogg", include_bytes!("../media/default_place_node.3.ogg")),
+    ("default_place_node_hard.1.ogg", include_bytes!("../media/default_place_node_hard.1.ogg")),
+    ("default_place_node_hard.2.ogg", include_bytes!("../media/default_place_node_hard.2.ogg")),
+    ("default_sand_footstep.1.ogg", include_bytes!("../media/default_sand_footstep.1.ogg")),
+    ("default_sand_footstep.2.ogg", include_bytes!("../media/default_sand_footstep.2.ogg")),
+    ("default_sand_footstep.3.ogg", include_bytes!("../media/default_sand_footstep.3.ogg")),
+    ("default_snow_footstep.1.ogg", include_bytes!("../media/default_snow_footstep.1.ogg")),
+    ("default_snow_footstep.2.ogg", include_bytes!("../media/default_snow_footstep.2.ogg")),
+    ("default_snow_footstep.3.ogg", include_bytes!("../media/default_snow_footstep.3.ogg")),
+    ("default_snow_footstep.4.ogg", include_bytes!("../media/default_snow_footstep.4.ogg")),
+    ("default_snow_footstep.5.ogg", include_bytes!("../media/default_snow_footstep.5.ogg")),
+    ("default_wood_footstep.1.ogg", include_bytes!("../media/default_wood_footstep.1.ogg")),
+    ("default_wood_footstep.2.ogg", include_bytes!("../media/default_wood_footstep.2.ogg")),
+    ("player_damage.ogg", include_bytes!("../media/player_damage.ogg")),
     // Extra skins to choose from in the inventory (see skins.rs).
     ("esp_skin_wizard.png", include_bytes!("../media/esp_skin_wizard.png")),
     ("esp_skin_elf.png", include_bytes!("../media/esp_skin_elf.png")),
@@ -420,6 +459,8 @@ struct Item<'a> {
     /// Serialised ToolCapabilities, or empty. The client aborts if the hand
     /// ("" item) has none.
     tool_capabilities: Vec<u8>,
+    /// Played when the item is placed (a block's "place" sound).
+    place_sound: Sound,
 }
 
 /// The hand's digging abilities, modelled on minetest_game's hand: dirt
@@ -451,7 +492,70 @@ fn item_image(w: &mut Writer, name: &str) {
 
 /// SimpleSoundSpec: name, gain, pitch, fade.
 fn no_sound(w: &mut Writer) {
-    w.string16("").f32(1.0).f32(1.0).f32(0.0);
+    sound(w, ("", 1.0));
+}
+
+fn sound(w: &mut Writer, (name, gain): (&str, f32)) {
+    w.string16(name).f32(gain).f32(1.0).f32(0.0);
+}
+
+/// A sound: file name (without number and ".ogg": the client picks one of
+/// "name.1.ogg", "name.2.ogg" ... at random) and volume.
+type Sound = (&'static str, f32);
+
+/// The sounds of a block, as minetest_game's default.node_sound_*_defaults
+/// give them.
+struct Sounds {
+    footstep: Sound,
+    /// While digging. "__group" makes the client play "default_dig_<group>"
+    /// for the group the tool digs it by.
+    dig: Sound,
+    dug: Sound,
+    place: Sound,
+}
+
+const GROUP_DIG: Sound = ("__group", 1.0);
+
+fn sounds_of(id: u16) -> Sounds {
+    let stone = Sounds {
+        footstep: ("default_hard_footstep", 0.2),
+        dig: GROUP_DIG,
+        dug: ("default_hard_footstep", 1.0),
+        place: ("default_place_node_hard", 1.0),
+    };
+    let dirt = |footstep: Sound| Sounds {
+        footstep,
+        dig: ("default_dig_crumbly", 0.4),
+        dug: ("default_dirt_footstep", 1.0),
+        place: ("default_place_node", 1.0),
+    };
+    let wood = Sounds {
+        footstep: ("default_wood_footstep", 0.15),
+        dig: ("default_dig_choppy", 0.4),
+        dug: ("default_wood_footstep", 1.0),
+        place: ("default_place_node_hard", 1.0),
+    };
+    match id {
+        CONTENT_DIRT => dirt(("default_dirt_footstep", 0.25)),
+        CONTENT_GRASS => dirt(("default_grass_footstep", 0.25)),
+        CONTENT_SNOW => dirt(("default_snow_footstep", 0.2)),
+        CONTENT_SAND => Sounds {
+            footstep: ("default_sand_footstep", 0.05),
+            dig: GROUP_DIG,
+            dug: ("default_sand_footstep", 0.15),
+            place: ("default_place_node", 1.0),
+        },
+        CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES => Sounds {
+            footstep: ("default_grass_footstep", 0.45),
+            dig: GROUP_DIG,
+            dug: ("default_grass_footstep", 0.7),
+            place: ("default_place_node", 1.0),
+        },
+        CONTENT_BIRCH_TREE | CONTENT_FIR_TREE => wood,
+        id if is_torch(id) => wood,
+        // stone, sandstone, ores
+        _ => stone,
+    }
 }
 
 fn serialize_item(item: &Item) -> Vec<u8> {
@@ -471,7 +575,7 @@ fn serialize_item(item: &Item) -> Vec<u8> {
         .bytes16(&item.tool_capabilities)
         .u16(0) // groups
         .string16(item.place_prediction);
-    no_sound(&mut w); // sound_place
+    sound(&mut w, item.place_sound); // sound_place
     no_sound(&mut w); // sound_place_failed
     w.f32(4.0) // range
         .string16("") // palette image
@@ -500,6 +604,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
         wield_scale: [1.0, 1.0, 2.5],
         place_prediction: "",
         tool_capabilities: hand_tool_capabilities(),
+        place_sound: ("", 1.0),
     }];
     for n in NODES {
         items.push(Item {
@@ -512,6 +617,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             wield_scale: [1.0, 1.0, 1.0],
             place_prediction: n.name,
             tool_capabilities: Vec::new(),
+            place_sound: sounds_of(n.id).place,
         });
     }
 
@@ -674,9 +780,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     }
     regular_nodebox(&mut w); // collision_box (torches aren't walkable)
 
-    no_sound(&mut w); // footstep
-    no_sound(&mut w); // dig
-    no_sound(&mut w); // dug
+    let sounds = sounds_of(n.id);
+    sound(&mut w, sounds.footstep);
+    sound(&mut w, sounds.dig);
+    sound(&mut w, sounds.dug);
 
     w.u8(0) // legacy_facedir_simple
         .u8(0); // legacy_wallmounted

@@ -1540,7 +1540,7 @@ impl Server {
         }
         self.tell_all(&format!("<{name}> {text}"));
         self.event(format!("{name}: {text}"));
-        status::lock(&self.status).chats += 1;
+        status::lock(&self.status).chat_line(status::ChatLine { name, text, action: false });
     }
 
     /// A chat command, as Luanti's built-in ones word their replies.
@@ -1555,7 +1555,11 @@ impl Server {
                     self.tell(from, "-!- Invalid command usage: /me <action>");
                 } else {
                     self.tell_all(&format!("* {name} {param}"));
-                    status::lock(&self.status).chats += 1;
+                    status::lock(&self.status).chat_line(status::ChatLine {
+                        name: name.to_string(),
+                        text: param.to_string(),
+                        action: true,
+                    });
                 }
             }
             "msg" => {

@@ -57,15 +57,17 @@ pub struct System {
 pub enum Page {
     Overview,
     Device,
+    Chat,
 }
 
 impl Page {
-    pub const COUNT: usize = 2;
+    pub const COUNT: usize = 3;
 
     pub fn next(self) -> Self {
         match self {
             Page::Overview => Page::Device,
-            Page::Device => Page::Overview,
+            Page::Device => Page::Chat,
+            Page::Chat => Page::Overview,
         }
     }
 
@@ -73,6 +75,7 @@ impl Page {
         match self {
             Page::Overview => 1,
             Page::Device => 2,
+            Page::Chat => 3,
         }
     }
 }
@@ -203,6 +206,7 @@ pub fn render(f: &mut Frame, view: &View) {
     match view.page {
         Page::Overview => render_overview(f, view.status, view.system),
         Page::Device => render_device(f, view.status, view.system),
+        Page::Chat => render_chat(f, view.status),
     }
     // Which page this is, as dots along the bottom edge, kept clear of the
     // panel's rounded corner.
@@ -298,11 +302,103 @@ fn render_device(f: &mut Frame, st: &Status, sys: &System) {
     match sys.chip_temp {
         Some(t) => {
             let colour = if t < 60.0 { GOOD } else if t < 75.0 { EVENT } else { rgb(239, 83, 80) };
-            f.text(&Pen::new(&SMALL, colour, BACKGROUND, WIDTH), x, y, &format!("{t:.0} C"));
+            f.text(&Pen::new(&SMALL, colour, BACKGROUND, WIDTH), x, y, &format!("{t:.0} °C"));
         }
         None => {
             f.text(&value, x, y, "-");
         }
+    }
+}
+
+/// Split `text` into lines of at most `width` characters, breaking at
+/// spaces where possible. The first line has `first` characters less room
+/// (for the speaker's name).
+fn wrap(text: &str, width: usize, first: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let room = |lines: &Vec<String>| if lines.is_empty() { width.saturating_sub(first).max(1) } else { width };
+    for word in text.split(' ') {
+        let mut word = word.to_string();
+        loop {
+            let used = line.chars().count();
+            let gap = if used == 0 { 0 } else { 1 };
+            let fits = room(&lines).saturating_sub(used + gap);
+            let len = word.chars().count();
+            if len <= fits {
+                if gap == 1 {
+                    line.push(' ');
+                }
+                line.push_str(&word);
+                break;
+            }
+            if used > 0 {
+                lines.push(std::mem::take(&mut line));
+                continue;
+            }
+            // A word longer than a whole line: cut it.
+            let cut: String = word.chars().take(fits.max(1)).collect();
+            word = word.chars().skip(fits.max(1)).collect();
+            lines.push(cut);
+        }
+    }
+    if !line.is_empty() || lines.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// The third page: recent public chat, newest at the bottom, wrapped to
+/// the screen's width. (The font has only plain ASCII characters; others
+/// show as "?".)
+fn render_chat(f: &mut Frame, st: &Status) {
+    let margin = 6;
+    let right = WIDTH - margin;
+    f.fill(0, 0, WIDTH, HEIGHT, BACKGROUND);
+    let header_h = BIG.h + 4;
+    f.fill(0, 0, WIDTH, header_h, HEADER);
+    f.text(&Pen::new(&BIG, TEXT, HEADER, WIDTH), margin, 2, "Chat");
+    let up = uptime(st.started.elapsed());
+    f.text_right(&Pen::new(&SMALL, TEXT, HEADER, WIDTH), right, 2 + (BIG.h - SMALL.h) / 2 + 1, &up);
+
+    let line = SMALL.h + 1;
+    let top = header_h + 4;
+    // Leave the bottom row's right end clear for the page dots.
+    let rows = (HEIGHT - 6 - top) / line;
+    let width = (right - margin) / SMALL.w;
+    if st.chat.is_empty() {
+        f.text(&Pen::new(&SMALL, LABEL, BACKGROUND, right), margin, top, "Nothing said yet.");
+        return;
+    }
+    // Lay out from the newest backwards until the screen is full.
+    // Each row: (name shown first?, text, colour).
+    let mut layout: Vec<(Option<String>, String, u16)> = Vec::new();
+    for c in st.chat.iter().rev() {
+        let (prefix, colour) = if c.action { (format!("* {} ", c.name), EVENT) } else { (format!("<{}> ", c.name), TEXT) };
+        let mut wrapped = wrap(&c.text, width, prefix.chars().count());
+        let first = wrapped.remove(0);
+        let mut rows_for: Vec<(Option<String>, String, u16)> = vec![(Some(prefix), first, colour)];
+        rows_for.extend(wrapped.into_iter().map(|t| (None, t, colour)));
+        // Only whole messages, unless even the newest alone doesn't fit
+        // (then its start).
+        if layout.len() + rows_for.len() > rows {
+            if layout.is_empty() {
+                rows_for.truncate(rows);
+                layout.extend(rows_for.into_iter().rev());
+            }
+            break;
+        }
+        layout.extend(rows_for.into_iter().rev());
+    }
+    layout.reverse();
+    let mut y = top;
+    for (prefix, text, colour) in layout {
+        let mut x = margin;
+        if let Some(p) = prefix {
+            let name_colour = if colour == EVENT { EVENT } else { GOOD };
+            x = f.text(&Pen::new(&SMALL, name_colour, BACKGROUND, right), x, y, &p);
+        }
+        f.text(&Pen::new(&SMALL, colour, BACKGROUND, right), x, y, &text);
+        y += line;
     }
 }
 

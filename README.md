@@ -57,6 +57,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **Up to six players at once:** a seventh is turned away with Luanti's "too many users" message. The limit is `MAX_PLAYERS` in `src/server.rs`; more players would overload the ESP32, mainly in generating map blocks when several explore at once.
 - **Welcome message:** joining players are told what the server is and who else is on.
 - **Chat:** with Luanti's usual limits (500 characters, 8 messages per 10 seconds), and the commands `/help`, `/me`, `/msg` (a private message), `/status` and `/time`.
+- **Sounds:** Minetest Game's footstep, digging, breaking and placing sounds for each kind of block, and a sound when you are hurt. The client plays them; the server only says which.
 - **Players:** other players are shown with the animated Minetest Game character and their name tags.
 - **Skins:**
   - chosen with a live 3D preview in the inventory window;
@@ -68,9 +69,10 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - two blue flashes when a player joins, two purple when one leaves, and a white flash for chat;
   - three red flashes when something goes wrong, such as failing to save to the SD card;
   - amber blinking while looking for Wi-Fi.
-- **Status screens:** the LCD has two pages, switched with the board's BOOT button. The screen switches off after a minute without a press, to keep the board cooler; the next press wakes it on the same page.
+- **Status screens:** the LCD has three pages, switched with the board's BOOT button. The screen switches off after a minute without a press, to keep the board cooler; the next press wakes it on the same page.
   - **Overview:** players online, packet and block counts, memory, and recent events.
   - **Device:** load on each CPU core, how busy the server is, time per map block, memory (free, lowest, largest piece), Wi-Fi signal and channel, failed sends, SD card space, and the chip's temperature.
+  - **Chat:** the latest public chat, newest at the bottom. The screen font covers Latin-1 and Latin Extended-A, so Finnish, Swedish and most European letters show properly.
 
 ## What doesn't (yet)
 
@@ -215,6 +217,7 @@ The code is released under the [MIT licence](LICENSE).
 
 The media in `media/` have their own licences:
 - **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, and the torch models and textures. Their credits are in `media/LICENSE-character.txt` and `media/LICENSE-torch.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
+- **Sounds from Minetest Game** (`default_*.ogg`, `player_damage.ogg`): CC BY-SA 3.0, CC BY 3.0 or CC0, with credits in `media/LICENSE-sounds.txt`.
 - **The skins `esp_skin_wizard.png` and `esp_skin_elf.png`:** made by Keir Finlow-Bates, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 - **The other `esp_*.png` textures:** made for this project and covered by the MIT licence.
 
