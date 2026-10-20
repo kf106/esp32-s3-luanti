@@ -319,7 +319,8 @@ fn run(lcd: Lcd, status: SharedStatus) {
 }
 
 /// The RGB LED, driven by the RMT peripheral: each bit is a high pulse,
-/// short for 0 and long for 1, 24 bits per colour in green, red, blue order.
+/// short for 0 and long for 1, 24 bits per colour. Unlike most WS2812s,
+/// this board's LED takes red, green, blue in that order.
 struct RgbLed {
     channel: rmt_channel_handle_t,
     encoder: rmt_encoder_handle_t,
@@ -370,10 +371,9 @@ impl RgbLed {
 
     /// Show a colour: red, green, blue power, 0 to 255.
     fn set(&self, rgb: [u8; 3]) {
-        let grb = [rgb[1], rgb[0], rgb[2]];
         let config = rmt_transmit_config_t::default();
         unsafe {
-            if esp!(rmt_transmit(self.channel, self.encoder, grb.as_ptr() as *const _, grb.len(), &config)).is_ok() {
+            if esp!(rmt_transmit(self.channel, self.encoder, rgb.as_ptr() as *const _, rgb.len(), &config)).is_ok() {
                 // A few tens of microseconds; the buffer must outlive it.
                 let _ = rmt_tx_wait_all_done(self.channel, 10);
             }
