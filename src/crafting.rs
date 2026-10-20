@@ -48,6 +48,20 @@ pub const RECIPES: &[Recipe] = &[
         count: 1,
     },
     Recipe { width: 1, pattern: &[I(CONTENT_SANDSTONE)], output: CONTENT_SAND, count: 4 },
+    // Bricks from four, blocks from nine (crafting.lua).
+    Recipe { width: 2, pattern: &[I(CONTENT_STONE); 4], output: CONTENT_STONE_BRICK, count: 4 },
+    Recipe { width: 3, pattern: &[I(CONTENT_STONE); 9], output: CONTENT_STONE_BLOCK, count: 9 },
+    Recipe { width: 2, pattern: &[I(CONTENT_SANDSTONE); 4], output: CONTENT_SANDSTONE_BRICK, count: 4 },
+    Recipe { width: 3, pattern: &[I(CONTENT_SANDSTONE); 9], output: CONTENT_SANDSTONE_BLOCK, count: 9 },
+    // Nine lumps or ingots to a block, and back (crafting.lua,
+    // craftitems.lua).
+    Recipe { width: 3, pattern: &[I(ITEM_COAL_LUMP); 9], output: CONTENT_COAL_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_COAL_BLOCK)], output: ITEM_COAL_LUMP, count: 9 },
+    Recipe { width: 3, pattern: &[I(ITEM_STEEL_INGOT); 9], output: CONTENT_STEEL_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_STEEL_BLOCK)], output: ITEM_STEEL_INGOT, count: 9 },
+    // Ladders: an H of sticks makes 5, of steel ingots 15.
+    Recipe { width: 3, pattern: &ladder(G("stick")), output: CONTENT_LADDER_WOOD, count: 5 },
+    Recipe { width: 3, pattern: &ladder(I(ITEM_STEEL_INGOT)), output: CONTENT_LADDER_STEEL, count: 15 },
     // Tools: planks for wooden ones, stone or cobblestone for stone ones.
     Recipe { width: 3, pattern: &pick(G("wood")), output: TOOL_PICK_WOOD, count: 1 },
     Recipe { width: 3, pattern: &pick(G("stone")), output: TOOL_PICK_STONE, count: 1 },
@@ -80,6 +94,8 @@ pub fn cook_result(id: u16) -> Option<(u16, f32)> {
     match id {
         ITEM_IRON_LUMP => Some((ITEM_STEEL_INGOT, 3.0)),
         CONTENT_COBBLE => Some((CONTENT_STONE, 3.0)),
+        // group:sand: glass.
+        CONTENT_SAND => Some((CONTENT_GLASS, 3.0)),
         _ => None,
     }
 }
@@ -107,8 +123,15 @@ pub fn burn_time(id: u16) -> f32 {
         TOOL_SWORD_WOOD => 5.0,
         TOOL_SHOVEL_WOOD => 4.0,
         CONTENT_CHEST | CONTENT_CHEST_LOCKED => 30.0,
+        CONTENT_COAL_BLOCK => 370.0,
+        CONTENT_LADDER_WOOD => 7.0,
         _ => 0.0,
     }
+}
+
+/// minetest_game's ladder shape: two sides joined in the middle.
+const fn ladder(m: Ingredient) -> [Ingredient; 9] {
+    [m, E, m, m, m, m, m, E, m]
 }
 
 /// Eight of `m` round the edge of the grid, `middle` in the middle.
@@ -284,6 +307,14 @@ mod tests {
         assert_eq!(result(&grid(&locked)), Some((CONTENT_CHEST_LOCKED, 1)));
         assert_eq!(result(&grid(&[(7, CONTENT_CHEST, 1), (2, ITEM_STEEL_INGOT, 1)])), Some((CONTENT_CHEST_LOCKED, 1)));
         assert_eq!(result(&grid(&[(7, CONTENT_CHEST, 1), (2, ITEM_STEEL_INGOT, 1), (3, ITEM_STICK, 1)])), None);
+        // Bricks, blocks, ladders.
+        let two: Vec<(usize, u16, u16)> = [4, 5, 7, 8].iter().map(|&i| (i, CONTENT_STONE, 1)).collect();
+        assert_eq!(result(&grid(&two)), Some((CONTENT_STONE_BRICK, 4)));
+        let nine: Vec<(usize, u16, u16)> = (0..9).map(|i| (i, ITEM_STEEL_INGOT, 1)).collect();
+        assert_eq!(result(&grid(&nine)), Some((CONTENT_STEEL_BLOCK, 1)));
+        let h: Vec<(usize, u16, u16)> = [0, 2, 3, 4, 5, 6, 8].iter().map(|&i| (i, s, 1)).collect();
+        assert_eq!(result(&grid(&h)), Some((CONTENT_LADDER_WOOD, 5)));
+        assert_eq!(cook_result(CONTENT_SAND), Some((CONTENT_GLASS, 3.0)));
         let mut full = ring.clone();
         full.push((4, c, 1));
         assert_eq!(result(&grid(&full)), None);

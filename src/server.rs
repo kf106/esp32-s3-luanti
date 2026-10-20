@@ -24,6 +24,8 @@ use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
 use crate::nature::{self, Job, Rng, Timers};
 use crate::world::{self, BlockPos, NodePos, World};
 
+/// The resend timeout before any round trip has been measured (Luanti's
+/// starting resend_timeout).
 const RESEND_INTERVAL: Duration = Duration::from_millis(500);
 const PEER_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -65,6 +67,8 @@ const CONGESTION_BACKOFF: Duration = Duration::from_millis(20);
 /// A packet that couldn't be sent is tried again after this long (rather
 /// than the full RESEND_INTERVAL).
 const RETRY_UNSENT: Duration = Duration::from_millis(30);
+/// Each resend of a packet waits this much longer than the last (Luanti).
+const RESEND_SCALE_BASE: f32 = 1.5;
 /// Report failed sends at most this often.
 const SEND_FAILURE_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -126,8 +130,13 @@ const DROP_LIFT: f32 = 2.0;
 struct Unacked {
     seqnum: u16,
     data: Vec<u8>,
-    last_sent: Instant,
-    tries: u32,
+    /// When it first went out (None: not yet, the radio was full), for the
+    /// round-trip time when its ACK comes.
+    first_sent: Option<Instant>,
+    /// When to send it (again) if no ACK has come.
+    due: Instant,
+    /// Times it has been resent.
+    resends: u32,
 }
 
 struct Channel {
@@ -209,6 +218,10 @@ struct Peer {
     keys: u32,
     /// The chest whose window they have open.
     chest: Option<NodePos>,
+    /// Average round-trip time (seconds) from ACKs, and the resend timeout
+    /// it gives (Luanti's UDPPeer::reportRTT).
+    avg_rtt: Option<f32>,
+    resend_timeout: Duration,
 }
 
 impl Peer {
@@ -245,7 +258,20 @@ impl Peer {
             furnace_form_sent: None,
             keys: 0,
             chest: None,
+            avg_rtt: None,
+            resend_timeout: RESEND_INTERVAL,
         }
+    }
+
+    /// A round-trip time from an ACK: keep a running average, and resend
+    /// after twice it, from 0.1 to 2 seconds (Luanti's reportRTT).
+    fn report_rtt(&mut self, rtt: f32) {
+        let avg = match self.avg_rtt {
+            Some(avg) => avg * 0.9 + rtt * 0.1,
+            None => rtt,
+        };
+        self.avg_rtt = Some(avg);
+        self.resend_timeout = Duration::from_secs_f32((avg * 2.0).clamp(0.1, 2.0));
     }
 
     fn display_name(&self) -> &str {
@@ -339,6 +365,9 @@ pub struct Server {
     /// Sends that failed since the last report, and when that was.
     send_failures: u32,
     send_failures_reported: Instant,
+    /// Reliable packets resent, and ACKs received, since the last report.
+    resends: u32,
+    acks: u32,
 }
 
 /// Everything the server needs, gathered up by main().
@@ -616,6 +645,8 @@ impl Server {
             congested_until: Instant::now(),
             send_failures: 0,
             send_failures_reported: Instant::now(),
+            resends: 0,
+            acks: 0,
         }
     }
 
@@ -791,9 +822,15 @@ impl Server {
 
             Packet::Control(Control::Ack(seqnum)) => {
                 if let Some(peer) = self.peers.get_mut(&from) {
-                    peer.channels[channel]
-                        .unacked
-                        .retain(|u| u.seqnum != seqnum);
+                    let unacked = &mut peer.channels[channel].unacked;
+                    if let Some(i) = unacked.iter().position(|u| u.seqnum == seqnum) {
+                        // Round-trip time from its first sending ("a bit off
+                        // for re-sent packets but that's okay", as Luanti says).
+                        if let Some(sent) = unacked.remove(i).first_sent {
+                            peer.report_rtt(sent.elapsed().as_secs_f32());
+                            self.acks += 1;
+                        }
+                    }
                 }
                 self.flush(from, channel);
             }
@@ -1646,7 +1683,8 @@ impl Server {
                     support != world::CONTENT_AIR
                 };
                 // A furnace faces the player who places it.
-                let param2 = if torch {
+                // Torches and ladders face what they were placed against.
+                let param2 = if content::is_wallmounted(id) {
                     content::wallmounted_param2(under, above)
                 } else if content::is_furnace(id) || content::is_chest(id) {
                     content::facedir_param2(above, body)
@@ -2935,6 +2973,7 @@ impl Server {
         let mut failed = false;
         let mut count = 0;
         if let Some(peer) = self.peers.get_mut(&addr) {
+            let timeout = peer.resend_timeout;
             let ch = &mut peer.channels[channel];
             while ch.unacked.len() < RELIABLE_WINDOW {
                 let Some(body) = ch.queue.pop_front() else {
@@ -2946,10 +2985,9 @@ impl Server {
                 let now = Instant::now();
                 let sent = send_datagram(&self.socket, addr, &data);
                 // Unsent, it is in the window all the same (it has its
-                // seqnum), and is retried soon.
-                let retry_at = now.checked_sub(RESEND_INTERVAL - RETRY_UNSENT).unwrap_or(now);
-                let last_sent = if sent { now } else { retry_at };
-                ch.unacked.push(Unacked { seqnum, data, last_sent, tries: 1 });
+                // seqnum), and is tried again soon.
+                let (first_sent, due) = if sent { (Some(now), now + timeout) } else { (None, now + RETRY_UNSENT) };
+                ch.unacked.push(Unacked { seqnum, data, first_sent, due, resends: 0 });
                 count += 1;
                 if !sent {
                     failed = true;
@@ -2989,11 +3027,22 @@ impl Server {
             } else {
                 String::new()
             };
+            let rtts: Vec<String> = self
+                .peers
+                .values()
+                .filter_map(|p| p.avg_rtt.map(|r| format!("{} {:.0} ms", p.display_name(), r * 1000.0)))
+                .collect();
             warn!(
-                "{} packet(s) couldn't be sent in the last {}s: {full} with Wi-Fi transmit buffers full{others}; slowing down",
+                "{} packet(s) couldn't be sent in the last {}s: {full} with Wi-Fi transmit buffers full{others}; \
+                 {} resent, {} ACKs; round trip {}; slowing down",
                 self.send_failures,
-                self.send_failures_reported.elapsed().as_secs()
+                self.send_failures_reported.elapsed().as_secs(),
+                self.resends,
+                self.acks,
+                if rtts.is_empty() { "unknown".to_string() } else { rtts.join(", ") },
             );
+            self.resends = 0;
+            self.acks = 0;
             self.send_failures = 0;
             self.send_failures_reported = Instant::now();
         }
@@ -3088,22 +3137,37 @@ impl Server {
         }
         let mut failed = false;
         let mut status_out = 0;
+        let mut resent = 0;
         'peers: for (addr, peer) in self.peers.iter_mut() {
+            let timeout = peer.resend_timeout;
             for (n, ch) in peer.channels.iter_mut().enumerate() {
                 for u in ch.unacked.iter_mut() {
-                    if now.duration_since(u.last_sent) >= RESEND_INTERVAL {
-                        if !send_datagram(&self.socket, *addr, &u.data) {
-                            failed = true;
-                            break 'peers;
-                        }
-                        status_out += 1;
-                        u.last_sent = now;
-                        u.tries += 1;
-                        debug!("Resending reliable {} on ch{n} (try {})", u.seqnum, u.tries);
+                    if now < u.due {
+                        continue;
+                    }
+                    if !send_datagram(&self.socket, *addr, &u.data) {
+                        u.due = now + RETRY_UNSENT;
+                        failed = true;
+                        break 'peers;
+                    }
+                    status_out += 1;
+                    if u.first_sent.is_none() {
+                        // Its first sending (the radio was full before).
+                        u.first_sent = Some(now);
+                        u.due = now + timeout;
+                    } else {
+                        // Each resend of a packet waits 1.5 times longer
+                        // (Luanti's RESEND_SCALE_BASE), so a slow link isn't
+                        // swamped with copies of what is still on its way.
+                        u.resends += 1;
+                        resent += 1;
+                        u.due = now + timeout.mul_f32(RESEND_SCALE_BASE.powi(u.resends as i32));
+                        debug!("Resending reliable {} on ch{n} (resend {})", u.seqnum, u.resends);
                     }
                 }
             }
         }
+        self.resends += resent;
         status::lock(&self.status).packets_out += status_out;
         if failed {
             self.note_send_failure();

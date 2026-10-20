@@ -7,7 +7,8 @@
 //!   <slot> <item name> <count>              (main)
 //!   craft <slot> <item name> <count>
 //!   craftresult 0 <item name> <count>
-//! plus a line `kit <n>` recording which starter kit the player has had.
+//! plus a line `kit <n>` recording which starter kit the player has had,
+//! and `testkit <token>` for the last test kit (built with TEST=1).
 
 use std::fs;
 use std::io;
@@ -26,6 +27,28 @@ pub const MAIN_SIZE: usize = 32;
 /// kit to existing players too.
 const STARTER_KIT: u8 = 1;
 const STARTER_TORCHES: u16 = 20;
+
+/// The test kit, given once per firmware built with TEST=1 (see
+/// build.rs): 50 of each material for crafting and building, so every
+/// recipe can be tried at once.
+const TEST_KIT: &[u16] = &[
+    content::CONTENT_COBBLE,
+    content::CONTENT_STONE,
+    content::CONTENT_SAND,
+    content::CONTENT_SANDSTONE,
+    content::CONTENT_BIRCH_TREE,
+    content::CONTENT_FIR_TREE,
+    content::CONTENT_APPLE_TREE,
+    content::CONTENT_BIRCH_WOOD,
+    content::CONTENT_FIR_WOOD,
+    content::CONTENT_APPLE_WOOD,
+    content::ITEM_STICK,
+    content::ITEM_COAL_LUMP,
+    content::ITEM_IRON_LUMP,
+    content::ITEM_STEEL_INGOT,
+    content::CONTENT_APPLE,
+];
+const TEST_KIT_COUNT: u16 = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stack {
@@ -104,11 +127,13 @@ pub struct Inventory {
     pub craft_result: [Option<Stack>; 1],
     /// The last starter kit given (0: none yet).
     kit: u8,
+    /// The token of the last test kit given.
+    test_kit: Option<String>,
 }
 
 impl Inventory {
     pub fn new() -> Self {
-        Self { main: [None; MAIN_SIZE], craft: [None; GRID_SIZE], craft_result: [None], kit: 0 }
+        Self { main: [None; MAIN_SIZE], craft: [None; GRID_SIZE], craft_result: [None], kit: 0, test_kit: None }
     }
 
     pub fn list(&self, list: List) -> &[Option<Stack>] {
@@ -224,8 +249,30 @@ impl Inventory {
         true
     }
 
+    /// Give the test kit if this firmware has one (built with TEST=1)
+    /// that this inventory hasn't had. Returns true if anything changed.
+    fn give_test_kit(&mut self) -> bool {
+        let Some(token) = option_env!("TEST_KIT_TOKEN") else {
+            return false;
+        };
+        if self.test_kit.as_deref() == Some(token) {
+            return false;
+        }
+        self.test_kit = Some(token.to_string());
+        for &id in TEST_KIT {
+            let lost = self.add(Stack::new(id, TEST_KIT_COUNT));
+            if lost > 0 {
+                warn!("Test kit: no room for {lost} {}", content::name_of(id));
+            }
+        }
+        true
+    }
+
     fn to_text(&self) -> String {
         let mut t = format!("kit {}\n", self.kit);
+        if let Some(token) = &self.test_kit {
+            t.push_str(&format!("testkit {token}\n"));
+        }
         for (i, s) in self.main.iter().enumerate() {
             if let Some(s) = s {
                 t.push_str(&format!("{i} {}\n", s.item_string()));
@@ -247,6 +294,11 @@ impl Inventory {
         for line in text.lines() {
             let mut f = line.split_whitespace().peekable();
             let list = match f.peek() {
+                Some(&"testkit") => {
+                    f.next();
+                    inv.test_kit = f.next().map(str::to_string);
+                    continue;
+                }
                 Some(&"kit") => {
                     f.next();
                     if let (Some(Ok(k)), None) = (f.next().map(str::parse::<u8>), f.next()) {
@@ -389,6 +441,10 @@ impl InventoryStore {
     /// the starter kit added (and saved) if they haven't had it yet.
     pub fn load(&self, name: &str) -> Inventory {
         let mut inv = self.read(name);
+        if inv.give_test_kit() {
+            log::info!("Gave {name} the test kit");
+            self.save(name, &inv);
+        }
         if inv.give_starter_kit() {
             log::info!("Gave {name} the starter kit");
             self.save(name, &inv);

@@ -184,6 +184,7 @@ fn run(lcd: Lcd, status: SharedStatus) {
     let mut page = Page::Overview;
     let button = Button::new();
     let mut cpu = CpuLoad::new();
+    let mut stacks_reported: Option<Instant> = None;
     let thermometer = Thermometer::new();
     let mut last = (Instant::now(), 0u64, 0u64);
     let mut last_server = (0u64, 0u64, 0u64); // busy_us, block_us, blocks
@@ -203,6 +204,10 @@ fn run(lcd: Lcd, status: SharedStatus) {
         (st.joins, st.leaves, st.chats, status::problems())
     };
     loop {
+        if stacks_reported.map_or(true, |t| t.elapsed() >= STACK_REPORT) {
+            report_stacks();
+            stacks_reported = Some(Instant::now());
+        }
         // The LED, whether the screen is on or off: breathing and flashing
         // (see indicator.rs).
         let (state, counts) = {
@@ -399,6 +404,42 @@ impl Button {
         let pressed = down && !self.was_down.get();
         self.was_down.set(down);
         pressed
+    }
+}
+
+/// How often to report every task's unused stack.
+const STACK_REPORT: Duration = Duration::from_secs(60);
+/// Below this much unused stack (bytes), a task is reported as a warning.
+const STACK_LOW: u32 = 1536;
+
+/// Log how much of its stack each task has never used (FreeRTOS's high
+/// water mark; on ESP-IDF stacks are counted in bytes). A task that runs
+/// out of stack overwrites the memory next to it, so this is worth
+/// watching as the server grows.
+fn report_stacks() {
+    let mut tasks: Vec<TaskStatus_t> = Vec::new();
+    let mut total: u32 = 0;
+    let n = unsafe {
+        let capacity = uxTaskGetNumberOfTasks() + 4;
+        tasks.reserve(capacity as usize);
+        let n = uxTaskGetSystemState(tasks.as_mut_ptr(), capacity, &mut total);
+        tasks.set_len(n as usize);
+        n
+    };
+    let mut list: Vec<(String, u32)> = tasks[..n as usize]
+        .iter()
+        .map(|t| {
+            let name = unsafe { std::ffi::CStr::from_ptr(t.pcTaskName) }.to_string_lossy().into_owned();
+            (name, t.usStackHighWaterMark as u32)
+        })
+        .collect();
+    list.sort_by_key(|(_, free)| *free);
+    let text: Vec<String> = list.iter().map(|(name, free)| format!("{name} {free}")).collect();
+    if list.first().is_some_and(|(_, free)| *free < STACK_LOW) {
+        warn!("Stack left (bytes), lowest first: {}", text.join(", "));
+        crate::status::problem();
+    } else {
+        info!("Stack left (bytes), lowest first: {}", text.join(", "));
     }
 }
 

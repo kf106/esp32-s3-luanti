@@ -56,6 +56,9 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - wooden and stone pickaxes, shovels, axes and swords, in Minetest Game's shapes (planks for wood, stone or cobblestone for stone);
   - a furnace from 8 stone or cobblestone in a ring;
   - a chest from 8 planks in a ring; a locked chest with a steel ingot in the middle, or from a chest and a steel ingot;
+  - building blocks: 4 stone make 4 stone bricks and 9 make 9 stone blocks, and the same for sandstone; 9 coal lumps or steel ingots make a coal or steel block, and back;
+  - ladders: an H of sticks makes 5 wooden ladders, of steel ingots 15 steel ones.
+- **Glass:** smelt sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
   - steel pickaxes, shovels, axes and swords from steel ingots.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
   - It smelts iron lumps into steel ingots and cobblestone into stone, 3 seconds each.
@@ -187,6 +190,16 @@ RESET_SD=1 WIFI_SSID='your network' WIFI_PASS='your password' cargo run --releas
 When that firmware starts, it deletes `/sd/auth`, `/sd/world` and `/sd/players`: every account, the world's changes, and all inventories and player files. The world is then generated afresh from the seed. Extra media in `/sd/media` are kept.
 
 It happens once. Each `RESET_SD=1` build has its own token, which it writes to `/sd/reset-done` after the reset, so rebooting the board doesn't wipe the card again. Build without `RESET_SD` afterwards as usual. Alternatively, delete those three folders by hand with the card in a PC.
+
+### Test kit
+
+To try out crafting and building without gathering everything first, build with `TEST=1`:
+
+```
+TEST=1 WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
+```
+
+Every player then gets, once, 50 each of cobblestone, stone, sand, sandstone, the three kinds of tree trunk and planks, sticks, coal lumps, iron lumps, steel ingots and apples. Each `TEST=1` build has its own token (recorded in the player's inventory file), so flashing another one hands out a fresh kit. Build without `TEST` for normal play.
 
 ### Extra media and skins
 

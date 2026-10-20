@@ -60,6 +60,12 @@ pub enum Kind {
     Chest,
     /// A chest while someone has it open: minetest_game's open-lid model.
     ChestOpen,
+    /// Glass: see-through, framed (minetest_game's glasslike_framed_optional:
+    /// connected frames if the player has "connected glass" on).
+    Glass,
+    /// A ladder: a flat picture against a wall (signlike, wallmounted),
+    /// walked through and climbed.
+    Ladder,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -94,6 +100,15 @@ pub const CONTENT_CHEST: u16 = 28;
 pub const CONTENT_CHEST_OPEN: u16 = 29;
 pub const CONTENT_CHEST_LOCKED: u16 = 30;
 pub const CONTENT_CHEST_LOCKED_OPEN: u16 = 31;
+pub const CONTENT_STONE_BRICK: u16 = 32;
+pub const CONTENT_STONE_BLOCK: u16 = 33;
+pub const CONTENT_SANDSTONE_BRICK: u16 = 34;
+pub const CONTENT_SANDSTONE_BLOCK: u16 = 35;
+pub const CONTENT_COAL_BLOCK: u16 = 36;
+pub const CONTENT_STEEL_BLOCK: u16 = 37;
+pub const CONTENT_GLASS: u16 = 38;
+pub const CONTENT_LADDER_WOOD: u16 = 39;
+pub const CONTENT_LADDER_STEEL: u16 = 40;
 /// Health an apple gives (minetest_game's item_eat(2)).
 pub const APPLE_HP: u16 = 2;
 /// Leaves give a sapling one time in this many (minetest_game's rarity).
@@ -509,6 +524,109 @@ pub const NODES: &[Node] = &[
         drop: CONTENT_CHEST_LOCKED,
         drop_count: 1,
         kind: Kind::ChestOpen,
+    },
+    // Building blocks from minetest_game's recipes. The stone and sandstone
+    // ones are drawn to match our stone and sandstone; the others use
+    // minetest_game's textures (CC BY-SA 3.0, see media/LICENSE-items.txt).
+    Node {
+        id: CONTENT_STONE_BRICK,
+        name: "esp:stonebrick",
+        description: "Stone Brick",
+        tiles: ["esp_stone_brick.png"; 6],
+        groups: &[("cracky", 2), ("stone", 1)],
+        drop: CONTENT_STONE_BRICK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_STONE_BLOCK,
+        name: "esp:stone_block",
+        description: "Stone Block",
+        tiles: ["esp_stone_block.png"; 6],
+        groups: &[("cracky", 2), ("stone", 1)],
+        drop: CONTENT_STONE_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_SANDSTONE_BRICK,
+        name: "esp:sandstonebrick",
+        description: "Sandstone Brick",
+        tiles: ["esp_sandstone_brick.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: CONTENT_SANDSTONE_BRICK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_SANDSTONE_BLOCK,
+        name: "esp:sandstone_block",
+        description: "Sandstone Block",
+        tiles: ["esp_sandstone_block.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: CONTENT_SANDSTONE_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_COAL_BLOCK,
+        name: "esp:coalblock",
+        description: "Coal Block",
+        tiles: ["default_coal_block.png"; 6],
+        groups: &[("cracky", 3)],
+        drop: CONTENT_COAL_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    // Level 2: only a steel pickaxe digs it.
+    Node {
+        id: CONTENT_STEEL_BLOCK,
+        name: "esp:steelblock",
+        description: "Steel Block",
+        tiles: ["default_steel_block.png"; 6],
+        groups: &[("cracky", 1), ("level", 2)],
+        drop: CONTENT_STEEL_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    // The frame picture, then the detail, as minetest_game's two tiles
+    // fill the six.
+    Node {
+        id: CONTENT_GLASS,
+        name: "esp:glass",
+        description: "Glass",
+        tiles: [
+            "default_glass.png",
+            "default_glass_detail.png",
+            "default_glass_detail.png",
+            "default_glass_detail.png",
+            "default_glass_detail.png",
+            "default_glass_detail.png",
+        ],
+        groups: &[("cracky", 3), ("oddly_breakable_by_hand", 3)],
+        drop: CONTENT_GLASS,
+        drop_count: 1,
+        kind: Kind::Glass,
+    },
+    Node {
+        id: CONTENT_LADDER_WOOD,
+        name: "esp:ladder_wood",
+        description: "Wooden Ladder",
+        tiles: ["default_ladder_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 2)],
+        drop: CONTENT_LADDER_WOOD,
+        drop_count: 1,
+        kind: Kind::Ladder,
+    },
+    Node {
+        id: CONTENT_LADDER_STEEL,
+        name: "esp:ladder_steel",
+        description: "Steel Ladder",
+        tiles: ["default_ladder_steel.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: CONTENT_LADDER_STEEL,
+        drop_count: 1,
+        kind: Kind::Ladder,
     },
 ];
 
@@ -952,18 +1070,18 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder))
 }
 
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -989,6 +1107,12 @@ pub fn facedir_param2(above: [i16; 3], player: [f32; 3]) -> u8 {
 
 pub fn is_torch(id: u16) -> bool {
     def(id).is_some_and(|n| n.kind == Kind::Torch)
+}
+
+/// Nodes that hang on what they were placed against (param2 says which
+/// way): torches and ladders.
+pub fn is_wallmounted(id: u16) -> bool {
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Ladder))
 }
 
 pub fn is_sapling(id: u16) -> bool {
@@ -1239,6 +1363,28 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_cool_lava.1.ogg", include_bytes!("../media/default_cool_lava.1.ogg")),
     ("default_cool_lava.2.ogg", include_bytes!("../media/default_cool_lava.2.ogg")),
     ("default_cool_lava.3.ogg", include_bytes!("../media/default_cool_lava.3.ogg")),
+    ("esp_stone_brick.png", include_bytes!("../media/esp_stone_brick.png")),
+    ("esp_stone_block.png", include_bytes!("../media/esp_stone_block.png")),
+    ("esp_sandstone_brick.png", include_bytes!("../media/esp_sandstone_brick.png")),
+    ("esp_sandstone_block.png", include_bytes!("../media/esp_sandstone_block.png")),
+    ("default_coal_block.png", include_bytes!("../media/default_coal_block.png")),
+    ("default_steel_block.png", include_bytes!("../media/default_steel_block.png")),
+    ("default_glass.png", include_bytes!("../media/default_glass.png")),
+    ("default_glass_detail.png", include_bytes!("../media/default_glass_detail.png")),
+    ("default_ladder_wood.png", include_bytes!("../media/default_ladder_wood.png")),
+    ("default_ladder_steel.png", include_bytes!("../media/default_ladder_steel.png")),
+    ("default_glass_footstep.ogg", include_bytes!("../media/default_glass_footstep.ogg")),
+    ("default_break_glass.1.ogg", include_bytes!("../media/default_break_glass.1.ogg")),
+    ("default_break_glass.2.ogg", include_bytes!("../media/default_break_glass.2.ogg")),
+    ("default_break_glass.3.ogg", include_bytes!("../media/default_break_glass.3.ogg")),
+    ("default_metal_footstep.1.ogg", include_bytes!("../media/default_metal_footstep.1.ogg")),
+    ("default_metal_footstep.2.ogg", include_bytes!("../media/default_metal_footstep.2.ogg")),
+    ("default_metal_footstep.3.ogg", include_bytes!("../media/default_metal_footstep.3.ogg")),
+    ("default_dig_metal.ogg", include_bytes!("../media/default_dig_metal.ogg")),
+    ("default_dug_metal.1.ogg", include_bytes!("../media/default_dug_metal.1.ogg")),
+    ("default_dug_metal.2.ogg", include_bytes!("../media/default_dug_metal.2.ogg")),
+    ("default_place_node_metal.1.ogg", include_bytes!("../media/default_place_node_metal.1.ogg")),
+    ("default_place_node_metal.2.ogg", include_bytes!("../media/default_place_node_metal.2.ogg")),
     ("chest_open.obj", include_bytes!("../media/chest_open.obj")),
     ("default_chest_top.png", include_bytes!("../media/default_chest_top.png")),
     ("default_chest_side.png", include_bytes!("../media/default_chest_side.png")),
@@ -1375,6 +1521,20 @@ fn sounds_of(id: u16) -> Sounds {
         },
         CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD | CONTENT_APPLE_TREE | CONTENT_APPLE_WOOD => wood,
         id if is_chest(id) => wood,
+        CONTENT_LADDER_WOOD => wood,
+        // minetest_game's node_sound_glass_defaults and _metal_defaults.
+        CONTENT_GLASS => Sounds {
+            footstep: ("default_glass_footstep", 0.3),
+            dig: ("default_glass_footstep", 0.5),
+            dug: ("default_break_glass", 1.0),
+            place: ("default_place_node_hard", 1.0),
+        },
+        CONTENT_STEEL_BLOCK | CONTENT_LADDER_STEEL => Sounds {
+            footstep: ("default_metal_footstep", 0.2),
+            dig: ("default_dig_metal", 0.5),
+            dug: ("default_dug_metal", 0.5),
+            place: ("default_place_node_metal", 0.5),
+        },
         id if is_torch(id) => wood,
         // stone, sandstone, ores
         _ => stone,
@@ -1443,12 +1603,12 @@ pub fn itemdef_bytes() -> Vec<u8> {
             // A torch or sapling is a flat picture, not a cube.
             inventory_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
-                Kind::Sapling | Kind::Apple => n.tiles[0],
+                Kind::Sapling | Kind::Apple | Kind::Ladder => n.tiles[0],
                 _ => "",
             },
             wield_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
-                Kind::Sapling | Kind::Apple => n.tiles[0],
+                Kind::Sapling | Kind::Apple | Kind::Ladder => n.tiles[0],
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
@@ -1517,6 +1677,8 @@ const ALPHAMODE_CLIP: u8 = 1;
 const NDT_MESH: u8 = 16;
 const NDT_PLANTLIKE: u8 = 9;
 const NDT_AIRLIKE: u8 = 1;
+const NDT_SIGNLIKE: u8 = 8;
+const NDT_GLASSLIKE_FRAMED_OPTIONAL: u8 = 15;
 const NODEBOX_FIXED: u8 = 1;
 const TILE_FLAG_TILEABLE_HORIZONTAL: u16 = 1 << 1;
 const TILE_FLAG_TILEABLE_VERTICAL: u16 = 1 << 2;
@@ -1585,6 +1747,23 @@ fn open_chest_selection_box(w: &mut Writer) {
     }
 }
 
+/// A ladder's box: Luanti's default wallmounted boxes, a sixteenth of a
+/// node thick against the wall (top, bottom, side), in BS units.
+fn ladder_selection_box(w: &mut Writer) {
+    w.u8(6).u8(NODEBOX_WALLMOUNTED);
+    let t = 1.0 / 16.0;
+    let boxes: [[f32; 6]; 3] = [
+        [-0.5, 0.5 - t, -0.5, 0.5, 0.5, 0.5],
+        [-0.5, -0.5, -0.5, 0.5, -0.5 + t, 0.5],
+        [-0.5, -0.5, -0.5, -0.5 + t, 0.5, 0.5],
+    ];
+    for b in boxes {
+        for v in b {
+            w.f32(v * 10.0);
+        }
+    }
+}
+
 /// minetest_game's open chest model.
 const CHEST_OPEN_MESH: &str = "chest_open.obj";
 
@@ -1613,12 +1792,18 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let sapling = matches!(n.kind, Kind::Sapling | Kind::Apple);
     let mark = n.kind == Kind::Mark;
     let chest = matches!(n.kind, Kind::Chest | Kind::ChestOpen);
+    let glass = n.kind == Kind::Glass;
+    let ladder = n.kind == Kind::Ladder;
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
         w.u8(CPT_LIGHT).u8(0);
     } else if n.kind == Kind::Furnace {
         w.u8(0).u8(CPT2_FACEDIR);
+    } else if ladder {
+        w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
+    } else if glass {
+        w.u8(CPT_LIGHT).u8(0);
     } else if matches!(n.kind, Kind::Chest | Kind::ChestOpen) {
         // paramtype "light", as minetest_game's chests.
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
@@ -1635,6 +1820,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Leaves => (NDT_ALLFACES_OPTIONAL, ""),
         Kind::Solid | Kind::Furnace | Kind::Chest => (NDT_NORMAL, ""),
         Kind::ChestOpen => (NDT_MESH, CHEST_OPEN_MESH),
+        Kind::Glass => (NDT_GLASSLIKE_FRAMED_OPTIONAL, ""),
+        Kind::Ladder => (NDT_SIGNLIKE, ""),
         Kind::Sapling | Kind::Apple => (NDT_PLANTLIKE, ""),
         Kind::Mark => (NDT_AIRLIKE, ""),
     };
@@ -1645,7 +1832,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // for plantlike by default, as for meshes).
     let flags = if torch {
         TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL
-    } else if sapling {
+    } else if sapling || ladder {
         0
     } else {
         TILE_FLAG_BACKFACE_CULLING
@@ -1676,8 +1863,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0); // leveled
 
     // lighting
-    w.u8((torch || leaves || sapling || mark || chest) as u8) // light_propagates
-        .u8((torch || sapling || mark) as u8) // sunlight_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder) as u8) // light_propagates
+        .u8((torch || sapling || mark || glass || ladder) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
     let tree = n.groups.iter().any(|(g, _)| *g == "tree");
@@ -1687,7 +1874,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     w.u8(walkable(n.id) as u8) // walkable
         .u8(if mark { 0 } else { POINTABLE })
         .u8(!mark as u8) // diggable
-        .u8(0) // climbable
+        .u8(ladder as u8) // climbable
         .u8(mark as u8) // buildable_to
         .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen) as u8) // rightclickable
         .u32(0); // damage_per_second
@@ -1709,6 +1896,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         apple_selection_box(&mut w);
     } else if n.kind == Kind::ChestOpen {
         open_chest_selection_box(&mut w);
+    } else if ladder {
+        ladder_selection_box(&mut w);
     } else if sapling {
         sapling_selection_box(&mut w);
     } else {
@@ -1726,7 +1915,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     w.string16("air") // node_dig_prediction
         .u8(LEVELED_MAX)
-        .u8(if torch || leaves || sapling || mark { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
+        .u8(if torch || leaves || sapling || mark || glass || ladder { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
         .u8(0) // move_resistance
         .u8(0) // liquid_move_physics
         .u8(0); // post_effect_color_shaded

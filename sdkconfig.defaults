@@ -1,6 +1,8 @@
 # Rust often needs a bit of an extra main task stack size compared to C (the default is 3K)
 # You might have to increase this further if you allocate large stack variables in the main task
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+# The Luanti server runs in the main task, and has grown: 16 KB once
+# overflowed into the heap after a login.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
 
 # Increase a bit these stack sizes as they are also a bit too small by default
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
@@ -32,3 +34,7 @@ CONFIG_LWIP_UDP_RECVMBOX_SIZE=32
 
 # Per-task CPU time, for the CPU load figures on the status screen
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+
+# Stop at once, naming the task, if any task overflows its stack (rather than
+# corrupting the memory next to it and crashing later somewhere else).
+CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y

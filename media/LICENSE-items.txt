@@ -3,7 +3,9 @@ default_steel_ingot.png, gui_furnace_arrow_fg.png, the tool pictures
 default_tool_{wood,stone,steel}{pick,shovel,axe,sword}.png, the furnace textures
 default_furnace_*.png, default_apple.png and the saplings default_aspen_sapling.png,
 default_pine_sapling.png and default_sapling.png, the chest textures default_chest_*.png and
-the open chest model chest_open.obj are from the default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
+the open chest model chest_open.obj, default_glass.png, default_glass_detail.png,
+default_coal_block.png, default_steel_block.png, default_ladder_wood.png and
+default_ladder_steel.png are from the default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
 mods/default/textures), unmodified and under their original names. Their licence and
 credits, from that mod's license.txt:
 
