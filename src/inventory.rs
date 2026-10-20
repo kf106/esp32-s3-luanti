@@ -111,7 +111,7 @@ impl Inventory {
         Self { main: [None; MAIN_SIZE], craft: [None; GRID_SIZE], craft_result: [None], kit: 0 }
     }
 
-    fn list(&self, list: List) -> &[Option<Stack>] {
+    pub fn list(&self, list: List) -> &[Option<Stack>] {
         match list {
             List::Main => &self.main,
             List::Craft => &self.craft,
@@ -119,7 +119,7 @@ impl Inventory {
         }
     }
 
-    fn list_mut(&mut self, list: List) -> &mut [Option<Stack>] {
+    pub fn list_mut(&mut self, list: List) -> &mut [Option<Stack>] {
         match list {
             List::Main => &mut self.main,
             List::Craft => &mut self.craft,
@@ -161,78 +161,6 @@ impl Inventory {
 
     pub fn get(&self, slot: usize) -> Option<Stack> {
         self.main.get(slot).copied().flatten()
-    }
-
-    /// IMoveAction: move `count` items (0 = the whole stack) from one slot
-    /// to another, in the same list or another. Into an empty slot or onto
-    /// the same item, as many as fit move; onto a different item, the two
-    /// stacks swap places (only when the whole stack is moved). Nothing
-    /// can be put into the craft result. Returns false if the move is
-    /// impossible.
-    pub fn move_items(&mut self, from: (List, usize), to: (List, usize), count: u16) -> bool {
-        if from == to || to.0 == List::CraftResult {
-            return false;
-        }
-        let (Some(&src), Some(&dst)) = (self.list(from.0).get(from.1), self.list(to.0).get(to.1)) else {
-            return false;
-        };
-        let Some(src) = src else {
-            return false;
-        };
-        let n = if count == 0 || count > src.count { src.count } else { count };
-        match dst {
-            None => {
-                self.list_mut(to.0)[to.1] = Some(Stack { count: n, ..src });
-            }
-            Some(d) if d.stacks_with(&src) => {
-                let n = n.min(content::stack_max(d.id).saturating_sub(d.count));
-                if n == 0 {
-                    return false;
-                }
-                self.list_mut(to.0)[to.1] = Some(Stack { count: d.count + n, ..d });
-                self.take(from.0, from.1, n);
-                return true;
-            }
-            Some(d) => {
-                // Luanti swaps only when the whole moved amount can go; we
-                // swap whole stacks, and only when the whole stack is moved.
-                if n != src.count {
-                    return false;
-                }
-                self.list_mut(to.0)[to.1] = Some(src);
-                self.list_mut(from.0)[from.1] = Some(d);
-                return true;
-            }
-        }
-        self.take(from.0, from.1, n);
-        true
-    }
-
-    /// IMoveAction with move_somewhere (shift-click): as many of `count`
-    /// items (0: all) as fit into `to`, onto stacks of the same item first,
-    /// then into empty slots. Returns false if nothing moved.
-    pub fn move_somewhere(&mut self, from: (List, usize), to: List, count: u16) -> bool {
-        if to == List::CraftResult {
-            return false;
-        }
-        let Some(moving) = self.take(from.0, from.1, count) else {
-            return false;
-        };
-        let left = if from.0 == to {
-            // Within one list: as Luanti, the stack may land back where it
-            // was; the result is the same as putting it back.
-            moving.count
-        } else {
-            add_to(self.list_mut(to), moving)
-        };
-        if left > 0 {
-            let slot = &mut self.list_mut(from.0)[from.1];
-            match slot {
-                Some(s) => s.count += left,
-                None => *slot = Some(Stack { count: left, ..moving }),
-            }
-        }
-        left < moving.count
     }
 
     /// What the craft grid makes, for the craftpreview slot.
@@ -344,9 +272,28 @@ impl Inventory {
     }
 }
 
+/// IMoveAction on the contents of two slots (in any lists): what they hold
+/// afterwards, or None if nothing can move. `count` items (0: all) move
+/// into an empty slot or onto the same item, as many as fit; onto a
+/// different item the two stacks swap places, but only when the whole
+/// stack is moved (Luanti swaps when the whole moved amount can go).
+pub fn plan_move(src: Option<Stack>, dst: Option<Stack>, count: u16) -> Option<(Option<Stack>, Option<Stack>)> {
+    let src = src?;
+    let n = if count == 0 || count > src.count { src.count } else { count };
+    let left = |moved: u16| (src.count > moved).then(|| Stack { count: src.count - moved, ..src });
+    match dst {
+        None => Some((left(n), Some(Stack { count: n, ..src }))),
+        Some(d) if d.stacks_with(&src) => {
+            let n = n.min(content::stack_max(d.id).saturating_sub(d.count));
+            (n > 0).then(|| (left(n), Some(Stack { count: d.count + n, ..d })))
+        }
+        Some(d) => (n == src.count).then_some((Some(d), Some(src))),
+    }
+}
+
 /// Add a stack to a list: onto stacks of the same item first, then into
 /// empty slots. Returns how many didn't fit.
-fn add_to(list: &mut [Option<Stack>], stack: Stack) -> u16 {
+pub fn add_to(list: &mut [Option<Stack>], stack: Stack) -> u16 {
     let max = content::stack_max(stack.id);
     let mut count = stack.count;
     for slot in list.iter_mut().flatten() {

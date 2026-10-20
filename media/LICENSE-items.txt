@@ -1,6 +1,7 @@
-default_stick.png, default_coal_lump.png, default_iron_lump.png, gui_furnace_arrow_bg.png
-and the tool pictures default_tool_{wood,stone}{pick,shovel,axe,sword}.png are from the
-default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
+default_stick.png, default_coal_lump.png, default_iron_lump.png, gui_furnace_arrow_bg.png,
+default_steel_ingot.png, gui_furnace_arrow_fg.png, the tool pictures
+default_tool_{wood,stone,steel}{pick,shovel,axe,sword}.png and the furnace textures
+default_furnace_*.png are from the default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
 mods/default/textures), unmodified and under their original names. Their licence and
 credits, from that mod's license.txt:
 

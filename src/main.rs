@@ -3,6 +3,7 @@ mod content;
 mod crafting;
 mod fasthash;
 mod font;
+mod furnace;
 mod indicator;
 mod inventory;
 mod items;
@@ -121,6 +122,7 @@ fn main() -> anyhow::Result<()> {
     let world = world::World::open(format!("{MOUNT}/world"))?;
     let inventories = inventory::InventoryStore::open(format!("{MOUNT}/players"))?;
     let players = player::PlayerStore::open(format!("{MOUNT}/players"))?;
+    let furnaces = furnace::Furnaces::open(format!("{MOUNT}/world/furnaces.txt"));
     let media = content::Media::load(&format!("{MOUNT}/media"));
     let socket = UdpSocket::bind(("0.0.0.0", PORT))?;
     let sent = std::sync::Arc::as_ptr(&status) as usize;
@@ -129,7 +131,7 @@ fn main() -> anyhow::Result<()> {
     if motd.is_some() {
         info!("Welcome message from {MOUNT}/motd.txt");
     }
-    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, media, status });
+    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, furnaces, media, status });
     // Guard against the compiler problem that once lost an argument on the
     // way into Server::new (see server::Setup).
     if server.status_data_addr() != sent {

@@ -178,7 +178,7 @@ impl World {
             if unknown > 0 { format!(" ({unknown} with unknown node names skipped)") } else { String::new() }
         );
         // Light up the torches now that the world is complete.
-        let torches: Vec<NodePos> = world.state.changes.iter().filter(|(_, &id)| content::is_torch(id)).map(|(&p, _)| p).collect();
+        let torches: Vec<NodePos> = world.state.changes.iter().filter(|(_, &id)| content::light_source(id) > 0).map(|(&p, _)| p).collect();
         for p in torches {
             let field = Arc::new(world.torch_field(p));
             Arc::make_mut(&mut world.state).torch_light.insert(p, field);
@@ -412,7 +412,7 @@ impl World {
 
     /// Change a node and record it on the SD card.
     pub fn set_node(&mut self, pos: NodePos, id: u16, param2: u8) {
-        let was_torch = content::is_torch(self.node(pos));
+        let was_torch = content::light_source(self.node(pos)) > 0;
         self.apply(pos, id, param2);
         if let Some(log_path) = &self.log_path {
             let result = OpenOptions::new()
@@ -425,7 +425,7 @@ impl World {
                 crate::status::problem();
             }
         }
-        self.relight(pos, was_torch, content::is_torch(id));
+        self.relight(pos, was_torch, content::light_source(id) > 0);
         let st = Arc::make_mut(&mut self.state);
         st.version += 1;
         let version = st.version;
@@ -462,8 +462,10 @@ impl World {
         let index = |d: (i32, i32, i32)| {
             ((d.2 + TORCH_REACH) as usize * side + (d.1 + TORCH_REACH) as usize) * side + (d.0 + TORCH_REACH) as usize
         };
-        field[index((0, 0, 0))] = TORCH_LIGHT;
-        let mut queue: VecDeque<((i32, i32, i32), u8)> = VecDeque::from([((0, 0, 0), TORCH_LIGHT)]);
+        // Torches, and anything else that gives light (a burning furnace).
+        let source = content::light_source(self.node(t)).min(TORCH_LIGHT);
+        field[index((0, 0, 0))] = source;
+        let mut queue: VecDeque<((i32, i32, i32), u8)> = VecDeque::from([((0, 0, 0), source)]);
         while let Some((d, l)) = queue.pop_front() {
             if l <= 1 {
                 continue;

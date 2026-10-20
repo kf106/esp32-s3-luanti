@@ -43,6 +43,9 @@ pub enum Kind {
     /// (Luanti's allfaces_optional), letting light through but casting shade
     /// (light_propagates, not sunlight_propagates, as in minetest_game).
     Leaves,
+    /// A furnace: a full cube turned to face the player who placed it
+    /// (facedir), with its own inventory window on right-click.
+    Furnace,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -63,12 +66,17 @@ pub const CONTENT_FIR_NEEDLES: u16 = 14;
 pub const CONTENT_BIRCH_WOOD: u16 = 15;
 pub const CONTENT_FIR_WOOD: u16 = 16;
 pub const CONTENT_COBBLE: u16 = 17;
+pub const CONTENT_FURNACE: u16 = 18;
+pub const CONTENT_FURNACE_ACTIVE: u16 = 19;
+/// Light a burning furnace gives (minetest_game's furnace_active).
+pub const FURNACE_LIGHT: u8 = 8;
 
 /// Items that aren't nodes (minetest_game's craftitems) have ids from
 /// 0x1000 up, well clear of node content ids.
 pub const ITEM_STICK: u16 = 0x1000;
 pub const ITEM_COAL_LUMP: u16 = 0x1001;
 pub const ITEM_IRON_LUMP: u16 = 0x1002;
+pub const ITEM_STEEL_INGOT: u16 = 0x1003;
 /// Tools have ids from 0x2000 up.
 pub const TOOL_PICK_WOOD: u16 = 0x2000;
 pub const TOOL_PICK_STONE: u16 = 0x2001;
@@ -78,6 +86,10 @@ pub const TOOL_AXE_WOOD: u16 = 0x2004;
 pub const TOOL_AXE_STONE: u16 = 0x2005;
 pub const TOOL_SWORD_WOOD: u16 = 0x2006;
 pub const TOOL_SWORD_STONE: u16 = 0x2007;
+pub const TOOL_PICK_STEEL: u16 = 0x2008;
+pub const TOOL_SHOVEL_STEEL: u16 = 0x2009;
+pub const TOOL_AXE_STEEL: u16 = 0x200A;
+pub const TOOL_SWORD_STEEL: u16 = 0x200B;
 /// Light given off by a torch (minetest_game: LIGHT_MAX - 1 = 13; 12 is
 /// slightly gentler and keeps the lit area, and the work, smaller).
 pub const TORCH_LIGHT: u8 = 12;
@@ -298,7 +310,49 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Solid,
     },
+    // minetest_game's furnace and its textures (CC BY-SA 3.0, see
+    // media/LICENSE-items.txt). Cracky 2: a stone pickaxe digs it.
+    Node {
+        id: CONTENT_FURNACE,
+        name: "esp:furnace",
+        description: "Furnace",
+        tiles: [
+            "default_furnace_top.png",
+            "default_furnace_bottom.png",
+            "default_furnace_side.png",
+            "default_furnace_side.png",
+            "default_furnace_side.png",
+            "default_furnace_front.png",
+        ],
+        groups: &[("cracky", 2)],
+        drop: CONTENT_FURNACE,
+        drop_count: 1,
+        kind: Kind::Furnace,
+    },
+    // A furnace while it burns: the fire shows at the front, it glows,
+    // and digging it gives an ordinary furnace.
+    Node {
+        id: CONTENT_FURNACE_ACTIVE,
+        name: "esp:furnace_active",
+        description: "Furnace",
+        tiles: [
+            "default_furnace_top.png",
+            "default_furnace_bottom.png",
+            "default_furnace_side.png",
+            "default_furnace_side.png",
+            "default_furnace_side.png",
+            FURNACE_ACTIVE_TILE,
+        ],
+        groups: &[("cracky", 2), ("not_in_creative_inventory", 1)],
+        drop: CONTENT_FURNACE,
+        drop_count: 1,
+        kind: Kind::Furnace,
+    },
 ];
+
+/// minetest_game's burning furnace front: 8 frames of fire, one above
+/// another, 1.5 seconds for the cycle.
+const FURNACE_ACTIVE_TILE: &str = "default_furnace_front_active.png";
 
 /// An item that is only an item, never a node: crafting material.
 pub struct CraftItem {
@@ -331,6 +385,13 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         name: "esp:iron_lump",
         description: "Iron Lump",
         image: "default_iron_lump.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_STEEL_INGOT,
+        name: "esp:steel_ingot",
+        description: "Steel Ingot",
+        image: "default_steel_ingot.png",
         groups: &[],
     },
 ];
@@ -501,9 +562,67 @@ pub const TOOLS: &[Tool] = &[
         },
         groups: &[("sword", 1)],
     },
+    Tool {
+        id: TOOL_PICK_STEEL,
+        name: "esp:pick_steel",
+        description: "Steel Pickaxe",
+        image: "default_tool_steelpick.png",
+        wield_image: "default_tool_steelpick.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.0,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "cracky", times: &[(1, 4.0), (2, 1.6), (3, 0.8)], uses: 20, maxlevel: 2 }],
+            fleshy: 4,
+        },
+        groups: &[("pickaxe", 1)],
+    },
+    Tool {
+        id: TOOL_SHOVEL_STEEL,
+        name: "esp:shovel_steel",
+        description: "Steel Shovel",
+        image: "default_tool_steelshovel.png",
+        wield_image: "default_tool_steelshovel.png^[transformR90",
+        caps: ToolCaps {
+            full_punch_interval: 1.1,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "crumbly", times: &[(1, 1.5), (2, 0.9), (3, 0.4)], uses: 30, maxlevel: 2 }],
+            fleshy: 3,
+        },
+        groups: &[("shovel", 1)],
+    },
+    Tool {
+        id: TOOL_AXE_STEEL,
+        name: "esp:axe_steel",
+        description: "Steel Axe",
+        image: "default_tool_steelaxe.png",
+        wield_image: "default_tool_steelaxe.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.0,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "choppy", times: &[(1, 2.5), (2, 1.4), (3, 1.0)], uses: 20, maxlevel: 2 }],
+            fleshy: 4,
+        },
+        groups: &[("axe", 1)],
+    },
+    Tool {
+        id: TOOL_SWORD_STEEL,
+        name: "esp:sword_steel",
+        description: "Steel Sword",
+        image: "default_tool_steelsword.png",
+        wield_image: "default_tool_steelsword.png",
+        caps: ToolCaps {
+            full_punch_interval: 0.8,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "snappy", times: &[(1, 2.5), (2, 1.2), (3, 0.35)], uses: 30, maxlevel: 2 }],
+            fleshy: 6,
+        },
+        groups: &[("sword", 1)],
+    },
 ];
 
 /// The sound a tool makes when it wears out (minetest_game's sound.breaks).
+/// The steel tools are minetest_game's too: maxlevel 2 against our level 0
+/// blocks, so Luanti halves their times and gives them nine times the uses.
 pub const TOOL_BREAKS: &str = "default_tool_breaks";
 
 fn tool(id: u16) -> Option<&'static Tool> {
@@ -601,6 +720,7 @@ fn def(id: u16) -> Option<&'static Node> {
 pub fn light_source(id: u16) -> u8 {
     match def(id) {
         Some(n) if n.kind == Kind::Torch => TORCH_LIGHT,
+        Some(n) if n.id == CONTENT_FURNACE_ACTIVE => FURNACE_LIGHT,
         _ => 0,
     }
 }
@@ -618,7 +738,28 @@ pub fn passes_sunlight(id: u16) -> bool {
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace))
+}
+
+/// Whether right-clicking a node opens it (and so doesn't place against
+/// it, unless the player is sneaking).
+pub fn is_furnace(id: u16) -> bool {
+    def(id).is_some_and(|n| n.kind == Kind::Furnace)
+}
+
+/// The facedir param2 for a node placed at `above` by a player standing at
+/// `player` (nodes): the front turned towards the player
+/// (builtin's item_place_node with core.dir_to_facedir).
+pub fn facedir_param2(above: [i16; 3], player: [f32; 3]) -> u8 {
+    let dx = above[0] as f32 - player[0];
+    let dz = above[2] as f32 - player[2];
+    if dx.abs() > dz.abs() {
+        if dx < 0.0 { 3 } else { 1 }
+    } else if dz < 0.0 {
+        2
+    } else {
+        0
+    }
 }
 
 pub fn is_torch(id: u16) -> bool {
@@ -811,6 +952,23 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_tool_stoneaxe.png", include_bytes!("../media/default_tool_stoneaxe.png")),
     ("default_tool_woodsword.png", include_bytes!("../media/default_tool_woodsword.png")),
     ("default_tool_stonesword.png", include_bytes!("../media/default_tool_stonesword.png")),
+    ("default_furnace_top.png", include_bytes!("../media/default_furnace_top.png")),
+    ("default_furnace_bottom.png", include_bytes!("../media/default_furnace_bottom.png")),
+    ("default_furnace_side.png", include_bytes!("../media/default_furnace_side.png")),
+    ("default_furnace_front.png", include_bytes!("../media/default_furnace_front.png")),
+    ("default_furnace_fire_bg.png", include_bytes!("../media/default_furnace_fire_bg.png")),
+    ("default_furnace_front_active.png", include_bytes!("../media/default_furnace_front_active.png")),
+    ("default_furnace_fire_fg.png", include_bytes!("../media/default_furnace_fire_fg.png")),
+    ("gui_furnace_arrow_fg.png", include_bytes!("../media/gui_furnace_arrow_fg.png")),
+    ("default_steel_ingot.png", include_bytes!("../media/default_steel_ingot.png")),
+    ("default_tool_steelpick.png", include_bytes!("../media/default_tool_steelpick.png")),
+    ("default_tool_steelshovel.png", include_bytes!("../media/default_tool_steelshovel.png")),
+    ("default_tool_steelaxe.png", include_bytes!("../media/default_tool_steelaxe.png")),
+    ("default_tool_steelsword.png", include_bytes!("../media/default_tool_steelsword.png")),
+    ("default_furnace_active.ogg", include_bytes!("../media/default_furnace_active.ogg")),
+    ("default_cool_lava.1.ogg", include_bytes!("../media/default_cool_lava.1.ogg")),
+    ("default_cool_lava.2.ogg", include_bytes!("../media/default_cool_lava.2.ogg")),
+    ("default_cool_lava.3.ogg", include_bytes!("../media/default_cool_lava.3.ogg")),
     ("default_tool_breaks.1.ogg", include_bytes!("../media/default_tool_breaks.1.ogg")),
     ("default_tool_breaks.2.ogg", include_bytes!("../media/default_tool_breaks.2.ogg")),
     ("default_tool_breaks.3.ogg", include_bytes!("../media/default_tool_breaks.3.ogg")),
@@ -1059,6 +1217,7 @@ const TILE_FLAG_TILEABLE_HORIZONTAL: u16 = 1 << 1;
 const TILE_FLAG_TILEABLE_VERTICAL: u16 = 1 << 2;
 const TAT_VERTICAL_FRAMES: u8 = 1;
 const CPT_LIGHT: u8 = 1;
+const CPT2_FACEDIR: u8 = 3;
 const CPT2_WALLMOUNTED: u8 = 4;
 const NODEBOX_WALLMOUNTED: u8 = 2;
 const NODEBOX_REGULAR: u8 = 0;
@@ -1069,11 +1228,21 @@ fn tile(w: &mut Writer, name: &str, flags: u16) {
     w.u8(6).string16(name).u8(0).u16(flags);
 }
 
-/// A TileDef with minetest_game's torch flame animation: square frames
-/// stacked vertically, the whole cycle taking TORCH_FRAMES_LENGTH seconds.
-fn animated_tile(w: &mut Writer, name: &str, flags: u16) {
+/// How long a cycle of an animated texture takes (square frames stacked
+/// vertically), or None for a still one.
+fn animation_length(tile: &str) -> Option<f32> {
+    match tile {
+        TORCH_TILE => Some(TORCH_FRAMES_LENGTH),
+        FURNACE_ACTIVE_TILE => Some(1.5),
+        _ => None,
+    }
+}
+
+/// A TileDef with an animation of square frames stacked vertically, the
+/// whole cycle taking `length` seconds.
+fn animated_tile(w: &mut Writer, name: &str, flags: u16, length: f32) {
     w.u8(6).string16(name);
-    w.u8(TAT_VERTICAL_FRAMES).u16(16).u16(16).f32(TORCH_FRAMES_LENGTH);
+    w.u8(TAT_VERTICAL_FRAMES).u16(16).u16(16).f32(length);
     w.u16(flags);
 }
 
@@ -1112,6 +1281,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
         w.u8(CPT_LIGHT).u8(0);
+    } else if n.kind == Kind::Furnace {
+        w.u8(0).u8(CPT2_FACEDIR);
     } else {
         w.u8(0) // param_type: none
             .u8(0); // param_type_2: none
@@ -1121,7 +1292,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let (drawtype, mesh) = match n.kind {
         Kind::Torch => (NDT_MESH, torch_mesh(n.id)),
         Kind::Leaves => (NDT_ALLFACES_OPTIONAL, ""),
-        Kind::Solid => (NDT_NORMAL, ""),
+        Kind::Solid | Kind::Furnace => (NDT_NORMAL, ""),
     };
     w.u8(drawtype).string16(mesh).f32(1.0); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
@@ -1133,10 +1304,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     };
     w.u8(6);
     for t in n.tiles {
-        if torch {
-            animated_tile(&mut w, t, flags);
-        } else {
-            tile(&mut w, t, flags);
+        match animation_length(t) {
+            Some(length) => animated_tile(&mut w, t, flags, length),
+            None => tile(&mut w, t, flags),
         }
     }
     for _ in 0..6 {
@@ -1171,7 +1341,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(1) // diggable
         .u8(0) // climbable
         .u8(0) // buildable_to
-        .u8(0) // rightclickable
+        .u8((n.kind == Kind::Furnace) as u8) // rightclickable
         .u32(0); // damage_per_second
 
     // liquid

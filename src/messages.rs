@@ -48,8 +48,11 @@ pub const TOCLIENT_NODEDEF: u16 = 0x3a;
 pub const TOCLIENT_ANNOUNCE_MEDIA: u16 = 0x3c;
 pub const TOCLIENT_ITEMDEF: u16 = 0x3d;
 pub const TOCLIENT_PLAY_SOUND: u16 = 0x3f;
+pub const TOCLIENT_FADE_SOUND: u16 = 0x55;
 pub const TOCLIENT_PRIVILEGES: u16 = 0x41;
 pub const TOCLIENT_INVENTORY_FORMSPEC: u16 = 0x42;
+pub const TOCLIENT_DETACHED_INVENTORY: u16 = 0x43;
+pub const TOCLIENT_SHOW_FORMSPEC: u16 = 0x44;
 pub const TOCLIENT_MOVEMENT: u16 = 0x45;
 pub const TOCLIENT_SRP_BYTES_S_B: u16 = 0x60;
 
@@ -1002,6 +1005,9 @@ pub fn build_srp_bytes_s_b(salt: &[u8], b: &[u8]) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 
 /// Punching an object (picking up items) or starting to dig a node.
+/// The sneak key's bit in PlayerPos::keys.
+pub const KEY_SNEAK: u32 = 1 << 6;
+
 pub const INTERACT_START_DIGGING: u8 = 0;
 // Also 1 (stop digging), which needs no handling.
 pub const INTERACT_DIGGING_COMPLETED: u8 = 2;
@@ -1064,18 +1070,27 @@ pub fn build_removenode(pos: [i16; 3]) -> Vec<u8> {
     w.into_inner()
 }
 
-/// TOCLIENT_PLAY_SOUND: a one-off ("ephemeral", id -1) sound at a
-/// position in BS units, as Server::playSound sends it.
-pub fn build_play_sound(name: &str, gain: f32, pos_bs: [f32; 3]) -> Vec<u8> {
+/// TOCLIENT_PLAY_SOUND: a sound at a position in BS units, as
+/// Server::playSound sends it. `id` -1 makes it a one-off ("ephemeral")
+/// sound; a positive id can be faded out later.
+pub fn build_play_sound(id: i32, name: &str, gain: f32, pos_bs: [f32; 3]) -> Vec<u8> {
     let mut w = Writer::new(TOCLIENT_PLAY_SOUND);
-    w.i32(-1).string16(name).f32(gain).u8(1); // positional
+    w.i32(id).string16(name).f32(gain).u8(1); // positional
     w.f32(pos_bs[0]).f32(pos_bs[1]).f32(pos_bs[2]);
     w.u16(0) // object
         .u8(0) // loop
         .f32(0.0) // fade
         .f32(1.0) // pitch
-        .u8(1) // ephemeral
+        .u8((id < 0) as u8) // ephemeral
         .f32(0.0); // start time
+    w.into_inner()
+}
+
+/// TOCLIENT_FADE_SOUND: fade a sound by `step` gain per second down to
+/// `gain` (minetest_game fades the furnace fire with -1, 0).
+pub fn build_fade_sound(id: i32, step: f32, gain: f32) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_FADE_SOUND);
+    w.i32(id).f32(step).f32(gain);
     w.into_inner()
 }
 
@@ -1083,6 +1098,64 @@ pub fn build_play_sound(name: &str, gain: f32, pos_bs: [f32; 3]) -> Vec<u8> {
 /// a u32-prefixed string, then "skip next wield animation" (protocol > 51).
 /// Each list is (name, width, slots as item strings, None for empty).
 pub fn build_inventory(lists: &[(&str, u32, Vec<Option<String>>)]) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_INVENTORY);
+    w.bytes32(inventory_text(lists).as_bytes()).u8(0);
+    w.into_inner()
+}
+
+/// TOCLIENT_DETACHED_INVENTORY: an inventory that belongs to no player
+/// (a furnace's here): name, "update" (not remove), a u16 the client
+/// ignores, then the inventory text (Server::sendDetachedInventory).
+pub fn build_detached_inventory(name: &str, lists: &[(&str, u32, Vec<Option<String>>)]) -> Vec<u8> {
+    let text = inventory_text(lists);
+    let mut w = Writer::new(TOCLIENT_DETACHED_INVENTORY);
+    w.string16(name).u8(1).u16(text.len().min(0xFFFF) as u16).raw(text.as_bytes());
+    w.into_inner()
+}
+
+/// TOCLIENT_SHOW_FORMSPEC: open (or, if one with that name is open,
+/// update) a window; an empty formspec closes it.
+pub fn build_show_formspec(formspec: &str, formname: &str) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_SHOW_FORMSPEC);
+    w.bytes32(formspec.as_bytes()).string16(formname);
+    w.into_inner()
+}
+
+/// The furnace window's form name, which the client sends back with its
+/// fields (TOSERVER_INVENTORY_FIELDS) when it is closed.
+pub const FURNACE_FORM: &str = "esp:furnace";
+
+/// minetest_game's furnace window: the item to smelt above the flame and
+/// the fuel below it, an arrow to the 2x2 output, and the player's
+/// inventory underneath. The listrings make shift-click move output and
+/// furnace contents to the inventory, and from the inventory into "src".
+/// While it burns, `display` is the fuel left and the cooking progress in
+/// percent: the flame and the arrow fill up from below.
+pub fn furnace_formspec(inv: &str, display: Option<(u8, u8)>) -> String {
+    let at = format!("detached:{inv}");
+    let (fire, arrow) = match display {
+        Some((fuel, item)) => (
+            format!("default_furnace_fire_bg.png^[lowpart:{fuel}:default_furnace_fire_fg.png"),
+            format!("gui_furnace_arrow_bg.png^[lowpart:{item}:gui_furnace_arrow_fg.png^[transformR270"),
+        ),
+        None => ("default_furnace_fire_bg.png".to_string(), "gui_furnace_arrow_bg.png^[transformR270".to_string()),
+    };
+    format!(
+        "formspec_version[6]size[10.75,10]\
+         list[{at};src;3,0.5;1,1;]\
+         image[3,1.75;1,1;{fire}]\
+         list[{at};fuel;3,3;1,1;]\
+         image[4.25,1.75;1,1;{arrow}]\
+         list[{at};dst;5.5,1.125;2,2;]\
+         list[current_player;main;0.5,4.75;8,4;]\
+         listring[{at};dst]listring[current_player;main]\
+         listring[{at};src]listring[current_player;main]\
+         listring[{at};fuel]listring[current_player;main]"
+    )
+}
+
+/// Luanti's inventory text: each list as (name, width, item strings).
+fn inventory_text(lists: &[(&str, u32, Vec<Option<String>>)]) -> String {
     let mut text = String::new();
     for (name, width, slots) in lists {
         text.push_str(&format!("List {name} {}\nWidth {width}\n", slots.len()));
@@ -1095,10 +1168,7 @@ pub fn build_inventory(lists: &[(&str, u32, Vec<Option<String>>)]) -> Vec<u8> {
         text.push_str("EndInventoryList\n");
     }
     text.push_str("EndInventory\n");
-
-    let mut w = Writer::new(TOCLIENT_INVENTORY);
-    w.bytes32(text.as_bytes()).u8(0);
-    w.into_inner()
+    text
 }
 
 /// The skin chooser beside the inventory: what the player wears now.

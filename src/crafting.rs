@@ -56,7 +56,48 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 2, pattern: &axe(G("stone")), output: TOOL_AXE_STONE, count: 1 },
     Recipe { width: 1, pattern: &sword(G("wood")), output: TOOL_SWORD_WOOD, count: 1 },
     Recipe { width: 1, pattern: &sword(G("stone")), output: TOOL_SWORD_STONE, count: 1 },
+    Recipe { width: 3, pattern: &pick(I(ITEM_STEEL_INGOT)), output: TOOL_PICK_STEEL, count: 1 },
+    Recipe { width: 1, pattern: &shovel(I(ITEM_STEEL_INGOT)), output: TOOL_SHOVEL_STEEL, count: 1 },
+    Recipe { width: 2, pattern: &axe(I(ITEM_STEEL_INGOT)), output: TOOL_AXE_STEEL, count: 1 },
+    Recipe { width: 1, pattern: &sword(I(ITEM_STEEL_INGOT)), output: TOOL_SWORD_STEEL, count: 1 },
+    // A ring of stone (furnace.lua).
+    Recipe {
+        width: 3,
+        pattern: &[G("stone"), G("stone"), G("stone"), G("stone"), E, G("stone"), G("stone"), G("stone"), G("stone")],
+        output: CONTENT_FURNACE,
+        count: 1,
+    },
 ];
+
+/// What a furnace makes of an item, and how long it takes in seconds
+/// (minetest_game's cooking recipes, all with Luanti's default 3 s).
+pub fn cook_result(id: u16) -> Option<(u16, f32)> {
+    match id {
+        ITEM_IRON_LUMP => Some((ITEM_STEEL_INGOT, 3.0)),
+        CONTENT_COBBLE => Some((CONTENT_STONE, 3.0)),
+        _ => None,
+    }
+}
+
+/// How long an item burns in a furnace, in seconds (0: it isn't fuel).
+/// minetest_game's fuel recipes, with birch as its aspen and fir as its
+/// pine.
+pub fn burn_time(id: u16) -> f32 {
+    match id {
+        ITEM_COAL_LUMP => 40.0,
+        CONTENT_FIR_TREE => 26.0,
+        CONTENT_BIRCH_TREE => 22.0,
+        CONTENT_FIR_WOOD => 6.0,
+        CONTENT_BIRCH_WOOD => 5.0,
+        CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES => 4.0,
+        CONTENT_TORCH => 4.0,
+        ITEM_STICK => 1.0,
+        TOOL_PICK_WOOD | TOOL_AXE_WOOD => 6.0,
+        TOOL_SWORD_WOOD => 5.0,
+        TOOL_SHOVEL_WOOD => 4.0,
+        _ => 0.0,
+    }
+}
 
 // The tool shapes of tools.lua, for a material.
 const STICK: Ingredient = G("stick");
@@ -177,6 +218,13 @@ mod tests {
         assert_eq!(result(&grid(&[(1, w, 1), (2, w, 1), (5, w, 1), (4, s, 1), (7, s, 1)])), None);
         assert_eq!(result(&grid(&[(2, c, 1), (5, s, 1), (8, s, 1)])), Some((TOOL_SHOVEL_STONE, 1)));
         assert_eq!(result(&grid(&[(0, w, 1), (3, w, 1), (6, s, 1)])), Some((TOOL_SWORD_WOOD, 1)));
+        // Furnace: a ring of stone and cobblestone, mixed.
+        let ring: Vec<(usize, u16, u16)> =
+            [0, 1, 2, 3, 5, 6, 7, 8].iter().map(|&i| (i, if i % 2 == 0 { c } else { CONTENT_STONE }, 1)).collect();
+        assert_eq!(result(&grid(&ring)), Some((CONTENT_FURNACE, 1)));
+        let mut full = ring.clone();
+        full.push((4, c, 1));
+        assert_eq!(result(&grid(&full)), None);
     }
 
     #[test]

@@ -19,11 +19,18 @@ use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
 use crate::status::{self, SharedStatus};
-use crate::world::{self, BlockPos, World};
+use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
+use crate::world::{self, BlockPos, NodePos, World};
 
 const RESEND_INTERVAL: Duration = Duration::from_millis(500);
 const PEER_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// minetest_game's furnaces run a one-second node timer.
+const FURNACE_STEP_INTERVAL: Duration = Duration::from_secs(1);
+/// How far furnace sounds carry, in nodes (minetest_game's max_hear_distance).
+const FURNACE_HEARING: f32 = 16.0;
+/// How far sounds carry by default (Luanti's max_hear_distance).
+const HEARING: f32 = 32.0;
 /// How many reliable packets may be in flight (unacknowledged) per channel.
 /// Luanti's own minimum window is 32.
 const RELIABLE_WINDOW: usize = 32;
@@ -184,6 +191,10 @@ struct Peer {
     skin: String,
     /// When their recent chat messages were sent, for the flood limit.
     chat_times: VecDeque<Instant>,
+    /// The furnace whose window they have open.
+    furnace: Option<NodePos>,
+    /// When the furnace window was last sent (opened or updated).
+    furnace_form_sent: Option<Instant>,
 }
 
 impl Peer {
@@ -216,6 +227,8 @@ impl Peer {
             saved_at: Instant::now(),
             skin: skins::DEFAULT_SKIN.to_string(),
             chat_times: VecDeque::new(),
+            furnace: None,
+            furnace_form_sent: None,
         }
     }
 
@@ -262,6 +275,7 @@ pub struct Server {
     world: World,
     inventories: InventoryStore,
     players: PlayerStore,
+    furnaces: Furnaces,
     status: SharedStatus,
     content: Content,
     peers: HashMap<SocketAddr, Peer>,
@@ -287,6 +301,10 @@ pub struct Server {
     /// Dropped items, and when they were last moved on.
     items: Items,
     items_stepped: Instant,
+    /// When the furnaces' timers last ran.
+    furnaces_stepped: Instant,
+    /// Id for the next sound that may need fading out.
+    next_sound_id: i32,
     skins: Skins,
     /// Welcome message lines.
     welcome: Vec<String>,
@@ -306,6 +324,7 @@ pub struct Setup {
     pub world: World,
     pub inventories: InventoryStore,
     pub players: PlayerStore,
+    pub furnaces: Furnaces,
     pub media: Media,
     pub status: SharedStatus,
 }
@@ -484,7 +503,7 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, motd, auth, world, inventories, players, media, status } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, furnaces, media, status } = setup;
         let itemdef = build_itemdef(&content::itemdef_bytes());
         let nodedef = build_nodedef(&content::nodedef_bytes());
         let announce_media = build_announce_media(
@@ -508,6 +527,7 @@ impl Server {
             world,
             inventories,
             players,
+            furnaces,
             status,
             content: Content {
                 itemdef,
@@ -526,6 +546,8 @@ impl Server {
             built: Default::default(),
             items: Items::new(),
             items_stepped: Instant::now(),
+            furnaces_stepped: Instant::now(),
+            next_sound_id: 1,
             skins,
             welcome: motd
                 .as_deref()
@@ -781,6 +803,8 @@ impl Server {
             TOSERVER_CHAT_MESSAGE => self.on_chat(from, payload),
             // Window size and similar client details: nothing to do.
             0x0053 => {}
+            // TOSERVER_REMOVED_SOUNDS: sounds the client finished playing.
+            0x003a => {}
             other => {
                 info!(
                     "Command 0x{other:04x} on ch{channel}, {} bytes:",
@@ -1409,6 +1433,19 @@ impl Server {
                     self.resend_node(from, under);
                     return;
                 };
+                // minetest_game's can_dig: a furnace must be emptied first.
+                let furnace_at = node_pos(under);
+                if content::is_furnace(current) && self.furnaces.get(furnace_at).is_some_and(|f| !f.is_empty()) {
+                    info!("{name}: the furnace at {under:?} isn't empty");
+                    self.resend_node(from, under);
+                    return;
+                }
+                if content::is_furnace(current) {
+                    self.close_furnace(furnace_at);
+                    if let Some(gone) = self.furnaces.remove(furnace_at) {
+                        self.fade_sounds(&gone.sounds);
+                    }
+                }
                 info!("{name} dug {} at {under:?}", content::name_of(current));
                 // Wear out the tool (builtin's node_dig); a worn-out tool
                 // breaks with its sound.
@@ -1420,7 +1457,7 @@ impl Server {
                     if !intact {
                         info!("{name}'s {} broke", content::name_of(tool.id));
                         let at = under.map(|v| v as f32 * 10.0);
-                        self.play_sound_near(content::TOOL_BREAKS, 0.5, at);
+                        self.play_sound_near(-1, content::TOOL_BREAKS, 0.5, at, HEARING);
                     }
                     self.inventory_changed(from);
                 }
@@ -1452,6 +1489,16 @@ impl Server {
                 }
             }
             INTERACT_PLACE => {
+                // Right-clicking a furnace opens it, unless sneaking: then
+                // the wielded item is placed against it (builtin's
+                // item_place). The client doesn't predict either.
+                let sneaking = msg.pos.as_ref().is_some_and(|p| p.keys & KEY_SNEAK != 0);
+                if content::is_furnace(self.world.node(node_pos(under))) && !sneaking {
+                    if in_reach(under) {
+                        self.open_furnace(from, node_pos(under));
+                    }
+                    return;
+                }
                 // The client predicts placing the wielded item, if it is a
                 // node. An empty slot predicts nothing.
                 let slot = msg.item as usize;
@@ -1471,7 +1518,14 @@ impl Server {
                 // same); anything else just needs something to build on.
                 let torch = content::is_torch(id);
                 let supported = if torch { content::walkable(support) } else { support != world::CONTENT_AIR };
-                let param2 = if torch { content::wallmounted_param2(under, above) } else { 0 };
+                // A furnace faces the player who places it.
+                let param2 = if torch {
+                    content::wallmounted_param2(under, above)
+                } else if content::is_furnace(id) {
+                    content::facedir_param2(above, body)
+                } else {
+                    0
+                };
                 // The item is always the floor torch; on a wall or ceiling
                 // it becomes that torch node (minetest_game's on_place).
                 let node = content::torch_variant(id, param2);
@@ -1702,6 +1756,22 @@ impl Server {
             return;
         };
         let pressed = |name: &str| fields.iter().any(|(f, _)| f == name);
+        if form == FURNACE_FORM {
+            // The furnace window was closed.
+            if pressed("quit") {
+                let Some(peer) = self.peers.get_mut(&from) else {
+                    return;
+                };
+                peer.furnace = None;
+                // An update sent just before the window closed would open
+                // it again: close that too (an empty formspec closes the
+                // window only if it is ours, so this is safe).
+                if peer.furnace_form_sent.is_some_and(|t| t.elapsed() < Duration::from_millis(1500)) {
+                    self.send_command(from, 0, &build_show_formspec("", FURNACE_FORM));
+                }
+            }
+            return;
+        }
         let forward = match (pressed(FIELD_SKIN_PREVIOUS), pressed(FIELD_SKIN_NEXT)) {
             (true, false) => false,
             (false, true) => true,
@@ -1729,18 +1799,26 @@ impl Server {
         self.send_to_players(&packet);
     }
 
-    /// Play a sound at a position (BS units) for everyone in earshot
-    /// (32 nodes, Luanti's default max_hear_distance).
-    fn play_sound_near(&mut self, sound: &str, gain: f32, pos_bs: [f32; 3]) {
-        let packet = build_play_sound(sound, gain, pos_bs);
+    /// Play a sound at a position (BS units) for everyone within `range`
+    /// nodes. `id` -1 for a one-off sound; otherwise one that can be faded.
+    fn play_sound_near(&mut self, id: i32, sound: &str, gain: f32, pos_bs: [f32; 3], range: f32) {
+        let packet = build_play_sound(id, sound, gain, pos_bs);
+        let reach = range * 10.0;
         let near: Vec<SocketAddr> = self
             .peers
             .iter()
-            .filter(|(_, p)| p.ready && (0..3).map(|i| (p.pos_bs[i] - pos_bs[i]).powi(2)).sum::<f32>() <= 320.0f32.powi(2))
+            .filter(|(_, p)| p.ready && (0..3).map(|i| (p.pos_bs[i] - pos_bs[i]).powi(2)).sum::<f32>() <= reach * reach)
             .map(|(a, _)| *a)
             .collect();
         for addr in near {
             self.send_command(addr, 0, &packet);
+        }
+    }
+
+    /// Fade sounds out for everyone (those who never heard them ignore it).
+    fn fade_sounds(&mut self, ids: &[i32]) {
+        for &id in ids {
+            self.send_to_players(&build_fade_sound(id, -1.0, 0.0));
         }
     }
 
@@ -1911,41 +1989,57 @@ impl Server {
         }
         let text = String::from_utf8_lossy(&payload[2..]).into_owned();
         let name = peer.display_name().to_string();
-        let own = |loc: &str| inventory::is_own(loc, &name);
-        // The craft preview only shows a result: taking from it is a Craft
-        // action, and nothing can be put into it or the craft result
-        // (Luanti's serverpackethandler refuses those too).
-        let list = |l: &str| List::from_name(l);
+        let open_furnace = peer.furnace;
+        let throw = drop_motion(peer.pos_bs, peer.yaw, peer.pitch);
+        // Which list an action names: the player's own (not "craftpreview":
+        // taking from it is a Craft action, and nothing can be put into it,
+        // as Luanti's serverpackethandler has it), or a list of the furnace
+        // they have open.
+        let furnaces = &self.furnaces;
+        let place = |loc: &str, list: &str| -> Option<Place> {
+            if inventory::is_own(loc, &name) {
+                return List::from_name(list).map(Place::Own);
+            }
+            let pos = furnace::pos_of_location(loc).filter(|&p| open_furnace == Some(p) && furnaces.get(p).is_some())?;
+            FurnaceList::from_name(list).map(|l| Place::Furnace(pos, l))
+        };
+        let action = inventory::parse_action(&text);
+        let places = match &action {
+            Some(Action::Move { from: (fi, fl, _), to: (ti, tl, _), .. }) => (place(fi, fl), place(ti, tl)),
+            Some(Action::MoveSomewhere { from: (fi, fl, _), to: (ti, tl), .. }) => (place(fi, fl), place(ti, tl)),
+            Some(Action::Drop { from: (fi, fl, _), .. }) => (place(fi, fl), None),
+            Some(Action::Craft { inv, .. }) => (inventory::is_own(inv, &name).then_some(Place::Own(List::Craft)), None),
+            _ => (None, None),
+        };
+        let Self { peers, furnaces, .. } = self;
+        let Some(peer) = peers.get_mut(&from) else {
+            return;
+        };
+        let mut lists = Lists { player: &mut peer.inventory, furnaces };
         let mut dropped = None;
-        let ok = match inventory::parse_action(&text) {
-            Some(Action::Move { count, from: (fi, fl, fs), to: (ti, tl, ts) }) if own(&fi) && own(&ti) => {
-                match (list(&fl), list(&tl)) {
-                    (Some(fl), Some(tl)) => peer.inventory.move_items((fl, fs), (tl, ts), count),
-                    _ => false,
-                }
+        let ok = match (action, places) {
+            (Some(Action::Move { count, from: (_, _, fs), to: (_, _, ts) }), (Some(f), Some(t))) => {
+                lists.move_items((f, fs), (t, ts), count)
             }
-            Some(Action::MoveSomewhere { count, from: (fi, fl, fs), to: (ti, tl) }) if own(&fi) && own(&ti) => {
-                match (list(&fl), list(&tl)) {
-                    (Some(fl), Some(tl)) => peer.inventory.move_somewhere((fl, fs), tl, count),
-                    _ => false,
-                }
+            (Some(Action::MoveSomewhere { count, from: (_, _, fs), .. }), (Some(f), Some(t))) => {
+                lists.move_somewhere((f, fs), t, count)
             }
-            Some(Action::Craft { count, inv }) if own(&inv) => match peer.inventory.craft(count) {
+            (Some(Action::Craft { count, .. }), (Some(_), _)) => match lists.player.craft(count) {
                 Some(made) => {
                     info!("{name} crafted {}", made.item_string());
                     true
                 }
                 None => false,
             },
-            Some(Action::Drop { count, from: (fi, fl, fs) }) if own(&fi) => {
-                let stack = list(&fl).and_then(|fl| peer.inventory.take(fl, fs, count));
+            (Some(Action::Drop { count, from: (_, _, fs), .. }), (Some(f), _)) => {
+                let stack = lists.take((f, fs), count);
                 if let Some(stack) = stack {
                     info!("{name} dropped {}", stack.item_string());
-                    dropped = Some((stack, drop_motion(peer.pos_bs, peer.yaw, peer.pitch)));
+                    dropped = Some((stack, throw));
                 }
                 stack.is_some()
             }
-            Some(Action::Other(kind)) => {
+            (Some(Action::Other(kind)), _) => {
                 info!("{name}: inventory action {kind} isn't supported");
                 false
             }
@@ -1954,6 +2048,10 @@ impl Server {
                 false
             }
         };
+        let furnace_used = [places.0, places.1].into_iter().flatten().find_map(|p| match p {
+            Place::Furnace(pos, _) => Some(pos),
+            Place::Own(_) => None,
+        });
         if let Some((stack, motion)) = dropped {
             self.spawn_item(stack, motion);
         }
@@ -1961,6 +2059,139 @@ impl Server {
             self.inventory_changed(from);
         } else {
             self.send_inventory(from); // undo the client's prediction
+        }
+        // The client doesn't predict moves into or out of a detached
+        // inventory, so it always needs the furnace's contents back.
+        if let Some(pos) = furnace_used {
+            if ok {
+                // minetest_game starts the furnace's timer on any change.
+                if let Some(f) = self.furnaces.get_mut(pos) {
+                    f.running = true;
+                }
+                self.furnaces.save();
+            }
+            self.send_furnace(pos);
+        }
+    }
+
+    /// Open a furnace's window for a player: its contents, then the form.
+    fn open_furnace(&mut self, addr: SocketAddr, pos: NodePos) {
+        self.furnaces.get_or_add(pos);
+        let Some(peer) = self.peers.get_mut(&addr) else {
+            return;
+        };
+        peer.furnace = Some(pos);
+        info!("{} opened the furnace at {pos:?}", peer.display_name());
+        if let Some(packet) = self.furnace_packet(pos) {
+            self.send_command(addr, 0, &packet);
+        }
+        self.send_furnace_form(addr, pos);
+    }
+
+    /// Send (or update) the furnace window, showing the fire and progress.
+    fn send_furnace_form(&mut self, addr: SocketAddr, pos: NodePos) {
+        let display = self.furnaces.get(pos).and_then(|f| f.display);
+        let form = furnace_formspec(&furnace::detached_name(pos), display);
+        if let Some(peer) = self.peers.get_mut(&addr) {
+            peer.furnace_form_sent = Some(Instant::now());
+        }
+        self.send_command(addr, 0, &build_show_formspec(&form, FURNACE_FORM));
+    }
+
+    /// Run the timers of the furnaces that are burning (or were just
+    /// filled): smelt, swap between the lit and unlit furnace nodes, keep
+    /// open windows up to date, and play the fire and cooling sounds.
+    fn step_furnaces(&mut self, dt: f32) {
+        let mut save = false;
+        for pos in self.furnaces.running() {
+            let node = self.world.node(pos);
+            if !content::is_furnace(node) {
+                warn!("No furnace at {pos:?} any more; forgetting its contents");
+                self.furnaces.remove(pos);
+                continue;
+            }
+            let Some(f) = self.furnaces.get_mut(pos) else {
+                continue;
+            };
+            let shown = f.display;
+            let step = f.step(dt);
+            let display = f.display;
+            save |= step.changed;
+            let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+            let at = [pos.0 as f32 * 10.0, pos.1 as f32 * 10.0, pos.2 as f32 * 10.0];
+            // The lit or unlit node (minetest_game's swap_node).
+            let want = if step.active { content::CONTENT_FURNACE_ACTIVE } else { content::CONTENT_FURNACE };
+            if want != node {
+                let param2 = self.world.param2(pos);
+                self.world.set_node(pos, want, param2);
+                self.broadcast_node(p16, &build_addnode(p16, want, param2));
+            }
+            if step.smelted > 0 {
+                let gain = 0.07 * step.smelted.min(7) as f32;
+                self.play_sound_near(-1, "default_cool_lava", gain, at, FURNACE_HEARING);
+            }
+            if step.fire_sound {
+                let id = self.next_sound_id;
+                self.next_sound_id = if id == i32::MAX { 1 } else { id + 1 };
+                self.play_sound_near(id, "default_furnace_active", 0.25, at, FURNACE_HEARING);
+                if let Some(f) = self.furnaces.get_mut(pos) {
+                    f.sounds.push(id);
+                    // Only the last three can still be playing.
+                    if f.sounds.len() > 3 {
+                        f.sounds.remove(0);
+                    }
+                }
+            }
+            if !step.active {
+                let sounds = self.furnaces.get_mut(pos).map(|f| std::mem::take(&mut f.sounds)).unwrap_or_default();
+                self.fade_sounds(&sounds);
+            }
+            if step.changed {
+                self.send_furnace(pos);
+            }
+            if display != shown {
+                let viewers: Vec<SocketAddr> =
+                    self.peers.iter().filter(|(_, p)| p.furnace == Some(pos)).map(|(a, _)| *a).collect();
+                for addr in viewers {
+                    self.send_furnace_form(addr, pos);
+                }
+            }
+        }
+        if save {
+            self.furnaces.save();
+        }
+    }
+
+    /// TOCLIENT_DETACHED_INVENTORY with a furnace's contents.
+    fn furnace_packet(&self, pos: NodePos) -> Option<Vec<u8>> {
+        let f = self.furnaces.get(pos)?;
+        let lists: Vec<_> = f
+            .lists()
+            .into_iter()
+            .map(|(name, width, slots)| (name, width, slots.iter().map(|s| s.map(|s| s.item_string())).collect()))
+            .collect();
+        Some(build_detached_inventory(&furnace::detached_name(pos), &lists))
+    }
+
+    /// Send a furnace's contents to everyone who has it open.
+    fn send_furnace(&mut self, pos: NodePos) {
+        let Some(packet) = self.furnace_packet(pos) else {
+            return;
+        };
+        let viewers: Vec<SocketAddr> = self.peers.iter().filter(|(_, p)| p.furnace == Some(pos)).map(|(a, _)| *a).collect();
+        for addr in viewers {
+            self.send_command(addr, 0, &packet);
+        }
+    }
+
+    /// Close a furnace's window for everyone who has it open (it was dug).
+    fn close_furnace(&mut self, pos: NodePos) {
+        let viewers: Vec<SocketAddr> = self.peers.iter().filter(|(_, p)| p.furnace == Some(pos)).map(|(a, _)| *a).collect();
+        for addr in viewers {
+            if let Some(peer) = self.peers.get_mut(&addr) {
+                peer.furnace = None;
+            }
+            self.send_command(addr, 0, &build_show_formspec("", FURNACE_FORM));
         }
     }
 
@@ -2381,6 +2612,11 @@ impl Server {
             let dt = now.duration_since(self.items_stepped).as_secs_f32();
             self.items_stepped = now;
             self.step_items(dt);
+        }
+        if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
+            let dt = now.duration_since(self.furnaces_stepped).as_secs_f32();
+            self.furnaces_stepped = now;
+            self.step_furnaces(dt);
         }
 
         let mut gone = Vec::new();

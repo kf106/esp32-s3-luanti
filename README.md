@@ -51,8 +51,15 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - a tree trunk makes 4 planks; planks make 4 sticks;
   - a coal lump above a stick makes 4 torches;
   - 4 sand make sandstone, and sandstone makes 4 sand;
-  - wooden and stone pickaxes, shovels, axes and swords, in Minetest Game's shapes (planks for wood, stone or cobblestone for stone).
-- **Tools:** Minetest Game's digging rules. The bare hand digs earth, sand, leaves and (slowly) wood, but not stone, so your first job is a wooden pickaxe. Iron ore needs a stone pickaxe. Tools wear with use, show Luanti's wear bar, and break with Minetest Game's sound: a wooden pickaxe lasts 30 stone digs, a stone one 60.
+  - wooden and stone pickaxes, shovels, axes and swords, in Minetest Game's shapes (planks for wood, stone or cobblestone for stone);
+  - a furnace from 8 stone or cobblestone in a ring;
+  - steel pickaxes, shovels, axes and swords from steel ingots.
+- **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
+  - It smelts iron lumps into steel ingots and cobblestone into stone, 3 seconds each.
+  - Fuel: coal lumps burn for 40 s, trunks 22 to 26 s, planks 5 or 6 s, leaves, torches and wooden tools a few seconds, sticks 1 s. A piece of fuel that is alight burns to the end.
+  - It burns whether or not anyone has it open. While lit, its front shows the fire, it glows, the window's flame and arrow fill up, and you hear it.
+  - Only fuel goes in the fuel slot, and nothing into the output. Empty it before digging it (with a stone pickaxe). Its contents are kept on the SD card in `world/furnaces.txt`.
+- **Tools:** Minetest Game's digging rules. The bare hand digs earth, sand, leaves and (slowly) wood, but not stone, so your first job is a wooden pickaxe. Iron ore needs a stone pickaxe. Tools wear with use, show Luanti's wear bar, and break with Minetest Game's sound: a wooden pickaxe lasts 30 stone digs, a stone one 60, a steel one 180 (and digs twice as fast).
 - **Torches:** they mount on floors, walls and ceilings using Minetest Game's 3D models. The server computes their light, so caves and nights are lit, and they fall off when the block they hang on is dug.
 - **Day and night:** a normal day and night cycle. Map blocks carry separate day and night light.
 - **Health:** fall damage, a health bar, death and respawn.
@@ -82,7 +89,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- No furnace yet, so no steel tools, and no admin commands.
+- No chests, doors or other Minetest Game blocks yet; no admin commands.
 - No Lua mods: the game content is built in.
 - Dropped items are not saved over a restart.
 - One world per SD card.
@@ -129,7 +136,7 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 
 ```
 /sd/auth/       accounts (salt and SRP verifier per player)
-/sd/world/      the world: nodes.log (every change made) and the generator version
+/sd/world/      the world: nodes.log (every change made), furnaces.txt (furnace contents) and the generator version
 /sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin)
 /sd/media/      optional extra media (see below)
 /sd/motd.txt    optional welcome message (see below)
@@ -201,7 +208,8 @@ src/world.rs       the world: generated blocks, player changes, lighting
 src/terrain.rs     terrain, biomes, caves and ores
 src/items.rs       dropped items and their physics
 src/inventory.rs   inventories and inventory actions
-src/crafting.rs    crafting recipes and the craft grid
+src/crafting.rs    crafting recipes, the craft grid, and fuel
+src/furnace.rs     furnaces and their inventories
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto
