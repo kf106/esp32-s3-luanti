@@ -104,7 +104,12 @@ fn main() -> anyhow::Result<()> {
     let status = status::Status::new(format!("{ip}:{PORT}"));
     lcd::start(status.clone(), p.spi2, pins.gpio40, pins.gpio45);
     let sent = std::sync::Arc::as_ptr(&status) as usize;
-    let mut server = server::Server::new(server::Setup { socket, auth, world, inventories, players, media, status });
+    // An optional welcome message of your own, one chat line per line.
+    let motd = fs::read_to_string(format!("{MOUNT}/motd.txt")).ok();
+    if motd.is_some() {
+        info!("Welcome message from {MOUNT}/motd.txt");
+    }
+    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, media, status });
     // Guard against the compiler problem that once lost an argument on the
     // way into Server::new (see server::Setup).
     if server.status_data_addr() != sent {

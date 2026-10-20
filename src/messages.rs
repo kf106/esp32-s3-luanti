@@ -37,6 +37,7 @@ pub const TOCLIENT_ACTIVE_OBJECT_REMOVE_ADD: u16 = 0x31;
 pub const TOCLIENT_ACTIVE_OBJECT_MESSAGES: u16 = 0x32;
 pub const TOCLIENT_MOVE_PLAYER: u16 = 0x34;
 pub const TOCLIENT_HP: u16 = 0x33;
+pub const TOCLIENT_CHAT_MESSAGE: u16 = 0x2F;
 pub const TOCLIENT_DEATHSCREEN_LEGACY: u16 = 0x37;
 pub const TOCLIENT_HUDADD: u16 = 0x49;
 pub const TOCLIENT_HUDCHANGE: u16 = 0x4b;
@@ -1209,5 +1210,31 @@ pub fn build_health_bar(hp: u16) -> Vec<u8> {
 pub fn build_health_bar_change(hp: u16) -> Vec<u8> {
     let mut w = Writer::new(TOCLIENT_HUDCHANGE);
     w.u32(HUD_HEALTH).u8(HUD_STAT_NUMBER).u32(hp as u32);
+    w.into_inner()
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+/// Chat message types (ChatMessageType in Luanti's chatmessage.h).
+pub const CHAT_SYSTEM: u8 = 3;
+
+/// TOCLIENT_CHAT_MESSAGE: version 1, type, sender and text as UTF-16
+/// strings (u16 length in code units), then a Unix timestamp.
+pub fn build_chat_message(kind: u8, sender: &str, text: &str) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_CHAT_MESSAGE);
+    w.u8(1).u8(kind);
+    for s in [sender, text] {
+        let units: Vec<u16> = s.encode_utf16().take(u16::MAX as usize).collect();
+        w.u16(units.len() as u16);
+        for u in units {
+            w.u16(u);
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    w.u64(now);
     w.into_inner()
 }

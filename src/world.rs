@@ -65,6 +65,18 @@ pub fn block_of_node(p: NodePos) -> BlockPos {
     (block_of(p.0), block_of(p.1), block_of(p.2))
 }
 
+/// The edge of the world, as in Luanti (MAX_MAP_GENERATION_LIMIT): only map
+/// blocks within this many nodes of the origin exist. Beyond them the
+/// client has nothing, and it treats that as solid: an invisible wall.
+pub const MAP_LIMIT: i32 = 31007;
+
+/// Whether a map block is inside the world (blockpos_over_max_limit in
+/// Luanti's mapblock.h, which makes the edge at -30992 and +31007).
+pub fn block_in_world(p: BlockPos) -> bool {
+    let limit = (MAP_LIMIT / BLOCK_SIZE) as i16;
+    [p.0, p.1, p.2].iter().all(|v| (-limit..=limit).contains(v))
+}
+
 /// The 16x16 columns of a block column, their height range, and the trees
 /// growing in or into it.
 struct BlockColumn {

@@ -74,6 +74,15 @@ const MAX_INTERACT_DISTANCE: f32 = 8.0;
 const HOTBAR_SIZE: usize = 8;
 /// How often a moving player's position is saved to the SD card.
 const SAVE_INTERVAL: Duration = Duration::from_secs(30);
+/// How many players can be in the game at once (Luanti's max_users,
+/// default 15 there). More would overload the ESP32: see the README.
+const MAX_PLAYERS: usize = 6;
+/// The welcome message, shown in the chat area when a player joins, one
+/// line per message. A /sd/motd.txt file replaces it.
+const WELCOME: &str = "\
+Welcome! This Luanti server runs on an ESP32-S3 microcontroller: a Waveshare ESP32-S3-LCD-1.47 board, with 512 KB of RAM plus 8 MB of PSRAM.
+It is written from scratch in Rust, with no Lua: the world, digging and building, torches, trees, items and skins are all built in. Up to 6 players.
+Source: https://github.com/kf106/esp32-s3-luanti";
 /// How often dropped items are moved on.
 const ITEM_STEP_INTERVAL: Duration = Duration::from_millis(50);
 /// builtin's item_drop: thrown from 1.2 nodes above the feet, at 2.9
@@ -250,6 +259,8 @@ pub struct Server {
     items: Items,
     items_stepped: Instant,
     skins: Skins,
+    /// Welcome message lines.
+    welcome: Vec<String>,
     /// Sending is held back until then (see CONGESTION_BACKOFF).
     congested_until: Instant,
     /// Sends that failed since the last report, and when that was.
@@ -260,6 +271,8 @@ pub struct Server {
 /// Everything the server needs, gathered up by main().
 pub struct Setup {
     pub socket: UdpSocket,
+    /// The welcome message from the SD card, replacing WELCOME.
+    pub motd: Option<String>,
     pub auth: AuthStore,
     pub world: World,
     pub inventories: InventoryStore,
@@ -340,7 +353,7 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, auth, world, inventories, players, media, status } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, media, status } = setup;
         let itemdef = build_itemdef(&content::itemdef_bytes());
         let nodedef = build_nodedef(&content::nodedef_bytes());
         let announce_media = build_announce_media(
@@ -378,6 +391,14 @@ impl Server {
             items: Items::new(),
             items_stepped: Instant::now(),
             skins,
+            welcome: motd
+                .as_deref()
+                .unwrap_or(WELCOME)
+                .lines()
+                .map(str::trim_end)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect(),
             congested_until: Instant::now(),
             send_failures: 0,
             send_failures_reported: Instant::now(),
@@ -654,6 +675,14 @@ impl Server {
                 self.deny(from, AccessDenied::WrongName, "");
                 return;
             }
+        }
+
+        // Checked now so a client isn't taken through logging in only to be
+        // turned away, and again when it is ready to join (Luanti does both).
+        if self.user_limit_reached(&init.name) {
+            info!("{} tried to join, but the game is full ({MAX_PLAYERS} players)", init.name);
+            self.deny(from, AccessDenied::TooManyUsers, "");
+            return;
         }
 
         let auth_mechs = match self.auth.load(&init.name) {
@@ -959,6 +988,16 @@ impl Server {
         if !peer.content_sent || peer.ready {
             return;
         }
+        let name = peer.display_name().to_string();
+        // Two could have been logging in at once for the last place.
+        if self.user_limit_reached(&name) {
+            info!("{name} tried to join, but the game is full ({MAX_PLAYERS} players)");
+            self.deny(from, AccessDenied::TooManyUsers, "");
+            return;
+        }
+        let Some(peer) = self.peers.get_mut(&from) else {
+            return;
+        };
         peer.ready = true;
         match ready {
             Some(r) => info!(
@@ -1016,6 +1055,7 @@ impl Server {
             self.send_command(from, 0, &build_deathscreen());
         }
         self.plan_blocks(from, spawn, MAX_VIEW_RADIUS);
+        self.send_welcome(from);
         if let Some(peer) = self.peers.get(&from) {
             let name = peer.display_name().to_string();
             self.event(format!("{name} joined"));
@@ -1288,6 +1328,36 @@ impl Server {
             }
         }
         fallen
+    }
+
+    /// The welcome message, and who else is here, in the chat area.
+    fn send_welcome(&mut self, addr: SocketAddr) {
+        let mut lines = self.welcome.clone();
+        let others: Vec<&str> = self
+            .peers
+            .iter()
+            .filter(|(a, p)| **a != addr && p.ready)
+            .map(|(_, p)| p.display_name())
+            .collect();
+        lines.push(if others.is_empty() {
+            "Nobody else is playing right now.".to_string()
+        } else {
+            format!("Also playing: {}", others.join(", "))
+        });
+        for line in lines {
+            self.send_command(addr, 0, &build_chat_message(CHAT_SYSTEM, "", &line));
+        }
+    }
+
+    /// Whether the game is full for `name`. A player reconnecting (whose old
+    /// connection is still counted until it is replaced) is let in.
+    fn user_limit_reached(&self, name: &str) -> bool {
+        let others = self
+            .peers
+            .values()
+            .filter(|p| p.ready && !p.display_name().eq_ignore_ascii_case(name))
+            .count();
+        others >= MAX_PLAYERS
     }
 
     /// The texture for a skin key.
@@ -1618,13 +1688,18 @@ impl Server {
                     continue; // roughly circular
                 }
                 let (bx, bz) = (center.0 + dx, center.2 + dz);
+                if !world::block_in_world((bx, 0, bz)) {
+                    continue;
+                }
                 let (low, high) = self.world.height_range(bx, bz);
                 let surface = world::block_of(low - 1)..=world::block_of(high + 1);
                 let around = center.1 - 1..=center.1 + 1;
                 let ys = surface.clone().chain(around.filter(|y| !surface.contains(y)));
                 for y in ys {
                     let p = (bx, y, bz);
-                    if !peer.sent_blocks.contains(&p) {
+                    // Nothing beyond the edge of the world: the client
+                    // treats missing blocks as solid, so that is the wall.
+                    if world::block_in_world(p) && !peer.sent_blocks.contains(&p) {
                         wanted.push(p);
                     }
                 }

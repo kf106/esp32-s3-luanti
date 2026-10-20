@@ -43,6 +43,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - caves with entrances;
   - coal and iron ore;
   - birch woods in the lowlands and fir forests in the hills and snow, with clearings and the odd lone tree; leaves cast shade.
+- **World edge:** the world ends about 31,000 nodes from the centre in every direction, at an invisible wall, as in Luanti.
 - **World storage:** the world is generated on demand from a fixed seed. Only the changes players make are stored, as an append-only log on the SD card.
 - **Digging and building:** changes appear for every player at once.
 - **Survival inventory:** 32 slots, with stacks you can rearrange in the inventory window. New players start with 20 torches.
@@ -53,6 +54,8 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - `Q` drops the whole stack in your hand; `Shift+Q` drops one;
   - punch an item to pick it up;
   - items fall, land, and merge with matching items nearby.
+- **Up to six players at once:** a seventh is turned away with Luanti's "too many users" message. The limit is `MAX_PLAYERS` in `src/server.rs`; more players would overload the ESP32, mainly in generating map blocks when several explore at once.
+- **Welcome message:** joining players are told what the server is and who else is on.
 - **Players:** other players are shown with the animated Minetest Game character and their name tags.
 - **Skins:**
   - chosen with a live 3D preview in the inventory window;
@@ -112,9 +115,14 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 /sd/world/      the world: nodes.log (every change made) and the generator version
 /sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin)
 /sd/media/      optional extra media (see below)
+/sd/motd.txt    optional welcome message (see below)
 ```
 
 All of these are plain text or simple binary files, so you can inspect or edit them on a PC. If a future version changes the terrain generator, the old change log is kept as `nodes-v<n>.log` and the world starts afresh.
+
+### Welcome message
+
+Players see a short welcome in the chat area when they join: what the server is, where the source is, and who else is playing. To use your own text instead, put it in `/sd/motd.txt`; each line becomes one chat line. The list of other players is still added at the end.
 
 ### Starting afresh
 
