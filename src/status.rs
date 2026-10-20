@@ -34,6 +34,25 @@ pub struct Status {
     pub block_us: u64,
     /// Packets that couldn't be sent (Wi-Fi transmit buffers full).
     pub send_failures: u64,
+    /// Running counts of players joining and leaving and of chat lines,
+    /// for the LED to flash on.
+    pub joins: u64,
+    pub leaves: u64,
+    pub chats: u64,
+}
+
+/// Problems (such as failing to save to the SD card), counted from
+/// anywhere in the server, for the LED to flash red on.
+/// (32 bits: the ESP32's Xtensa cores have no 64-bit atomic operations.)
+static PROBLEMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Note that something went wrong (it should also be logged).
+pub fn problem() {
+    PROBLEMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn problems() -> u64 {
+    PROBLEMS.load(std::sync::atomic::Ordering::Relaxed) as u64
 }
 
 pub type SharedStatus = Arc<Mutex<Status>>;
@@ -54,6 +73,9 @@ impl Status {
             blocks_built: 0,
             block_us: 0,
             send_failures: 0,
+            joins: 0,
+            leaves: 0,
+            chats: 0,
         }))
     }
 

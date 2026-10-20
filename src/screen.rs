@@ -48,6 +48,8 @@ pub struct System {
     pub block_ms: Option<f32>,
     /// SD card size and free space, in bytes.
     pub sd: Option<(u64, u64)>,
+    /// The chip's own temperature sensor, in degrees Celsius.
+    pub chip_temp: Option<f32>,
 }
 
 /// The status screens, paged through with the BOOT button.
@@ -202,9 +204,10 @@ pub fn render(f: &mut Frame, view: &View) {
         Page::Overview => render_overview(f, view.status, view.system),
         Page::Device => render_device(f, view.status, view.system),
     }
-    // Which page this is, as dots along the bottom edge.
+    // Which page this is, as dots along the bottom edge, kept clear of the
+    // panel's rounded corner.
     let (dot, gap) = (4, 6);
-    let x0 = WIDTH - 6 - Page::COUNT * (dot + gap) + gap;
+    let x0 = WIDTH - 11 - Page::COUNT * (dot + gap) + gap;
     for i in 0..Page::COUNT {
         let colour = if i + 1 == view.page.number() { TEXT } else { RULE };
         f.fill(x0 + i * (dot + gap), HEIGHT - dot - 3, dot, dot, colour);
@@ -287,6 +290,20 @@ fn render_device(f: &mut Frame, st: &Status, sys: &System) {
     // Storage
     let sd = sys.sd.map_or("-".to_string(), |(total, free)| format!("{} free of {}", gb(free), gb(total)));
     f.pair(&(margin, y), "SD card ", &sd);
+    y += line;
+
+    // Heat: the ESP32-S3 is rated for 85 C around it; ordinary SD cards
+    // for about 70 C, and the card sits right over the chip.
+    let x = f.text(&label, margin, y, "Chip ");
+    match sys.chip_temp {
+        Some(t) => {
+            let colour = if t < 60.0 { GOOD } else if t < 75.0 { EVENT } else { rgb(239, 83, 80) };
+            f.text(&Pen::new(&SMALL, colour, BACKGROUND, WIDTH), x, y, &format!("{t:.0} C"));
+        }
+        None => {
+            f.text(&value, x, y, "-");
+        }
+    }
 }
 
 /// The first page: who is playing and what is happening.

@@ -14,6 +14,7 @@ use esp_idf_svc::hal::spi::{Dma, SpiAnyPins, SpiDriver, SpiDriverConfig};
 use esp_idf_svc::sys::*;
 use log::{info, warn};
 
+use crate::indicator::{self, Event, Indicator, State};
 use crate::screen::{self, Frame, Page, System, View, HEIGHT, WIDTH};
 use crate::status::{self, SharedStatus};
 
@@ -34,6 +35,11 @@ const STRIP_BYTES: usize = WIDTH * STRIP_ROWS * 2;
 const ST7789_NOP: i32 = 0x00;
 
 const REFRESH: Duration = Duration::from_secs(1);
+/// The screen switches off after this long without a button press (it
+/// warms the board, and nobody watches it all the time). A press wakes it.
+const SCREEN_TIMEOUT: Duration = Duration::from_secs(60);
+/// The board's RGB LED: one addressable (WS2812-style) LED on GPIO 38.
+const PIN_LED: i32 = 38;
 /// The BOOT button: GPIO 0, pulled up, low while pressed.
 const PIN_BUTTON: i32 = 0;
 /// How often the button is checked; also its debounce time.
@@ -119,6 +125,15 @@ impl Lcd {
         Ok(lcd)
     }
 
+    /// Switch the backlight and the panel on or off.
+    pub fn set_on(&self, on: bool) -> Result<(), EspError> {
+        unsafe {
+            esp!(gpio_set_level(PIN_BACKLIGHT as _, on as u32))?;
+            esp!(esp_lcd_panel_disp_on_off(self.panel, on))?;
+        }
+        Ok(())
+    }
+
     /// Send a whole frame, a strip at a time.
     pub fn show(&self, frame: &Frame) -> Result<(), EspError> {
         let buf = unsafe { std::slice::from_raw_parts_mut(self.strip, STRIP_BYTES) };
@@ -169,16 +184,87 @@ fn run(lcd: Lcd, status: SharedStatus) {
     let mut page = Page::Overview;
     let button = Button::new();
     let mut cpu = CpuLoad::new();
+    let thermometer = Thermometer::new();
     let mut last = (Instant::now(), 0u64, 0u64);
     let mut last_server = (0u64, 0u64, 0u64); // busy_us, block_us, blocks
     let mut block_ms = None;
     // When the SD card was last checked, and what it said.
     let mut sd: (Option<Instant>, Option<(u64, u64)>) = (None, None);
     let mut drawn: Option<Instant> = None;
+    let mut last_press = Instant::now();
+    let mut screen_on = true;
+    let led = RgbLed::new();
+    let mut indicator = Indicator::new();
+    let mut shown: Option<[u8; 3]> = None;
+    let mut ticked = Instant::now();
+    // Counts already flashed for (joins, leaves, chats, problems).
+    let mut seen = {
+        let st = status::lock(&status);
+        (st.joins, st.leaves, st.chats, status::problems())
+    };
     loop {
+        // The LED: dark while the screen is on (the screen says it all),
+        // otherwise breathing and flashing (see indicator.rs).
+        let (state, counts) = {
+            let st = status::lock(&status);
+            let state = if st.address.starts_with("Wi-Fi") {
+                State::NoWifi
+            } else {
+                State::Running { players: st.players.len() }
+            };
+            (state, (st.joins, st.leaves, st.chats, status::problems()))
+        };
+        let news = [
+            (counts.0 > seen.0, Event::Join),
+            (counts.1 > seen.1, Event::Leave),
+            (counts.2 > seen.2, Event::Chat),
+            (counts.3 > seen.3, Event::Problem),
+        ];
+        seen = counts;
+        let dt = ticked.elapsed();
+        ticked = Instant::now();
+        if let Some(led) = &led {
+            let bytes = if screen_on {
+                [0; 3]
+            } else {
+                for (new, e) in news {
+                    if new {
+                        indicator.event(e);
+                    }
+                }
+                let c = indicator.colour(dt, state);
+                [indicator::to_byte(c.0), indicator::to_byte(c.1), indicator::to_byte(c.2)]
+            };
+            if shown != Some(bytes) {
+                led.set(bytes);
+                shown = Some(bytes);
+            }
+        }
+
         let pressed = button.pressed();
         if pressed {
-            page = page.next();
+            last_press = Instant::now();
+            if screen_on {
+                page = page.next();
+            } else {
+                // The first press only wakes the screen, on the page it showed.
+                screen_on = true;
+                drawn = None;
+                if let Err(e) = lcd.set_on(true) {
+                    warn!("LCD on: {e}");
+                }
+                continue;
+            }
+        }
+        if screen_on && last_press.elapsed() >= SCREEN_TIMEOUT {
+            screen_on = false;
+            if let Err(e) = lcd.set_on(false) {
+                warn!("LCD off: {e}");
+            }
+        }
+        if !screen_on {
+            std::thread::sleep(BUTTON_POLL);
+            continue;
         }
         if !pressed && drawn.is_some_and(|t| t.elapsed() < REFRESH) {
             std::thread::sleep(BUTTON_POLL);
@@ -220,6 +306,7 @@ fn run(lcd: Lcd, status: SharedStatus) {
                 server_busy: busy.clamp(0.0, 100.0),
                 block_ms,
                 sd: sd.1,
+                chip_temp: thermometer.as_ref().and_then(Thermometer::read),
             }
         };
         last = (now, snapshot.packets_in, snapshot.packets_out);
@@ -227,6 +314,69 @@ fn run(lcd: Lcd, status: SharedStatus) {
         screen::render(&mut frame, &View { page, status: &snapshot, system: &sys });
         if let Err(e) = lcd.show(&frame) {
             warn!("LCD update failed: {e}");
+        }
+    }
+}
+
+/// The RGB LED, driven by the RMT peripheral: each bit is a high pulse,
+/// short for 0 and long for 1, 24 bits per colour in green, red, blue order.
+struct RgbLed {
+    channel: rmt_channel_handle_t,
+    encoder: rmt_encoder_handle_t,
+}
+
+impl RgbLed {
+    /// RMT ticks per second: 0.1 us each.
+    const RESOLUTION_HZ: u32 = 10_000_000;
+
+    fn new() -> Option<Self> {
+        // One RMT symbol: `high` ticks high, then `low` ticks low.
+        let symbol = |high: u32, low: u32| rmt_symbol_word_t { val: high | 1 << 15 | low << 16 };
+        let started = unsafe {
+            let channel_config = rmt_tx_channel_config_t {
+                gpio_num: PIN_LED,
+                clk_src: soc_periph_rmt_clk_src_t_RMT_CLK_SRC_DEFAULT,
+                resolution_hz: Self::RESOLUTION_HZ,
+                mem_block_symbols: 48,
+                trans_queue_depth: 2,
+                ..Default::default()
+            };
+            let mut channel: rmt_channel_handle_t = null_mut();
+            let mut encoder: rmt_encoder_handle_t = null_mut();
+            // WS2812 timing: a 0 is 0.3 us high then 0.9 us low; a 1 the
+            // other way round.
+            let mut encoder_config = rmt_bytes_encoder_config_t {
+                bit0: symbol(3, 9),
+                bit1: symbol(9, 3),
+                ..Default::default()
+            };
+            encoder_config.flags.set_msb_first(1);
+            esp!(rmt_new_tx_channel(&channel_config, &mut channel))
+                .and_then(|_| esp!(rmt_new_bytes_encoder(&encoder_config, &mut encoder)))
+                .and_then(|_| esp!(rmt_enable(channel)))
+                .map(|_| Self { channel, encoder })
+        };
+        match started {
+            Ok(led) => {
+                led.set([0; 3]); // it may light up at power-on
+                Some(led)
+            }
+            Err(e) => {
+                warn!("RGB LED not available: {e}");
+                None
+            }
+        }
+    }
+
+    /// Show a colour: red, green, blue power, 0 to 255.
+    fn set(&self, rgb: [u8; 3]) {
+        let grb = [rgb[1], rgb[0], rgb[2]];
+        let config = rmt_transmit_config_t::default();
+        unsafe {
+            if esp!(rmt_transmit(self.channel, self.encoder, grb.as_ptr() as *const _, grb.len(), &config)).is_ok() {
+                // A few tens of microseconds; the buffer must outlive it.
+                let _ = rmt_tx_wait_all_done(self.channel, 10);
+            }
         }
     }
 }
@@ -305,6 +455,41 @@ impl CpuLoad {
         }
         self.at = now;
         load
+    }
+}
+
+/// The ESP32-S3's built-in temperature sensor (on the chip itself, so it
+/// reads warmer than the air around the board).
+struct Thermometer {
+    handle: temperature_sensor_handle_t,
+}
+
+impl Thermometer {
+    fn new() -> Option<Self> {
+        // The sensor has a few fixed ranges; 20 to 100 C suits a board that
+        // runs warm.
+        let config = temperature_sensor_config_t {
+            range_min: 20,
+            range_max: 100,
+            // The clock source is left at 0, which the driver takes as its default.
+            ..Default::default()
+        };
+        let mut handle: temperature_sensor_handle_t = null_mut();
+        let started = unsafe {
+            esp!(temperature_sensor_install(&config, &mut handle)).and_then(|_| esp!(temperature_sensor_enable(handle)))
+        };
+        match started {
+            Ok(()) => Some(Self { handle }),
+            Err(e) => {
+                warn!("Temperature sensor not available: {e}");
+                None
+            }
+        }
+    }
+
+    fn read(&self) -> Option<f32> {
+        let mut celsius = 0.0f32;
+        (unsafe { temperature_sensor_get_celsius(self.handle, &mut celsius) } == 0).then_some(celsius)
     }
 }
 

@@ -2,6 +2,7 @@ mod auth;
 mod content;
 mod fasthash;
 mod font;
+mod indicator;
 mod inventory;
 mod items;
 mod lcd;

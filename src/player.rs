@@ -86,6 +86,7 @@ impl PlayerStore {
     pub fn save(&self, name: &str, data: &PlayerData) {
         if let Err(e) = storage::write(&self.path(name), data.to_text().as_bytes()) {
             warn!("Saving player file for {name}: {e}");
+            crate::status::problem();
         }
     }
 }

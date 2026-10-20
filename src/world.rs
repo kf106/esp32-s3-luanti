@@ -422,6 +422,7 @@ impl World {
                 .and_then(|mut f: File| f.write_all(&record(pos, id, param2)));
             if let Err(e) = result {
                 warn!("Saving node change to {}: {e}", log_path.display());
+                crate::status::problem();
             }
         }
         self.relight(pos, was_torch, content::is_torch(id));

@@ -22,6 +22,7 @@ pub const TOSERVER_DAMAGE: u16 = 0x35;
 pub const TOSERVER_RESPAWN_LEGACY: u16 = 0x38;
 pub const TOSERVER_INVENTORY_ACTION: u16 = 0x31;
 pub const TOSERVER_INVENTORY_FIELDS: u16 = 0x3c;
+pub const TOSERVER_CHAT_MESSAGE: u16 = 0x32;
 
 // Server to client
 pub const TOCLIENT_HELLO: u16 = 0x02;
@@ -1217,8 +1218,21 @@ pub fn build_health_bar_change(hp: u16) -> Vec<u8> {
 // Chat
 // ---------------------------------------------------------------------------
 
-/// Chat message types (ChatMessageType in Luanti's chatmessage.h).
+/// Chat message types (ChatMessageType in Luanti's chatmessage.h). Players'
+/// lines and command replies go out as "raw", as the Luanti server sends
+/// them; the welcome is a system message.
+pub const CHAT_RAW: u8 = 0;
 pub const CHAT_SYSTEM: u8 = 3;
+
+/// TOSERVER_CHAT_MESSAGE: what the player typed, as a UTF-16 string
+/// (u16 length in code units).
+pub fn parse_chat_message(payload: &[u8]) -> Option<String> {
+    let mut r = Reader::new(payload);
+    r.u16()?;
+    let n = r.u16()? as usize;
+    let units: Option<Vec<u16>> = (0..n).map(|_| r.u16()).collect();
+    Some(char::decode_utf16(units?).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER)).collect())
+}
 
 /// TOCLIENT_CHAT_MESSAGE: version 1, type, sender and text as UTF-16
 /// strings (u16 length in code units), then a Unix timestamp.

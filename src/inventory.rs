@@ -280,6 +280,7 @@ impl InventoryStore {
     pub fn save(&self, name: &str, inv: &Inventory) {
         if let Err(e) = storage::write(&self.path(name), inv.to_text().as_bytes()) {
             warn!("Saving inventory of {name}: {e}");
+            crate::status::problem();
         }
     }
 }

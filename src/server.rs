@@ -85,12 +85,19 @@ const SAVE_INTERVAL: Duration = Duration::from_secs(30);
 /// How many players can be in the game at once (Luanti's max_users,
 /// default 15 there). More would overload the ESP32: see the README.
 const MAX_PLAYERS: usize = 6;
+/// Luanti's chat limits (chat_message_max_size, and
+/// chat_message_limit_per_10sec).
+const CHAT_MAX_CHARS: usize = 500;
+const CHAT_MAX_PER_10S: usize = 8;
+const CHAT_HELP: &str = "\
+Commands: /help, /me <action>, /msg <player> <message>, /status, /time";
 /// The welcome message, shown in the chat area when a player joins, one
 /// line per message. A /sd/motd.txt file replaces it.
 const WELCOME: &str = "\
 Welcome! This Luanti server runs on an ESP32-S3 microcontroller: a Waveshare ESP32-S3-LCD-1.47 board, with 512 KB of RAM plus 8 MB of PSRAM.
 It is written from scratch in Rust, with no Lua: the world, digging and building, torches, trees, items and skins are all built in. Up to 6 players.
-Source: https://github.com/kf106/esp32-s3-luanti";
+Source: https://github.com/kf106/esp32-s3-luanti
+Chat works as usual; type /help for the commands.";
 /// How often dropped items are moved on.
 const ITEM_STEP_INTERVAL: Duration = Duration::from_millis(50);
 /// builtin's item_drop: thrown from 1.2 nodes above the feet, at 2.9
@@ -175,6 +182,8 @@ struct Peer {
     saved_at: Instant,
     /// The key of the skin they wear (see skins.rs).
     skin: String,
+    /// When their recent chat messages were sent, for the flood limit.
+    chat_times: VecDeque<Instant>,
 }
 
 impl Peer {
@@ -206,6 +215,7 @@ impl Peer {
             saved: None,
             saved_at: Instant::now(),
             skin: skins::DEFAULT_SKIN.to_string(),
+            chat_times: VecDeque::new(),
         }
     }
 
@@ -721,6 +731,7 @@ impl Server {
                     if peer.ready {
                         self.remove_player_object(peer.id);
                         self.event(format!("{} left", peer.display_name()));
+                        status::lock(&self.status).leaves += 1;
                     }
                     self.refresh_players();
                 }
@@ -767,6 +778,7 @@ impl Server {
             // The client confirms blocks it has meshed; we don't need that yet.
             TOSERVER_GOTBLOCKS => {}
             TOSERVER_INVENTORY_FIELDS => self.on_inventory_fields(from, payload),
+            TOSERVER_CHAT_MESSAGE => self.on_chat(from, payload),
             // Window size and similar client details: nothing to do.
             0x0053 => {}
             other => {
@@ -1099,7 +1111,9 @@ impl Server {
         self.send_command(from, 0, &nodedef);
         self.send_command(from, 0, &announce);
         self.send_command(from, 0, &build_movement());
-        self.send_command(from, 0, &build_time_of_day(TIME_OF_DAY, TIME_SPEED));
+        // The time now, so every player's day matches.
+        let now = self.time_of_day();
+        self.send_command(from, 0, &build_time_of_day(now, TIME_SPEED));
         self.send_command(from, 0, &build_csm_restriction_flags());
     }
 
@@ -1201,6 +1215,7 @@ impl Server {
         if let Some(peer) = self.peers.get(&from) {
             let name = peer.display_name().to_string();
             self.event(format!("{name} joined"));
+            status::lock(&self.status).joins += 1;
         }
         self.refresh_players();
     }
@@ -1470,6 +1485,136 @@ impl Server {
             }
         }
         fallen
+    }
+
+    /// A line in a player's chat area.
+    fn tell(&mut self, addr: SocketAddr, text: &str) {
+        self.send_command(addr, 0, &build_chat_message(CHAT_RAW, "", text));
+    }
+
+    /// A line in everyone's chat area.
+    fn tell_all(&mut self, text: &str) {
+        info!("CHAT: {text}");
+        self.send_to_players(&build_chat_message(CHAT_RAW, "", text));
+    }
+
+    /// Something a player typed in chat: a line for everyone, or a command.
+    /// As Luanti does: trimmed, at most CHAT_MAX_CHARS characters, one
+    /// line, and at most CHAT_MAX_PER_10S messages in ten seconds.
+    fn on_chat(&mut self, from: SocketAddr, payload: &[u8]) {
+        let Some(text) = parse_chat_message(payload) else {
+            return;
+        };
+        let Some(peer) = self.peers.get_mut(&from) else {
+            return;
+        };
+        if !peer.ready {
+            return;
+        }
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        while peer.chat_times.front().is_some_and(|t| now.duration_since(*t) > Duration::from_secs(10)) {
+            peer.chat_times.pop_front();
+        }
+        let name = peer.display_name().to_string();
+        if peer.chat_times.len() >= CHAT_MAX_PER_10S {
+            let reply = format!("You cannot send more messages. You are limited to {CHAT_MAX_PER_10S} messages per 10 seconds.");
+            self.tell(from, &reply);
+            return;
+        }
+        peer.chat_times.push_back(now);
+        if text.chars().count() > CHAT_MAX_CHARS {
+            self.tell(from, "Your message exceeds the maximum chat message length. It was refused. Send a shorter message.");
+            return;
+        }
+        if text.contains(['\r', '\n']) {
+            self.tell(from, "Newlines are not permitted in chat messages");
+            return;
+        }
+        if let Some(command) = text.strip_prefix('/') {
+            self.chat_command(from, &name, command);
+            return;
+        }
+        self.tell_all(&format!("<{name}> {text}"));
+        self.event(format!("{name}: {text}"));
+        status::lock(&self.status).chats += 1;
+    }
+
+    /// A chat command, as Luanti's built-in ones word their replies.
+    fn chat_command(&mut self, from: SocketAddr, name: &str, command: &str) {
+        let (cmd, param) = command.split_once(' ').unwrap_or((command, ""));
+        let param = param.trim();
+        match cmd {
+            "" => self.tell(from, "-!- Empty command."),
+            "help" => self.tell(from, CHAT_HELP),
+            "me" => {
+                if param.is_empty() {
+                    self.tell(from, "-!- Invalid command usage: /me <action>");
+                } else {
+                    self.tell_all(&format!("* {name} {param}"));
+                    status::lock(&self.status).chats += 1;
+                }
+            }
+            "msg" => {
+                let Some((to, message)) = param.split_once(' ').map(|(t, m)| (t, m.trim())).filter(|(_, m)| !m.is_empty()) else {
+                    self.tell(from, "Invalid usage, see /help.");
+                    return;
+                };
+                let target = self
+                    .peers
+                    .iter()
+                    .find(|(_, p)| p.ready && p.display_name().eq_ignore_ascii_case(to))
+                    .map(|(a, p)| (*a, p.display_name().to_string()));
+                match target {
+                    Some((addr, to_name)) => {
+                        info!("DM from {name} to {to_name}: {message}");
+                        self.tell(addr, &format!("DM from {name}: {message}"));
+                        self.tell(from, "Message sent.");
+                    }
+                    None => self.tell(from, &format!("The player {to} is not online.")),
+                }
+            }
+            "status" => {
+                let line = self.status_line();
+                self.tell(from, &line);
+            }
+            "time" => {
+                let line = format!("Current time is {}.", self.clock());
+                self.tell(from, &line);
+            }
+            other => self.tell(from, &format!("-!- Invalid command: {other}. Type /help for a list of commands.")),
+        }
+    }
+
+    /// Like Luanti's status line: version, uptime, time of day, players.
+    fn status_line(&self) -> String {
+        let up = status::lock(&self.status).started.elapsed().as_secs();
+        let players: Vec<&str> = self.peers.values().filter(|p| p.ready).map(|p| p.display_name()).collect();
+        format!(
+            "# Server: ESP32-S3 Luanti server, uptime: {}h {:02}m, time of day: {}, players ({}/{MAX_PLAYERS}): {}",
+            up / 3600,
+            up / 60 % 60,
+            self.clock(),
+            players.len(),
+            players.join(", ")
+        )
+    }
+
+    /// The game's time of day in Luanti's units (0..24000, 6000 = 06:00).
+    /// The day starts at TIME_OF_DAY when the server starts and runs
+    /// TIME_SPEED times faster than real time.
+    fn time_of_day(&self) -> u16 {
+        let secs = status::lock(&self.status).started.elapsed().as_secs_f64();
+        ((TIME_OF_DAY as f64 + secs * TIME_SPEED as f64 * 24000.0 / 86400.0) % 24000.0) as u16
+    }
+
+    /// The time of day as hh:mm.
+    fn clock(&self) -> String {
+        let minutes = self.time_of_day() as u32 * 1440 / 24000;
+        format!("{}:{:02}", minutes / 60, minutes % 60)
     }
 
     /// The welcome message, and who else is here, in the chat area.
@@ -2005,6 +2150,7 @@ impl Server {
                 };
                 if builder.jobs.send(BuildJob { pos, state: self.world.snapshot() }).is_err() {
                     warn!("The block builder has stopped; building blocks in the server loop instead");
+                    status::problem();
                     self.builder = None;
                     // Hand the waiting blocks back to be built here.
                     for peer in self.peers.values_mut() {
@@ -2187,6 +2333,7 @@ impl Server {
         for (id, name) in gone {
             self.remove_player_object(id);
             self.event(format!("{name} timed out"));
+            status::lock(&self.status).leaves += 1;
         }
         if self.peers.len() != before {
             self.refresh_players();

@@ -56,19 +56,25 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - items fall, land, and merge with matching items nearby.
 - **Up to six players at once:** a seventh is turned away with Luanti's "too many users" message. The limit is `MAX_PLAYERS` in `src/server.rs`; more players would overload the ESP32, mainly in generating map blocks when several explore at once.
 - **Welcome message:** joining players are told what the server is and who else is on.
+- **Chat:** with Luanti's usual limits (500 characters, 8 messages per 10 seconds), and the commands `/help`, `/me`, `/msg` (a private message), `/status` and `/time`.
 - **Players:** other players are shown with the animated Minetest Game character and their name tags.
 - **Skins:**
   - chosen with a live 3D preview in the inventory window;
   - extra skins can be added on the SD card;
   - 64×64 Minecraft skins are accepted.
 - **Saving:** player positions, health, skins and inventories are saved and restored.
-- **Status screens:** the LCD has two pages, switched with the board's BOOT button:
+- **Status light:** while the screen is off, the board's RGB LED shows what is happening. It never goes above 60% of full power.
+  - slow green breathing while the server runs, a little quicker with players on;
+  - two blue flashes when a player joins, two purple when one leaves, and a white flash for chat;
+  - three red flashes when something goes wrong, such as failing to save to the SD card;
+  - amber blinking while looking for Wi-Fi.
+- **Status screens:** the LCD has two pages, switched with the board's BOOT button. The screen switches off after a minute without a press, to keep the board cooler; the next press wakes it on the same page.
   - **Overview:** players online, packet and block counts, memory, and recent events.
-  - **Device:** load on each CPU core, how busy the server is, time per map block, memory (free, lowest, largest piece), Wi-Fi signal and channel, failed sends, and SD card space.
+  - **Device:** load on each CPU core, how busy the server is, time per map block, memory (free, lowest, largest piece), Wi-Fi signal and channel, failed sends, SD card space, and the chip's temperature.
 
 ## What doesn't (yet)
 
-- No crafting, no chat, no admin commands.
+- No crafting, no admin commands.
 - No Lua mods: the game content is built in.
 - Dropped items are not saved over a restart.
 - One world per SD card.
