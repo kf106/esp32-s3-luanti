@@ -65,11 +65,34 @@ pub fn block_of_node(p: NodePos) -> BlockPos {
     (block_of(p.0), block_of(p.1), block_of(p.2))
 }
 
-/// The 16x16 columns of a block column, and their height range.
+/// The 16x16 columns of a block column, their height range, and the trees
+/// growing in or into it.
 struct BlockColumn {
     columns: Vec<Column>, // index z * 16 + x
     min_height: i32,
     max_height: i32,
+    trees: Vec<terrain::Tree>,
+    /// Per column, the highest y a tree could reach there (i32::MIN for
+    /// none): above it, and above the surface, there is only air.
+    tree_top: Vec<i32>,
+    /// The highest of those.
+    max_tree_top: i32,
+}
+
+impl BlockColumn {
+    /// The generated node above the surface: a tree's, or air.
+    fn above_ground(&self, x: i32, y: i32, z: i32) -> u16 {
+        if y > self.tree_top[(z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize] {
+            return CONTENT_AIR;
+        }
+        terrain::tree_node_in(&self.trees, x, y, z).unwrap_or(CONTENT_AIR)
+    }
+
+    /// How high anything generated goes in this column (surface or tree).
+    fn generated_top(&self, x: i32, z: i32) -> i32 {
+        let i = (z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize;
+        self.columns[i].height.max(self.tree_top[i])
+    }
 }
 
 pub struct World {
@@ -217,7 +240,18 @@ impl World {
         }
         let min_height = columns.iter().map(|c| c.height).min().unwrap_or(0);
         let max_height = columns.iter().map(|c| c.height).max().unwrap_or(0);
-        let bc = std::sync::Arc::new(BlockColumn { columns, min_height, max_height });
+        let trees = terrain::trees_in(x0, z0, x0 + 15, z0 + 15);
+        let mut tree_top = vec![i32::MIN; 256];
+        for t in &trees {
+            for z in (t.z - terrain::TREE_REACH).max(z0)..=(t.z + terrain::TREE_REACH).min(z0 + 15) {
+                for x in (t.x - terrain::TREE_REACH).max(x0)..=(t.x + terrain::TREE_REACH).min(x0 + 15) {
+                    let top = &mut tree_top[((z - z0) * 16 + x - x0) as usize];
+                    *top = (*top).max(t.top());
+                }
+            }
+        }
+        let max_tree_top = tree_top.iter().copied().max().unwrap_or(i32::MIN);
+        let bc = std::sync::Arc::new(BlockColumn { columns, min_height, max_height, trees, tree_top, max_tree_top });
         let mut cache = self.block_columns.borrow_mut();
         if cache.len() >= COLUMN_CACHE_MAX {
             cache.clear();
@@ -231,17 +265,17 @@ impl World {
         bc.columns[(z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize]
     }
 
-    /// Lowest and highest generated surface in a block column, for deciding
-    /// which blocks to send.
+    /// Lowest generated surface and highest generated node (surface or
+    /// tree) in a block column, for deciding which blocks to send.
     pub fn height_range(&self, bx: i16, bz: i16) -> (i32, i32) {
         let bc = self.block_column(bx, bz);
-        (bc.min_height, bc.max_height)
+        (bc.min_height, bc.max_height.max(bc.max_tree_top))
     }
 
     fn generated(&self, x: i32, y: i32, z: i32, col: &Column) -> u16 {
-        // Above the surface it's air: no need to look at caves.
+        // Above the surface it's air or trees: no need to look at caves.
         if y > col.height {
-            return CONTENT_AIR;
+            return self.block_column(block_of(x), block_of(z)).above_ground(x, y, z);
         }
         let mut cache = self.cave_samples.borrow_mut();
         if cache.len() >= CAVE_CACHE_MAX {
@@ -270,7 +304,7 @@ impl World {
         } else {
             self.param2s.insert(pos, param2);
         }
-        if !content::passes_light(id) {
+        if !content::passes_sunlight(id) {
             let top = self.column_top.entry((pos.0, pos.2)).or_insert(pos.1);
             *top = (*top).max(pos.1);
         }
@@ -359,19 +393,20 @@ impl World {
         field
     }
 
-    /// The y of the highest solid node in a column: below it is out of
-    /// direct sunlight, and on it is where a player can stand.
+    /// The y of the highest solid node in a column (leaves included): below
+    /// it is out of direct sunlight, and on it is where a player can stand.
     pub fn highest_solid(&self, x: i32, z: i32) -> i32 {
         let col = self.column(x, z);
         self.highest_solid_with(x, z, &col)
     }
 
     fn highest_solid_with(&self, x: i32, z: i32, col: &Column) -> i32 {
-        let start = col.height.max(self.column_top.get(&(x, z)).copied().unwrap_or(i32::MIN));
+        let generated = self.block_column(block_of(x), block_of(z)).generated_top(x, z);
+        let start = generated.max(self.column_top.get(&(x, z)).copied().unwrap_or(i32::MIN));
         let mut y = start;
         // Scan down past dug-out nodes and cave mouths. A very deep shaft is
         // rare; stop after a while rather than scan forever.
-        while content::passes_light(self.node_with(x, y, z, col)) && y > start - 256 {
+        while content::passes_sunlight(self.node_with(x, y, z, col)) && y > start - 256 {
             y -= 1;
         }
         y
@@ -412,13 +447,15 @@ impl World {
                 let col = bc.columns[(z * 16 + x) as usize];
                 // Where sunlight stops. A block wholly above every possible
                 // solid node needs no scan.
-                let top = col.height.max(self.column_top.get(&(bx + x, bz + z)).copied().unwrap_or(i32::MIN));
+                let top = bc
+                    .generated_top(bx + x, bz + z)
+                    .max(self.column_top.get(&(bx + x, bz + z)).copied().unwrap_or(i32::MIN));
                 let floor = if top < by { top } else { self.highest_solid_with(bx + x, bz + z, &col) };
                 for y in 0..BLOCK_SIZE {
                     let (wx, wy, wz) = (bx + x, by + y, bz + z);
                     let id = match self.changes.get(&(wx, wy, wz)) {
                         Some(&id) if changed => id,
-                        _ if wy > col.height => CONTENT_AIR,
+                        _ if wy > col.height => bc.above_ground(wx, wy, wz),
                         _ => {
                             let cell = ((z / 4) * 16 + (y / 4) * 4 + x / 4) as usize;
                             let corners = *cells[cell]

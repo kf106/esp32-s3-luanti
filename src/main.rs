@@ -64,6 +64,7 @@ fn main() -> anyhow::Result<()> {
     let fatfs = Fatfs::new_sdcard(0, sd)?;
     let _mounted = MountedFatfs::mount(fatfs, MOUNT, 4)?;
     info!("SD mounted at {MOUNT}");
+    reset_sd_if_asked();
     for entry in fs::read_dir(MOUNT)? {
         info!("  {:?}", entry?.file_name());
     }
@@ -168,6 +169,53 @@ unsafe impl GlobalAlloc for PreferPsram {
 
 #[global_allocator]
 static ALLOCATOR: PreferPsram = PreferPsram;
+
+/// Game data on the SD card that a reset deletes. Extra media (skins and
+/// textures in /sd/media) are kept.
+const RESET_DIRS: [&str; 3] = ["auth", "world", "players"];
+
+/// If this firmware was built with RESET_SD=1 (see build.rs), delete the
+/// game data on the SD card, once: the build's token is written to the card
+/// afterwards, and a card already reset by this build is left alone.
+fn reset_sd_if_asked() {
+    let Some(token) = option_env!("RESET_SD_TOKEN") else {
+        return;
+    };
+    let marker = format!("{MOUNT}/reset-done");
+    if fs::read_to_string(&marker).is_ok_and(|t| t.trim() == token) {
+        info!("SD card reset: already done by this firmware, so the card is left as it is");
+        return;
+    }
+    log::warn!("SD card reset: deleting {}", RESET_DIRS.join(", "));
+    for dir in RESET_DIRS {
+        let path = format!("{MOUNT}/{dir}");
+        match remove_tree(std::path::Path::new(&path)) {
+            Ok(n) => info!("  {path}: {n} files deleted"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("  {path}: {e}"),
+        }
+    }
+    if let Err(e) = fs::write(&marker, token) {
+        log::warn!("SD card reset: couldn't record it ({e}); it will happen again at the next start");
+    }
+}
+
+/// Delete a directory and everything in it, returning how many files went.
+/// (Done by hand: FAT on ESP-IDF supports only the basic file operations.)
+fn remove_tree(dir: &std::path::Path) -> std::io::Result<usize> {
+    let mut count = 0;
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            count += remove_tree(&path)?;
+        } else {
+            fs::remove_file(&path)?;
+            count += 1;
+        }
+    }
+    fs::remove_dir(dir)?;
+    Ok(count)
+}
 
 fn log_heap(label: &str) {
     use esp_idf_svc::sys::*;

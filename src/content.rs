@@ -39,6 +39,10 @@ pub enum Kind {
     /// falls off when what it hangs on is dug. As in minetest_game there
     /// is one node per model; the item is always the floor one.
     Torch,
+    /// Leaves and needles: solid to walk on, drawn with see-through gaps
+    /// (Luanti's allfaces_optional), letting light through but casting shade
+    /// (light_propagates, not sunlight_propagates, as in minetest_game).
+    Leaves,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -52,6 +56,10 @@ pub const CONTENT_IRON: u16 = 7;
 pub const CONTENT_TORCH: u16 = 8;
 pub const CONTENT_TORCH_WALL: u16 = 9;
 pub const CONTENT_TORCH_CEILING: u16 = 10;
+pub const CONTENT_BIRCH_TREE: u16 = 11;
+pub const CONTENT_BIRCH_LEAVES: u16 = 12;
+pub const CONTENT_FIR_TREE: u16 = 13;
+pub const CONTENT_FIR_NEEDLES: u16 = 14;
 /// Light given off by a torch (minetest_game: LIGHT_MAX - 1 = 13; 12 is
 /// slightly gentler and keeps the lit area, and the work, smaller).
 pub const TORCH_LIGHT: u8 = 12;
@@ -185,6 +193,62 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Torch,
     },
+    // Trees, as minetest_game's: trunks are dug (slowly) by hand through
+    // oddly_breakable_by_hand, leaves quickly through snappy.
+    Node {
+        id: CONTENT_BIRCH_TREE,
+        name: "esp:birch_tree",
+        description: "Birch Tree",
+        tiles: [
+            "esp_birch_tree_top.png",
+            "esp_birch_tree_top.png",
+            "esp_birch_tree.png",
+            "esp_birch_tree.png",
+            "esp_birch_tree.png",
+            "esp_birch_tree.png",
+        ],
+        groups: &[("tree", 1), ("choppy", 3), ("oddly_breakable_by_hand", 1), ("flammable", 2)],
+        drop: CONTENT_BIRCH_TREE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_BIRCH_LEAVES,
+        name: "esp:birch_leaves",
+        description: "Birch Leaves",
+        tiles: ["esp_birch_leaves.png"; 6],
+        groups: &[("snappy", 3), ("leaves", 1), ("flammable", 2)],
+        drop: CONTENT_BIRCH_LEAVES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    Node {
+        id: CONTENT_FIR_TREE,
+        name: "esp:fir_tree",
+        description: "Fir Tree",
+        tiles: [
+            "esp_fir_tree_top.png",
+            "esp_fir_tree_top.png",
+            "esp_fir_tree.png",
+            "esp_fir_tree.png",
+            "esp_fir_tree.png",
+            "esp_fir_tree.png",
+        ],
+        groups: &[("tree", 1), ("choppy", 3), ("oddly_breakable_by_hand", 1), ("flammable", 2)],
+        drop: CONTENT_FIR_TREE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_FIR_NEEDLES,
+        name: "esp:fir_needles",
+        description: "Fir Needles",
+        tiles: ["esp_fir_needles.png"; 6],
+        groups: &[("snappy", 3), ("leaves", 1), ("flammable", 2)],
+        drop: CONTENT_FIR_NEEDLES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
 ];
 
 /// minetest_game's torch texture: 16 frames of flame, one above another.
@@ -227,14 +291,20 @@ pub fn light_source(id: u16) -> u8 {
     }
 }
 
-/// Whether light (sunlight included) passes through a node.
+/// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves))
+}
+
+/// Whether direct sunlight carries on down through a node at full
+/// strength. Leaves let light through but cast shade.
+pub fn passes_sunlight(id: u16) -> bool {
     id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| n.kind == Kind::Torch)
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| n.kind == Kind::Solid)
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves))
 }
 
 pub fn is_torch(id: u16) -> bool {
@@ -321,6 +391,12 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     // see media/LICENSE-character.txt).
     ("character.b3d", include_bytes!("../media/character.b3d")),
     ("character.png", include_bytes!("../media/character.png")),
+    ("esp_birch_tree.png", include_bytes!("../media/esp_birch_tree.png")),
+    ("esp_birch_tree_top.png", include_bytes!("../media/esp_birch_tree_top.png")),
+    ("esp_birch_leaves.png", include_bytes!("../media/esp_birch_leaves.png")),
+    ("esp_fir_tree.png", include_bytes!("../media/esp_fir_tree.png")),
+    ("esp_fir_tree_top.png", include_bytes!("../media/esp_fir_tree_top.png")),
+    ("esp_fir_needles.png", include_bytes!("../media/esp_fir_needles.png")),
     // Extra skins to choose from in the inventory (see skins.rs).
     ("esp_skin_wizard.png", include_bytes!("../media/esp_skin_wizard.png")),
     ("esp_skin_elf.png", include_bytes!("../media/esp_skin_elf.png")),
@@ -353,11 +429,16 @@ fn hand_tool_capabilities() -> Vec<u8> {
     w.u8(5) // version (protocol >= 38)
         .f32(0.9) // full_punch_interval
         .i16(0) // max_drop_level
-        .u32(2); // group capabilities:
+        .u32(4); // group capabilities:
     w.string16("crumbly").i16(0).i16(1).u32(2); // uses, maxlevel, times
     w.i16(2).f32(3.0).i16(3).f32(0.7);
     w.string16("cracky").i16(0).i16(1).u32(1);
     w.i16(3).f32(4.0);
+    // minetest_game's hand: leaves quickly, tree trunks slowly.
+    w.string16("snappy").i16(0).i16(1).u32(1);
+    w.i16(3).f32(0.4);
+    w.string16("oddly_breakable_by_hand").i16(0).i16(1).u32(3);
+    w.i16(1).f32(3.5).i16(2).f32(2.0).i16(3).f32(0.7);
     w.u32(1).string16("fleshy").i16(1); // damage groups
     w.u16(0); // punch_attack_uses
     w.into_inner()
@@ -450,6 +531,8 @@ pub fn itemdef_bytes() -> Vec<u8> {
 const CONTENTFEATURES_VERSION: u8 = 13;
 const TILE_FLAG_BACKFACE_CULLING: u16 = 1 << 0;
 const NDT_NORMAL: u8 = 0;
+/// Leaves: see-through, or solid if the player turns off "fancy leaves".
+const NDT_ALLFACES_OPTIONAL: u8 = 6;
 const POINTABLE: u8 = 1;
 const ALPHAMODE_OPAQUE: u8 = 2;
 const ALPHAMODE_CLIP: u8 = 1;
@@ -506,15 +589,22 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.string16(group).i16(*level);
     }
     let torch = n.kind == Kind::Torch;
+    let leaves = n.kind == Kind::Leaves;
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
+    } else if leaves {
+        w.u8(CPT_LIGHT).u8(0);
     } else {
         w.u8(0) // param_type: none
             .u8(0); // param_type_2: none
     }
 
     // visual
-    let (drawtype, mesh) = if torch { (NDT_MESH, torch_mesh(n.id)) } else { (NDT_NORMAL, "") };
+    let (drawtype, mesh) = match n.kind {
+        Kind::Torch => (NDT_MESH, torch_mesh(n.id)),
+        Kind::Leaves => (NDT_ALLFACES_OPTIONAL, ""),
+        Kind::Solid => (NDT_NORMAL, ""),
+    };
     w.u8(drawtype).string16(mesh).f32(1.0); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
     // the Lua API defaults them.
@@ -550,14 +640,15 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0); // leveled
 
     // lighting
-    w.u8(torch as u8) // light_propagates
+    w.u8((torch || leaves) as u8) // light_propagates
         .u8(torch as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
-    w.u8(!torch as u8); // is_ground_content
+    let tree = n.groups.iter().any(|(g, _)| *g == "tree");
+    w.u8((n.kind == Kind::Solid && !tree) as u8); // is_ground_content
 
     // interaction
-    w.u8(!torch as u8) // walkable
+    w.u8(walkable(n.id) as u8) // walkable
         .u8(POINTABLE)
         .u8(1) // diggable
         .u8(0) // climbable
@@ -592,7 +683,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     w.string16("air") // node_dig_prediction
         .u8(LEVELED_MAX)
-        .u8(if torch { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
+        .u8(if torch || leaves { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
         .u8(0) // move_resistance
         .u8(0) // liquid_move_physics
         .u8(0); // post_effect_color_shaded

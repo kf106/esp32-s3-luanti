@@ -2,7 +2,7 @@
 
 A minimal [Luanti](https://www.luanti.org/) (formerly Minetest) server that runs on an ESP32-S3 microcontroller, written in Rust on ESP-IDF.
 
-A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. You can create an account, log in, explore a generated world with hills, caves, biomes and ores, dig and build, place torches, drop and pick up items, choose a skin, and see the other players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
+A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. You can create an account, log in, explore a generated world with hills, forests, caves, biomes and ores, dig and build, place torches, drop and pick up items, choose a skin, and see the other players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
 
 The server does not run Lua. A normal Luanti server runs a game (such as Minetest Game) written in Lua mods. This one implements the engine's network protocol directly and builds a small built-in game on top of it, in about 7,000 lines of Rust.
 
@@ -41,7 +41,8 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - rolling hills and mountains;
   - grassland, desert and snow biomes;
   - caves with entrances;
-  - coal and iron ore.
+  - coal and iron ore;
+  - birch woods in the lowlands and fir forests in the hills and snow, with clearings and the odd lone tree; leaves cast shade.
 - **World storage:** the world is generated on demand from a fixed seed. Only the changes players make are stored, as an append-only log on the SD card.
 - **Digging and building:** changes appear for every player at once.
 - **Survival inventory:** 32 slots, with stacks you can rearrange in the inventory window. New players start with 20 torches.
@@ -114,6 +115,18 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 ```
 
 All of these are plain text or simple binary files, so you can inspect or edit them on a PC. If a future version changes the terrain generator, the old change log is kept as `nodes-v<n>.log` and the world starts afresh.
+
+### Starting afresh
+
+To wipe the world and start over, build with `RESET_SD=1`:
+
+```
+RESET_SD=1 WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
+```
+
+When that firmware starts, it deletes `/sd/auth`, `/sd/world` and `/sd/players`: every account, the world's changes, and all inventories and player files. The world is then generated afresh from the seed. Extra media in `/sd/media` are kept.
+
+It happens once. Each `RESET_SD=1` build has its own token, which it writes to `/sd/reset-done` after the reset, so rebooting the board doesn't wipe the card again. Build without `RESET_SD` afterwards as usual. Alternatively, delete those three folders by hand with the card in a PC.
 
 ### Extra media and skins
 

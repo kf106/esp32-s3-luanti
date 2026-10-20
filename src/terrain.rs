@@ -1,4 +1,4 @@
-//! Terrain generation: heights, biomes, caves and ores.
+//! Terrain generation: heights, biomes, caves, ores and trees.
 //!
 //! Everything is a pure function of the node position (and the fixed seeds
 //! below), so any node can be worked out on its own, and generating a whole
@@ -9,8 +9,9 @@
 //! plain + and *, so it gives identical results on any machine.
 
 use crate::content::{
-    CONTENT_COAL, CONTENT_DIRT, CONTENT_GRASS, CONTENT_IRON, CONTENT_SAND, CONTENT_SANDSTONE,
-    CONTENT_SNOW, CONTENT_STONE,
+    CONTENT_BIRCH_LEAVES, CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_FIR_NEEDLES,
+    CONTENT_FIR_TREE, CONTENT_GRASS, CONTENT_IRON, CONTENT_SAND, CONTENT_SANDSTONE, CONTENT_SNOW,
+    CONTENT_STONE,
 };
 use crate::world::CONTENT_AIR;
 
@@ -25,6 +26,8 @@ const SEED_CAVE_A: u32 = 0xD6E7_F809;
 const SEED_CAVE_B: u32 = 0x1B2C_3D4E;
 const SEED_ORE: u32 = 0x5F60_7182;
 const SEED_ENTRANCE: u32 = 0x93A4_B5C6;
+const SEED_TREES: u32 = 0xA7B8_C9DA;
+const SEED_FOREST: u32 = 0xEB0C_1D2E;
 
 /// Caves are sampled every CAVE_GRID nodes and interpolated in between.
 const CAVE_GRID: i32 = 4;
@@ -340,4 +343,159 @@ pub fn node(
         let c = corners_at(x, y, z, sample);
         cave_from_corners(&c, x, y, z)
     })
+}
+
+// ---------------------------------------------------------------------------
+// Trees
+// ---------------------------------------------------------------------------
+//
+// The ground is divided into TREE_CELL x TREE_CELL patches, each with one
+// possible tree at a spot picked by hashing the patch. Whether it grows
+// depends on the biome and on a broad "forest" noise, so there are woods
+// and clearings with the odd lone tree between. Birches grow in the
+// lowland grass, firs higher up and in the snow, nothing in the desert.
+//
+// Trees only fill air: a node that the terrain makes solid stays solid.
+
+/// Size of the patches that each hold at most one tree.
+const TREE_CELL: i32 = 5;
+/// How far a tree's leaves reach sideways from its trunk.
+pub const TREE_REACH: i32 = 3;
+/// Firs replace birches from this height up.
+const FIR_LINE: i32 = 22;
+/// No trees above this height (bare mountain tops).
+const TREE_LINE: i32 = 70;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TreeKind {
+    Birch,
+    Fir,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Tree {
+    /// The trunk's column.
+    pub x: i32,
+    pub z: i32,
+    /// The y of the ground node it stands on.
+    pub ground: i32,
+    pub kind: TreeKind,
+    /// Trunk length.
+    pub height: i32,
+}
+
+impl Tree {
+    /// The highest y any part of the tree reaches.
+    pub fn top(&self) -> i32 {
+        self.ground + self.height + 1
+    }
+
+    /// The tree's node at (x, y, z), if it has one there.
+    pub fn node_at(&self, x: i32, y: i32, z: i32) -> Option<u16> {
+        let (dx, dz) = (x - self.x, z - self.z);
+        let dy = y - self.ground; // 1 = just above the ground
+        let h = self.height;
+        if dx.abs() > TREE_REACH || dz.abs() > TREE_REACH || dy < 1 || dy > h + 1 {
+            return None;
+        }
+        let trunk = dx == 0 && dz == 0 && dy <= h;
+        match self.kind {
+            TreeKind::Birch => {
+                if trunk {
+                    return Some(CONTENT_BIRCH_TREE);
+                }
+                // A rounded crown over the top of the trunk.
+                let (ax, az) = (dx.abs(), dz.abs());
+                let leafy = match h + 1 - dy {
+                    0 => ax + az <= 1,                    // the very top
+                    1 => ax <= 1 && az <= 1,
+                    2 | 3 => {
+                        // Wide layers, with ragged corners.
+                        ax <= 2 && az <= 2 && !(ax == 2 && az == 2 && hash(x, y, z, SEED_TREES ^ 1) % 3 != 0)
+                    }
+                    _ => false,
+                };
+                leafy.then_some(CONTENT_BIRCH_LEAVES)
+            }
+            TreeKind::Fir => {
+                if trunk {
+                    return Some(CONTENT_FIR_TREE);
+                }
+                // A cone of needle layers, alternately wider and narrower,
+                // from the tip down to two nodes above the ground.
+                if dy < 3 {
+                    return None;
+                }
+                const RADIUS: [i32; 12] = [0, 1, 1, 2, 1, 2, 2, 3, 2, 3, 3, 3];
+                let r = RADIUS[((h + 1 - dy) as usize).min(RADIUS.len() - 1)];
+                let leafy = match r {
+                    0 => dx == 0 && dz == 0,
+                    1 => dx.abs() + dz.abs() <= 1,
+                    _ => dx * dx + dz * dz <= r * r,
+                };
+                leafy.then_some(CONTENT_FIR_NEEDLES)
+            }
+        }
+    }
+}
+
+/// The tree in a patch, if one grows there.
+fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
+    let h = hash(cx, 0x7EE, cz, SEED_TREES);
+    let x = cx * TREE_CELL + (h % TREE_CELL as u32) as i32;
+    let z = cz * TREE_CELL + ((h >> 8) % TREE_CELL as u32) as i32;
+    let col = column(x, z);
+    // At a cave entrance the ground may be hollowed out.
+    if col.cave_top >= col.height || col.height >= TREE_LINE {
+        return None;
+    }
+    let kind = match col.biome {
+        Biome::Desert => return None,
+        Biome::Snow => TreeKind::Fir,
+        Biome::Grassland if col.height >= FIR_LINE => TreeKind::Fir,
+        Biome::Grassland => TreeKind::Birch,
+    };
+    // A few percent of patches in the open, most of them in a wood.
+    let forest = fbm2(x as f32 / 220.0, z as f32 / 220.0, 2, SEED_FOREST);
+    let chance = 4 + ((forest - 0.05) * 300.0).clamp(0.0, 66.0) as u32;
+    if (h >> 16) % 100 >= chance {
+        return None;
+    }
+    let height = match kind {
+        TreeKind::Birch => 5 + ((h >> 24) % 3) as i32,
+        TreeKind::Fir => 7 + ((h >> 24) % 4) as i32,
+    };
+    Some(Tree { x, z, ground: col.height, kind, height })
+}
+
+/// Every tree that could have a node in the columns from (x0, z0) to
+/// (x1, z1) inclusive.
+pub fn trees_in(x0: i32, z0: i32, x1: i32, z1: i32) -> Vec<Tree> {
+    let cell = |v: i32| v.div_euclid(TREE_CELL);
+    let mut trees = Vec::new();
+    for cz in cell(z0 - TREE_REACH)..=cell(z1 + TREE_REACH) {
+        for cx in cell(x0 - TREE_REACH)..=cell(x1 + TREE_REACH) {
+            if let Some(t) = tree_in_cell(cx, cz) {
+                let reaches = t.x + TREE_REACH >= x0 && t.x - TREE_REACH <= x1 && t.z + TREE_REACH >= z0 && t.z - TREE_REACH <= z1;
+                if reaches {
+                    trees.push(t);
+                }
+            }
+        }
+    }
+    trees
+}
+
+/// The tree node at (x, y, z) among `trees`, if any; a trunk wins over
+/// another tree's leaves. The caller makes sure the terrain is air there.
+pub fn tree_node_in(trees: &[Tree], x: i32, y: i32, z: i32) -> Option<u16> {
+    let mut found = None;
+    for t in trees {
+        match t.node_at(x, y, z) {
+            Some(id) if id == CONTENT_BIRCH_TREE || id == CONTENT_FIR_TREE => return Some(id),
+            Some(id) => found = found.or(Some(id)),
+            None => {}
+        }
+    }
+    found
 }
