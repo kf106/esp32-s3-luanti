@@ -18,7 +18,7 @@ A Luanti client playing on the ESP32:
 
 ## Hardware
 
-Developed on a **Waveshare ESP32-S3-LCD-1.47**:
+Developed on a [**Waveshare ESP32-S3-LCD-1.47**](https://www.waveshare.com/product/esp32-related/boards-kits/esp32-s3-lcd-1.47.htm):
 
 | | |
 |---|---|
