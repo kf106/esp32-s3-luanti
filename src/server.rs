@@ -20,6 +20,7 @@ use crate::skins::{self, Skins};
 use crate::srp;
 use crate::status::{self, SharedStatus};
 use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
+use crate::nature::{self, Job, Rng, Timers};
 use crate::world::{self, BlockPos, NodePos, World};
 
 const RESEND_INTERVAL: Duration = Duration::from_millis(500);
@@ -27,6 +28,9 @@ const PEER_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// minetest_game's furnaces run a one-second node timer.
 const FURNACE_STEP_INTERVAL: Duration = Duration::from_secs(1);
+/// Leaf decay and sapling timers handled per tick, at most (each may look
+/// at a few hundred nodes).
+const TIMERS_PER_TICK: usize = 8;
 /// How far furnace sounds carry, in nodes (minetest_game's max_hear_distance).
 const FURNACE_HEARING: f32 = 16.0;
 /// How far sounds carry by default (Luanti's max_hear_distance).
@@ -315,6 +319,9 @@ pub struct Server {
     /// or a client was logging in, and whether Wi-Fi power saving is on.
     last_activity: Instant,
     power_saving: bool,
+    /// Leaf decay and sapling timers.
+    timers: Timers,
+    rng: Rng,
     skins: Skins,
     /// Welcome message lines.
     welcome: Vec<String>,
@@ -531,6 +538,17 @@ impl Server {
         let srp_jobs = start_srp_thread(srp_sender);
         let port = socket.local_addr().map(|a| a.port()).unwrap_or(0);
         let builder = start_block_builder(status.clone(), port);
+        // Saplings planted before a restart: timers again, as when planted
+        // (minetest_game's node timers survive a restart; ours don't).
+        let mut timers = Timers::new();
+        let mut rng = Rng::new();
+        let saplings = world.changed_nodes(content::is_sapling);
+        for &pos in &saplings {
+            timers.start(pos, Job::Grow, nature::grow_delay(&mut rng));
+        }
+        if !saplings.is_empty() {
+            info!("{} saplings growing", saplings.len());
+        }
         Self {
             socket,
             auth,
@@ -560,6 +578,8 @@ impl Server {
             next_sound_id: 1,
             last_activity: Instant::now(),
             power_saving: false,
+            timers,
+            rng,
             skins,
             welcome: motd
                 .as_deref()
@@ -1499,17 +1519,20 @@ impl Server {
                 self.broadcast_node(under, &build_removenode(under));
                 // Items resting on the dug node fall.
                 self.wake_items(node_pos(under));
-                // Torches hanging on the dug node fall off and drop as
-                // items, as builtin's attached nodes do.
-                for fallen in self.drop_attached(under) {
-                    info!("{name}'s dig knocked off the torch at {fallen:?}");
-                    let at = fallen.map(|v| v as f32);
-                    self.spawn_item(Stack::new(content::CONTENT_TORCH, 1), (at, [0.0; 3]));
-                }
+                // Torches hanging on the dug node, and saplings standing on
+                // it, fall off and drop as items, as builtin's attached
+                // nodes do.
+                self.drop_attached(under);
+                // Its leaves may now decay (minetest_game's leafdecay).
+                self.start_leaf_decay(node_pos(under), current);
                 // The drop goes into the digger's inventory; what doesn't
                 // fit is dropped where the node was (builtin's
-                // handle_node_drops).
-                if let Some((item, count)) = content::drop_of(current) {
+                // handle_node_drops). Leaves sometimes give a sapling.
+                let drop = match content::drop_of(current) {
+                    Some((leaf, 1)) if content::is_leaves(current) => Some((nature::leaf_drop(leaf, &mut self.rng), 1)),
+                    other => other,
+                };
+                if let Some((item, count)) = drop {
                     let left = match self.peers.get_mut(&from) {
                         Some(peer) => peer.inventory.add(Stack::new(item, count)),
                         None => count,
@@ -1550,12 +1573,25 @@ impl Server {
                 // A torch hangs on something solid (the client checks the
                 // same); anything else just needs something to build on.
                 let torch = content::is_torch(id);
-                let supported = if torch { content::walkable(support) } else { support != world::CONTENT_AIR };
+                // A sapling stands on the node below it, which must be solid
+                // (builtin's check_attached_node, as the client checks).
+                let below = (above[0] as i32, above[1] as i32 - 1, above[2] as i32);
+                let supported = if torch {
+                    content::walkable(support)
+                } else if content::is_sapling(id) {
+                    content::walkable(self.world.node(below))
+                } else {
+                    support != world::CONTENT_AIR
+                };
                 // A furnace faces the player who places it.
                 let param2 = if torch {
                     content::wallmounted_param2(under, above)
                 } else if content::is_furnace(id) {
                     content::facedir_param2(above, body)
+                } else if content::is_leaves(id) {
+                    // Placed leaves never decay (minetest_game's
+                    // after_place_leaves).
+                    nature::PLACED_LEAVES
                 } else {
                     0
                 };
@@ -1575,6 +1611,10 @@ impl Server {
                 self.inventory_changed(from);
                 self.world.set_node(node_pos(above), node, param2);
                 self.broadcast_node(above, &build_addnode(above, node, param2));
+                if content::is_sapling(node) {
+                    let after = nature::grow_delay(&mut self.rng);
+                    self.timers.start(node_pos(above), Job::Grow, after);
+                }
             }
             // Starting and stopping digging need nothing from us; the mining
             // animation follows the dig key in TOSERVER_PLAYERPOS.
@@ -1582,24 +1622,101 @@ impl Server {
         }
     }
 
-    /// Remove torches that hung on the node at `pos` (just dug), telling
-    /// everyone. Returns where they were.
-    fn drop_attached(&mut self, pos: [i16; 3]) -> Vec<[i16; 3]> {
-        let mut fallen = Vec::new();
+    /// Remove what was attached to the node at `pos` (just removed):
+    /// torches hanging on it, and a sapling standing on it. They drop as
+    /// items where they were.
+    fn drop_attached(&mut self, pos: [i16; 3]) {
         for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
             let n = [pos[0] + dx, pos[1] + dy, pos[2] + dz];
             let np = (n[0] as i32, n[1] as i32, n[2] as i32);
-            if !content::is_torch(self.world.node(np)) {
+            let id = self.world.node(np);
+            let attached = if content::is_torch(id) {
+                let s = content::wallmounted_support(self.world.param2(np));
+                (np.0 + s.0, np.1 + s.1, np.2 + s.2) == (pos[0] as i32, pos[1] as i32, pos[2] as i32)
+            } else {
+                content::is_sapling(id) && dy == 1
+            };
+            if !attached {
                 continue;
             }
-            let s = content::wallmounted_support(self.world.param2(np));
-            if (np.0 + s.0, np.1 + s.1, np.2 + s.2) == (pos[0] as i32, pos[1] as i32, pos[2] as i32) {
-                self.world.set_node(np, world::CONTENT_AIR, 0);
-                self.broadcast_node(n, &build_removenode(n));
-                fallen.push(n);
+            info!("{} at {n:?} lost its support", content::name_of(id));
+            self.world.set_node(np, world::CONTENT_AIR, 0);
+            self.broadcast_node(n, &build_removenode(n));
+            if let Some((item, count)) = content::drop_of(id) {
+                self.spawn_item(Stack::new(item, count), (n.map(|v| v as f32), [0.0; 3]));
             }
         }
-        fallen
+    }
+
+    /// A trunk was dug at `pos`: its leaves nearby get decay timers.
+    fn start_leaf_decay(&mut self, pos: NodePos, trunk: u16) {
+        let world = &self.world;
+        let node = |p: NodePos| (world.node(p), world.param2(p));
+        for leaf in nature::leaves_to_check(pos, trunk, &node) {
+            let after = nature::decay_delay(&mut self.rng);
+            self.timers.start(leaf, Job::Decay, after);
+        }
+    }
+
+    /// Run the leaf decay and sapling timers that are due (a few per tick).
+    fn run_timers(&mut self) {
+        let now = Instant::now();
+        for _ in 0..TIMERS_PER_TICK {
+            let Some((pos, job)) = self.timers.pop_due(now) else {
+                return;
+            };
+            match job {
+                Job::Decay => self.decay_leaf(pos),
+                Job::Grow => self.grow_sapling(pos),
+            }
+        }
+    }
+
+    /// minetest_game's leafdecay_on_timer: a leaf with no trunk of its tree
+    /// near it goes, dropping a sapling now and then (never the leaf).
+    fn decay_leaf(&mut self, pos: NodePos) {
+        let world = &self.world;
+        let node = |p: NodePos| (world.node(p), world.param2(p));
+        if !nature::should_decay(pos, &node) {
+            return;
+        }
+        let leaf = self.world.node(pos);
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.world.set_node(pos, world::CONTENT_AIR, 0);
+        self.broadcast_node(p16, &build_removenode(p16));
+        self.wake_items(pos);
+        self.drop_attached(p16);
+        let drop = nature::leaf_drop(leaf, &mut self.rng);
+        if drop != leaf {
+            let r = |rng: &mut Rng| rng.range(0, 99) as f32 / 100.0 - 0.5;
+            let at = [pos.0 as f32 + r(&mut self.rng), pos.1 as f32 + r(&mut self.rng), pos.2 as f32 + r(&mut self.rng)];
+            self.spawn_item(Stack::new(drop, 1), (at, [0.0; 3]));
+        }
+    }
+
+    /// minetest_game's grow_sapling: on soil and in daylight it becomes a
+    /// tree; otherwise it tries again in 5 minutes.
+    fn grow_sapling(&mut self, pos: NodePos) {
+        let sapling = self.world.node(pos);
+        if !content::is_sapling(sapling) {
+            return; // dug meanwhile
+        }
+        let daytime = (6000..18000).contains(&self.time_of_day());
+        let world = &self.world;
+        let node = |p: NodePos| world.node(p);
+        let sky = world.highest_solid(pos.0, pos.2) < pos.1;
+        if !nature::can_grow(pos, &node, sky, daytime) {
+            self.timers.start(pos, Job::Grow, nature::GROW_RETRY);
+            return;
+        }
+        let height = nature::tree_height(sapling, &mut self.rng);
+        let tree = nature::grow(pos, sapling, height, &node);
+        info!("The {} at {pos:?} grew into a tree ({} nodes)", content::name_of(sapling), tree.len());
+        for (p, id) in tree {
+            let p16 = [p.0 as i16, p.1 as i16, p.2 as i16];
+            self.world.set_node(p, id, 0);
+            self.broadcast_node(p16, &build_addnode(p16, id, 0));
+        }
     }
 
     /// A line in a player's chat area.
@@ -2621,8 +2738,17 @@ impl Server {
         status::lock(&self.status).send_failures += 1;
         self.send_failures += 1;
         if self.send_failures_reported.elapsed() >= SEND_FAILURE_REPORT_INTERVAL {
+            use std::sync::atomic::Ordering::Relaxed;
+            let full = SEND_ERRORS_FULL.swap(0, Relaxed);
+            let other = SEND_ERRORS_OTHER.swap(0, Relaxed);
+            let last = LAST_OTHER_ERROR.load(Relaxed);
+            let others = if other > 0 {
+                format!(", {other} other (last: {})", std::io::Error::from_raw_os_error(last))
+            } else {
+                String::new()
+            };
             warn!(
-                "{} packet(s) couldn't be sent in the last {}s (Wi-Fi transmit buffers full); slowing down",
+                "{} packet(s) couldn't be sent in the last {}s: {full} with Wi-Fi transmit buffers full{others}; slowing down",
                 self.send_failures,
                 self.send_failures_reported.elapsed().as_secs()
             );
@@ -2680,6 +2806,7 @@ impl Server {
             self.step_items(dt);
         }
         self.update_power_saving();
+        self.run_timers();
         if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
             let dt = now.duration_since(self.furnaces_stepped).as_secs_f32();
             self.furnaces_stepped = now;
@@ -2822,11 +2949,26 @@ fn send_datagram(socket: &UdpSocket, addr: SocketAddr, data: &[u8]) -> bool {
     match socket.send_to(data, addr) {
         Ok(_) => true,
         Err(e) => {
+            use std::sync::atomic::Ordering::Relaxed;
             debug!("send_to {addr} failed: {e}");
+            // ENOMEM: lwIP and the Wi-Fi driver out of transmit buffers.
+            if e.raw_os_error() == Some(ENOMEM) {
+                SEND_ERRORS_FULL.fetch_add(1, Relaxed);
+            } else {
+                SEND_ERRORS_OTHER.fetch_add(1, Relaxed);
+                LAST_OTHER_ERROR.store(e.raw_os_error().unwrap_or(0), Relaxed);
+            }
             false
         }
     }
 }
+
+/// Send errors by kind since the last report (see note_send_failure).
+static SEND_ERRORS_FULL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static SEND_ERRORS_OTHER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static LAST_OTHER_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// errno "Not enough space" (the same number in lwIP and on Linux).
+const ENOMEM: i32 = 12;
 
 /// Wi-Fi modem power saving (WIFI_PS_MIN_MODEM): the radio sleeps between
 /// the router's beacons, which holds incoming packets until it wakes.

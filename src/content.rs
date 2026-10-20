@@ -46,6 +46,9 @@ pub enum Kind {
     /// A furnace: a full cube turned to face the player who placed it
     /// (facedir), with its own inventory window on right-click.
     Furnace,
+    /// A sapling: a small plant (plantlike, two crossed pictures) that can
+    /// be walked through, stands on the node below and grows into a tree.
+    Sapling,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -68,6 +71,10 @@ pub const CONTENT_FIR_WOOD: u16 = 16;
 pub const CONTENT_COBBLE: u16 = 17;
 pub const CONTENT_FURNACE: u16 = 18;
 pub const CONTENT_FURNACE_ACTIVE: u16 = 19;
+pub const CONTENT_BIRCH_SAPLING: u16 = 20;
+pub const CONTENT_FIR_SAPLING: u16 = 21;
+/// Leaves give a sapling one time in this many (minetest_game's rarity).
+pub const SAPLING_RARITY: u32 = 20;
 /// Light a burning furnace gives (minetest_game's furnace_active).
 pub const FURNACE_LIGHT: u8 = 8;
 
@@ -348,7 +355,33 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Furnace,
     },
+    Node {
+        id: CONTENT_BIRCH_SAPLING,
+        name: "esp:birch_sapling",
+        description: "Birch Sapling",
+        tiles: ["default_aspen_sapling.png"; 6],
+        groups: SAPLING_GROUPS,
+        drop: CONTENT_BIRCH_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
+    Node {
+        id: CONTENT_FIR_SAPLING,
+        name: "esp:fir_sapling",
+        description: "Fir Sapling",
+        tiles: ["default_pine_sapling.png"; 6],
+        groups: SAPLING_GROUPS,
+        drop: CONTENT_FIR_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
 ];
+
+// Saplings, from leaves (one time in SAPLING_RARITY), as minetest_game's
+// aspen and pine saplings, with their pictures (CC BY-SA 3.0, see
+// media/LICENSE-items.txt).
+const SAPLING_GROUPS: &[(&str, i16)] =
+    &[("snappy", 2), ("dig_immediate", 3), ("flammable", 3), ("attached_node", 1), ("sapling", 1)];
 
 /// minetest_game's burning furnace front: 8 frames of fire, one above
 /// another, 1.5 seconds for the cycle.
@@ -727,13 +760,13 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling))
 }
 
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| n.kind == Kind::Torch)
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
@@ -765,6 +798,37 @@ pub fn facedir_param2(above: [i16; 3], player: [f32; 3]) -> u8 {
 pub fn is_torch(id: u16) -> bool {
     def(id).is_some_and(|n| n.kind == Kind::Torch)
 }
+
+pub fn is_sapling(id: u16) -> bool {
+    def(id).is_some_and(|n| n.kind == Kind::Sapling)
+}
+
+pub fn is_leaves(id: u16) -> bool {
+    def(id).is_some_and(|n| n.kind == Kind::Leaves)
+}
+
+/// The sapling that a kind of leaves gives, and the trunk that keeps them
+/// from decaying (minetest_game's register_leafdecay: leaves stay while a
+/// trunk of their own tree is within LEAF_DECAY_RADIUS).
+pub fn tree_of_leaves(id: u16) -> Option<(u16, u16)> {
+    match id {
+        CONTENT_BIRCH_LEAVES => Some((CONTENT_BIRCH_SAPLING, CONTENT_BIRCH_TREE)),
+        CONTENT_FIR_NEEDLES => Some((CONTENT_FIR_SAPLING, CONTENT_FIR_TREE)),
+        _ => None,
+    }
+}
+
+/// The leaves a trunk keeps alive.
+pub fn leaves_of_trunk(id: u16) -> Option<u16> {
+    match id {
+        CONTENT_BIRCH_TREE => Some(CONTENT_BIRCH_LEAVES),
+        CONTENT_FIR_TREE => Some(CONTENT_FIR_NEEDLES),
+        _ => None,
+    }
+}
+
+/// minetest_game's leafdecay radius for pine and aspen.
+pub const LEAF_DECAY_RADIUS: i32 = 3;
 
 /// For a wall-mounted node, the offset to the node it hangs on, from its
 /// param2: 0 ceiling, 1 floor, 2 +X, 3 -X, 4 +Z, 5 -Z (Luanti's order).
@@ -969,6 +1033,8 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_cool_lava.1.ogg", include_bytes!("../media/default_cool_lava.1.ogg")),
     ("default_cool_lava.2.ogg", include_bytes!("../media/default_cool_lava.2.ogg")),
     ("default_cool_lava.3.ogg", include_bytes!("../media/default_cool_lava.3.ogg")),
+    ("default_aspen_sapling.png", include_bytes!("../media/default_aspen_sapling.png")),
+    ("default_pine_sapling.png", include_bytes!("../media/default_pine_sapling.png")),
     ("default_tool_breaks.1.ogg", include_bytes!("../media/default_tool_breaks.1.ogg")),
     ("default_tool_breaks.2.ogg", include_bytes!("../media/default_tool_breaks.2.ogg")),
     ("default_tool_breaks.3.ogg", include_bytes!("../media/default_tool_breaks.3.ogg")),
@@ -1078,7 +1144,7 @@ fn sounds_of(id: u16) -> Sounds {
             dug: ("default_sand_footstep", 0.15),
             place: ("default_place_node", 1.0),
         },
-        CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES => Sounds {
+        CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES | CONTENT_BIRCH_SAPLING | CONTENT_FIR_SAPLING => Sounds {
             footstep: ("default_grass_footstep", 0.45),
             dig: GROUP_DIG,
             dug: ("default_grass_footstep", 0.7),
@@ -1149,9 +1215,17 @@ pub fn itemdef_bytes() -> Vec<u8> {
             item_type: ITEM_NODE,
             name: n.name,
             description: n.description,
-            // A torch is a flat picture, not a cube.
-            inventory_image: if n.kind == Kind::Torch { TORCH_IMAGE } else { "" },
-            wield_image: if n.kind == Kind::Torch { TORCH_IMAGE } else { "" },
+            // A torch or sapling is a flat picture, not a cube.
+            inventory_image: match n.kind {
+                Kind::Torch => TORCH_IMAGE,
+                Kind::Sapling => n.tiles[0],
+                _ => "",
+            },
+            wield_image: match n.kind {
+                Kind::Torch => TORCH_IMAGE,
+                Kind::Sapling => n.tiles[0],
+                _ => "",
+            },
             wield_scale: [1.0, 1.0, 1.0],
             place_prediction: n.name,
             tool_capabilities: Vec::new(),
@@ -1213,6 +1287,8 @@ const POINTABLE: u8 = 1;
 const ALPHAMODE_OPAQUE: u8 = 2;
 const ALPHAMODE_CLIP: u8 = 1;
 const NDT_MESH: u8 = 16;
+const NDT_PLANTLIKE: u8 = 9;
+const NODEBOX_FIXED: u8 = 1;
 const TILE_FLAG_TILEABLE_HORIZONTAL: u16 = 1 << 1;
 const TILE_FLAG_TILEABLE_VERTICAL: u16 = 1 << 2;
 const TAT_VERTICAL_FRAMES: u8 = 1;
@@ -1264,6 +1340,14 @@ fn torch_selection_box(w: &mut Writer) {
     }
 }
 
+/// minetest_game's aspen sapling box: a thin upright box, in BS units.
+fn sapling_selection_box(w: &mut Writer) {
+    w.u8(6).u8(NODEBOX_FIXED).u16(1);
+    for v in [-3.0 / 16.0, -0.5, -3.0 / 16.0, 3.0 / 16.0, 0.5, 3.0 / 16.0] {
+        w.f32(v * 10.0);
+    }
+}
+
 fn regular_nodebox(w: &mut Writer) {
     w.u8(6).u8(NODEBOX_REGULAR);
 }
@@ -1277,12 +1361,15 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     }
     let torch = n.kind == Kind::Torch;
     let leaves = n.kind == Kind::Leaves;
+    let sapling = n.kind == Kind::Sapling;
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
         w.u8(CPT_LIGHT).u8(0);
     } else if n.kind == Kind::Furnace {
         w.u8(0).u8(CPT2_FACEDIR);
+    } else if n.kind == Kind::Sapling {
+        w.u8(CPT_LIGHT).u8(0);
     } else {
         w.u8(0) // param_type: none
             .u8(0); // param_type_2: none
@@ -1293,12 +1380,17 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Torch => (NDT_MESH, torch_mesh(n.id)),
         Kind::Leaves => (NDT_ALLFACES_OPTIONAL, ""),
         Kind::Solid | Kind::Furnace => (NDT_NORMAL, ""),
+        Kind::Sapling => (NDT_PLANTLIKE, ""),
     };
     w.u8(drawtype).string16(mesh).f32(1.0); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
     // the Lua API defaults them.
+    // Plant pictures are seen from both sides (Luanti turns culling off
+    // for plantlike by default, as for meshes).
     let flags = if torch {
         TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL
+    } else if sapling {
+        0
     } else {
         TILE_FLAG_BACKFACE_CULLING
     };
@@ -1328,8 +1420,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0); // leveled
 
     // lighting
-    w.u8((torch || leaves) as u8) // light_propagates
-        .u8(torch as u8) // sunlight_propagates
+    w.u8((torch || leaves || sapling) as u8) // light_propagates
+        .u8((torch || sapling) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
     let tree = n.groups.iter().any(|(g, _)| *g == "tree");
@@ -1357,6 +1449,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     regular_nodebox(&mut w); // node_box (unused by meshes)
     if torch {
         torch_selection_box(&mut w);
+    } else if sapling {
+        sapling_selection_box(&mut w);
     } else {
         regular_nodebox(&mut w); // selection_box
     }
@@ -1372,7 +1466,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     w.string16("air") // node_dig_prediction
         .u8(LEVELED_MAX)
-        .u8(if torch || leaves { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
+        .u8(if torch || leaves || sapling { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
         .u8(0) // move_resistance
         .u8(0) // liquid_move_physics
         .u8(0); // post_effect_color_shaded

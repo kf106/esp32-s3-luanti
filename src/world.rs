@@ -410,6 +410,12 @@ impl World {
         self.generated(x, y, z, col)
     }
 
+    /// Nodes players have put in the world that match `wanted` (saplings,
+    /// say, which need their timers again after a restart).
+    pub fn changed_nodes(&self, wanted: impl Fn(u16) -> bool) -> Vec<NodePos> {
+        self.state.changes.iter().filter(|(_, &id)| wanted(id)).map(|(&p, _)| p).collect()
+    }
+
     /// Change a node and record it on the SD card.
     pub fn set_node(&mut self, pos: NodePos, id: u16, param2: u8) {
         let was_torch = content::light_source(self.node(pos)) > 0;

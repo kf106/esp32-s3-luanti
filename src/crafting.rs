@@ -91,6 +91,8 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_BIRCH_WOOD => 5.0,
         CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES => 4.0,
         CONTENT_TORCH => 4.0,
+        CONTENT_BIRCH_SAPLING => 4.0,
+        CONTENT_FIR_SAPLING => 5.0,
         ITEM_STICK => 1.0,
         TOOL_PICK_WOOD | TOOL_AXE_WOOD => 6.0,
         TOOL_SWORD_WOOD => 5.0,

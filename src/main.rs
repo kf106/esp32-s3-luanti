@@ -9,6 +9,7 @@ mod inventory;
 mod items;
 mod lcd;
 mod messages;
+mod nature;
 mod player;
 mod protocol;
 mod screen;

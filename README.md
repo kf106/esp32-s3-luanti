@@ -43,6 +43,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - caves with entrances;
   - coal and iron ore;
   - birch woods in the lowlands and fir forests in the hills and snow, with clearings and the odd lone tree; leaves cast shade.
+- **Trees, as in Minetest Game:** chop a tree's trunk away and its leaves fall within a few seconds (leaves you placed yourself never do). Leaves give a sapling one time in 20, dug or fallen. Plant a sapling on dirt or grass in the open and it grows into a birch or fir after 5 to 25 minutes, in daylight.
 - **World edge:** the world ends about 31,000 nodes from the centre in every direction, at an invisible wall, as in Luanti.
 - **World storage:** the world is generated on demand from a fixed seed. Only the changes players make are stored, as an append-only log on the SD card.
 - **Digging and building:** changes appear for every player at once.
@@ -212,6 +213,7 @@ src/items.rs       dropped items and their physics
 src/inventory.rs   inventories and inventory actions
 src/crafting.rs    crafting recipes, the craft grid, and fuel
 src/furnace.rs     furnaces and their inventories
+src/nature.rs      leaf decay and saplings
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto
