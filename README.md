@@ -71,7 +71,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## Building
 
-You need the Rust toolchain for Xtensa, plus `git` and Python 3 (with `venv`) for the ESP-IDF build. On Ubuntu, `sudo apt install git python3 python3-venv` covers the latter.
+You need the Rust toolchain for Xtensa, plus `git` and Python 3 with the `venv` module. The ESP-IDF build creates its own Python environment inside `.embuild/` on the first run; you don't need to set one up. On Ubuntu: `sudo apt install git python3 python3-venv`.
 
 1. Install the Rust Xtensa toolchain with [espup](https://github.com/esp-rs/espup), then load its environment (in every new shell, or from your shell profile):
    ```
