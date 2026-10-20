@@ -8,13 +8,13 @@
 //! gravity); the server moves its own copy the same way so it knows where
 //! the item ends up, and tells clients when it lands.
 
+use crate::inventory::Stack;
 use crate::messages::{item_size, GRAVITY};
 
 /// builtin's default item_entity_ttl, in seconds.
 pub const TIME_TO_LIVE: f32 = 900.0;
 /// At most this many items at once; the oldest goes when another drops.
 pub const MAX_ITEMS: usize = 128;
-pub const STACK_MAX: u16 = 99;
 /// Object ids for items, well clear of the player ids (which are peer ids).
 const FIRST_ID: u16 = 0x8000;
 /// Physics time step, in seconds.
@@ -29,6 +29,8 @@ pub struct Dropped {
     pub id: u16,
     pub item: u16,
     pub count: u16,
+    /// A tool's wear.
+    pub wear: u16,
     /// Centre, in nodes.
     pub pos: [f32; 3],
     /// Nodes per second.
@@ -38,6 +40,9 @@ pub struct Dropped {
 }
 
 impl Dropped {
+    pub fn stack(&self) -> Stack {
+        Stack { id: self.item, count: self.count, wear: self.wear }
+    }
     pub fn pos_bs(&self) -> [f32; 3] {
         self.pos.map(|v| v * 10.0)
     }
@@ -81,7 +86,7 @@ impl Items {
     /// Add an item stack at `pos` (nodes) moving at `vel`. If it starts
     /// inside something solid it is lifted out. Returns its id, and the id
     /// of the oldest item if that had to go to make room.
-    pub fn add(&mut self, stack: (u16, u16), motion: ([f32; 3], [f32; 3]), solid: &dyn Fn(i32, i32, i32) -> bool) -> (u16, Option<u16>) {
+    pub fn add(&mut self, stack: Stack, motion: ([f32; 3], [f32; 3]), solid: &dyn Fn(i32, i32, i32) -> bool) -> (u16, Option<u16>) {
         let evicted = if self.list.len() >= MAX_ITEMS {
             Some(self.list.remove(0).id)
         } else {
@@ -90,14 +95,15 @@ impl Items {
         let id = self.next_id;
         self.next_id = if self.next_id == u16::MAX { FIRST_ID } else { self.next_id + 1 };
         let (mut pos, vel) = motion;
-        let half = item_size(stack.1);
+        let half = item_size(stack.count);
         for _ in 0..3 {
             if !overlaps(pos, half, solid) {
                 break;
             }
             pos[1] = (pos[1] + 0.5).floor() + 0.5 + half + 1e-3;
         }
-        self.list.push(Dropped { id, item: stack.0, count: stack.1, pos, vel, falling: true, age: 0.0 });
+        let (item, count, wear) = (stack.id, stack.count, stack.wear);
+        self.list.push(Dropped { id, item, count, wear, pos, vel, falling: true, age: 0.0 });
         (id, evicted)
     }
 
@@ -192,7 +198,8 @@ impl Items {
                 o.id != id
                     && !o.falling
                     && o.item == me.item
-                    && o.count + me.count <= STACK_MAX
+                    && o.wear == me.wear
+                    && o.count + me.count <= crate::content::stack_max(me.item)
                     && (0..3).map(|i| (o.pos[i] - me.pos[i]).powi(2)).sum::<f32>() <= MERGE_RADIUS * MERGE_RADIUS
             });
             let Some(other) = other.map(|o| (o.id, o.count, o.pos)) else {

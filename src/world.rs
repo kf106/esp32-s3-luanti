@@ -279,7 +279,7 @@ impl World {
                 Some(i) => (&field[..i], field.get(i + 1).copied().unwrap_or(0)),
                 None => (field, 0),
             };
-            match content::id_of(&String::from_utf8_lossy(name)) {
+            match content::node_id_of(&String::from_utf8_lossy(name)) {
                 // Torches saved before there were wall and ceiling torch
                 // nodes get the right one for the way they face.
                 Some(id) => self.apply(pos, content::torch_variant(id, param2), param2),

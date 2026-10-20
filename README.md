@@ -2,7 +2,7 @@
 
 A minimal [Luanti](https://www.luanti.org/) (formerly Minetest) server that runs on an ESP32-S3 microcontroller, written in Rust on ESP-IDF.
 
-A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. You can create an account, log in, explore a generated world with hills, forests, caves, biomes and ores, dig and build, place torches, drop and pick up items, choose a skin, and see the other players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
+A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. You can create an account, log in, explore a generated world with hills, forests, caves, biomes and ores, dig and build, craft, place torches, drop and pick up items, choose a skin, and see the other players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
 
 The server does not run Lua. A normal Luanti server runs a game (such as Minetest Game) written in Lua mods. This one implements the engine's network protocol directly and builds a small built-in game on top of it, in about 7,000 lines of Rust.
 
@@ -47,6 +47,12 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **World storage:** the world is generated on demand from a fixed seed. Only the changes players make are stored, as an append-only log on the SD card.
 - **Digging and building:** changes appear for every player at once.
 - **Survival inventory:** 32 slots, with stacks you can rearrange in the inventory window. New players start with 20 torches.
+- **Crafting:** Minetest Game's 3×3 crafting grid in the inventory window, with its recipes and rules. Stone gives cobblestone, and ores give coal and iron lumps.
+  - a tree trunk makes 4 planks; planks make 4 sticks;
+  - a coal lump above a stick makes 4 torches;
+  - 4 sand make sandstone, and sandstone makes 4 sand;
+  - wooden and stone pickaxes, shovels, axes and swords, in Minetest Game's shapes (planks for wood, stone or cobblestone for stone).
+- **Tools:** Minetest Game's digging rules. The bare hand digs earth, sand, leaves and (slowly) wood, but not stone, so your first job is a wooden pickaxe. Iron ore needs a stone pickaxe. Tools wear with use, show Luanti's wear bar, and break with Minetest Game's sound: a wooden pickaxe lasts 30 stone digs, a stone one 60.
 - **Torches:** they mount on floors, walls and ceilings using Minetest Game's 3D models. The server computes their light, so caves and nights are lit, and they fall off when the block they hang on is dug.
 - **Day and night:** a normal day and night cycle. Map blocks carry separate day and night light.
 - **Health:** fall damage, a health bar, death and respawn.
@@ -76,7 +82,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- No crafting, no admin commands.
+- No furnace yet, so no steel tools, and no admin commands.
 - No Lua mods: the game content is built in.
 - Dropped items are not saved over a restart.
 - One world per SD card.
@@ -195,6 +201,7 @@ src/world.rs       the world: generated blocks, player changes, lighting
 src/terrain.rs     terrain, biomes, caves and ores
 src/items.rs       dropped items and their physics
 src/inventory.rs   inventories and inventory actions
+src/crafting.rs    crafting recipes and the craft grid
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto
@@ -216,7 +223,7 @@ media/             built-in textures and models
 The code is released under the [MIT licence](LICENSE).
 
 The media in `media/` have their own licences:
-- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, and the torch models and textures. Their credits are in `media/LICENSE-character.txt` and `media/LICENSE-torch.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
+- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt` and `media/LICENSE-items.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
 - **Sounds from Minetest Game** (`default_*.ogg`, `player_damage.ogg`): CC BY-SA 3.0, CC BY 3.0 or CC0, with credits in `media/LICENSE-sounds.txt`.
 - **The skins `esp_skin_wizard.png` and `esp_skin_elf.png`:** made by Keir Finlow-Bates, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 - **The other `esp_*.png` textures:** made for this project and covered by the MIT licence.

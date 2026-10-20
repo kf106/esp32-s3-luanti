@@ -47,6 +47,7 @@ pub const TOCLIENT_MEDIA: u16 = 0x38;
 pub const TOCLIENT_NODEDEF: u16 = 0x3a;
 pub const TOCLIENT_ANNOUNCE_MEDIA: u16 = 0x3c;
 pub const TOCLIENT_ITEMDEF: u16 = 0x3d;
+pub const TOCLIENT_PLAY_SOUND: u16 = 0x3f;
 pub const TOCLIENT_PRIVILEGES: u16 = 0x41;
 pub const TOCLIENT_INVENTORY_FORMSPEC: u16 = 0x42;
 pub const TOCLIENT_MOVEMENT: u16 = 0x45;
@@ -1063,24 +1064,35 @@ pub fn build_removenode(pos: [i16; 3]) -> Vec<u8> {
     w.into_inner()
 }
 
+/// TOCLIENT_PLAY_SOUND: a one-off ("ephemeral", id -1) sound at a
+/// position in BS units, as Server::playSound sends it.
+pub fn build_play_sound(name: &str, gain: f32, pos_bs: [f32; 3]) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_PLAY_SOUND);
+    w.i32(-1).string16(name).f32(gain).u8(1); // positional
+    w.f32(pos_bs[0]).f32(pos_bs[1]).f32(pos_bs[2]);
+    w.u16(0) // object
+        .u8(0) // loop
+        .f32(0.0) // fade
+        .f32(1.0) // pitch
+        .u8(1) // ephemeral
+        .f32(0.0); // start time
+    w.into_inner()
+}
+
 /// TOCLIENT_INVENTORY: the player's inventory in Luanti's text format, as
 /// a u32-prefixed string, then "skip next wield animation" (protocol > 51).
-/// The lists are the ones every Luanti player has.
-pub fn build_inventory(main: &[Option<(&str, u16)>]) -> Vec<u8> {
+/// Each list is (name, width, slots as item strings, None for empty).
+pub fn build_inventory(lists: &[(&str, u32, Vec<Option<String>>)]) -> Vec<u8> {
     let mut text = String::new();
-    text.push_str("List main 32\nWidth 0\n");
-    for i in 0..32 {
-        match main.get(i).copied().flatten() {
-            Some((name, count)) => text.push_str(&format!("Item {name} {count}\n")),
-            None => text.push_str("Empty\n"),
+    for (name, width, slots) in lists {
+        text.push_str(&format!("List {name} {}\nWidth {width}\n", slots.len()));
+        for slot in slots {
+            match slot {
+                Some(item) => text.push_str(&format!("Item {item}\n")),
+                None => text.push_str("Empty\n"),
+            }
         }
-    }
-    text.push_str("EndInventoryList\n");
-    text.push_str("List craft 9\nWidth 3\n");
-    text.push_str(&"Empty\n".repeat(9));
-    text.push_str("EndInventoryList\n");
-    for list in ["craftpreview", "craftresult"] {
-        text.push_str(&format!("List {list} 1\nWidth 0\nEmpty\nEndInventoryList\n"));
+        text.push_str("EndInventoryList\n");
     }
     text.push_str("EndInventory\n");
 
@@ -1089,8 +1101,6 @@ pub fn build_inventory(main: &[Option<(&str, u16)>]) -> Vec<u8> {
     w.into_inner()
 }
 
-/// TOCLIENT_INVENTORY_FORMSPEC: the window the inventory key opens. Just
-/// the 32 main slots in four rows of eight, the top row being the hotbar.
 /// The skin chooser beside the inventory: what the player wears now.
 pub struct SkinChoice<'a> {
     pub label: &'a str,
@@ -1110,12 +1120,21 @@ fn formspec_escape(s: &str) -> String {
         .replace(',', "\\,")
 }
 
-/// The player's inventory window: the 32 slots, and on the right a
-/// turnable preview of their character with buttons to change skin.
+/// TOCLIENT_INVENTORY_FORMSPEC: the window the inventory key opens, laid
+/// out like minetest_game's: the 3x3 craft grid with an arrow to what it
+/// makes at the top, the 32 main slots below (the hotbar row first), and
+/// on the right a turnable preview of the player's character with buttons
+/// to change skin. The listrings make shift-click move items between the
+/// main list and the craft grid.
 pub fn build_inventory_formspec(skin: &SkinChoice) -> Vec<u8> {
     let fs = format!(
-        "formspec_version[6]size[14.5,5.75]\
-         list[current_player;main;0.5,0.5;8,4;]\
+        "formspec_version[6]size[14.5,10.25]\
+         list[current_player;craft;2.375,0.5;3,3;]\
+         image[6.375,1.75;1,1;gui_furnace_arrow_bg.png^[transformR270]\
+         list[current_player;craftpreview;7.625,1.75;1,1;]\
+         list[current_player;main;0.5,5;8,4;]\
+         listring[current_player;main]\
+         listring[current_player;craft]\
          model[10.85,0.3;3.2,3.7;skin_preview;character.b3d;{texture};0,180;false;true;0,79;30]\
          label[10.85,4.25;{label}]\
          button[10.85,4.6;1.4,0.75;{FIELD_SKIN_PREVIOUS};<]\

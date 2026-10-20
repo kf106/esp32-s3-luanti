@@ -1,5 +1,6 @@
 mod auth;
 mod content;
+mod crafting;
 mod fasthash;
 mod font;
 mod indicator;

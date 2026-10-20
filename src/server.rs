@@ -13,7 +13,7 @@ use crate::auth::{self, Account, AuthStore, NameError};
 use crate::content::{self, Media};
 use crate::messages::{self, *};
 use crate::protocol::*;
-use crate::inventory::{self, Action, Inventory, InventoryStore};
+use crate::inventory::{self, Action, Inventory, InventoryStore, List, Stack};
 use crate::items::{Change, Items};
 use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
@@ -1396,7 +1396,34 @@ impl Server {
                     self.resend_node(from, under);
                     return;
                 }
+                // What the wielded item can dig, falling back to the hand
+                // (as Luanti's server checks the client's dig).
+                let slot = msg.item as usize;
+                let wielded = self.peers.get(&from).and_then(|p| p.inventory.get(slot)).filter(|_| slot < HOTBAR_SIZE);
+                let caps = content::caps_of(wielded.map(|s| s.id));
+                let wear = content::dig_params(current, caps, wielded.map_or(0, |s| s.wear))
+                    .map(|(_, wear)| wear)
+                    .or_else(|| content::dig_params(current, &content::HAND, 0).map(|_| 0));
+                let Some(wear) = wear else {
+                    info!("{name}: {} can't be dug with that", content::name_of(current));
+                    self.resend_node(from, under);
+                    return;
+                };
                 info!("{name} dug {} at {under:?}", content::name_of(current));
+                // Wear out the tool (builtin's node_dig); a worn-out tool
+                // breaks with its sound.
+                if let Some(mut tool) = wielded.filter(|_| wear > 0) {
+                    let intact = tool.add_wear(wear);
+                    if let Some(peer) = self.peers.get_mut(&from) {
+                        peer.inventory.set(slot, intact.then_some(tool));
+                    }
+                    if !intact {
+                        info!("{name}'s {} broke", content::name_of(tool.id));
+                        let at = under.map(|v| v as f32 * 10.0);
+                        self.play_sound_near(content::TOOL_BREAKS, 0.5, at);
+                    }
+                    self.inventory_changed(from);
+                }
                 self.edit_event(&name, "dug", current);
                 self.world.set_node(node_pos(under), world::CONTENT_AIR, 0);
                 self.broadcast_node(under, &build_removenode(under));
@@ -1407,19 +1434,19 @@ impl Server {
                 for fallen in self.drop_attached(under) {
                     info!("{name}'s dig knocked off the torch at {fallen:?}");
                     let at = fallen.map(|v| v as f32);
-                    self.spawn_item((content::CONTENT_TORCH, 1), (at, [0.0; 3]));
+                    self.spawn_item(Stack::new(content::CONTENT_TORCH, 1), (at, [0.0; 3]));
                 }
                 // The drop goes into the digger's inventory; what doesn't
                 // fit is dropped where the node was (builtin's
                 // handle_node_drops).
                 if let Some((item, count)) = content::drop_of(current) {
                     let left = match self.peers.get_mut(&from) {
-                        Some(peer) => peer.inventory.add(item, count),
+                        Some(peer) => peer.inventory.add(Stack::new(item, count)),
                         None => count,
                     };
                     if left > 0 {
                         info!("{name}'s inventory is full; dropping {left} {}", content::name_of(item));
-                        self.spawn_item((item, left), (under.map(|v| v as f32), [0.0; 3]));
+                        self.spawn_item(Stack::new(item, left), (under.map(|v| v as f32), [0.0; 3]));
                     }
                     self.inventory_changed(from);
                 }
@@ -1429,9 +1456,10 @@ impl Server {
                 // node. An empty slot predicts nothing.
                 let slot = msg.item as usize;
                 let wielded = self.peers.get(&from).and_then(|p| p.inventory.get(slot));
-                let Some(stack) = wielded.filter(|_| slot < HOTBAR_SIZE) else {
-                    // Nothing to place. If the client thought otherwise, its
-                    // inventory is stale: correct the node and the inventory.
+                let Some(stack) = wielded.filter(|s| slot < HOTBAR_SIZE && content::is_node(s.id)) else {
+                    // Nothing to place (an empty hand, or an item such as a
+                    // stick that isn't a node). If the client thought
+                    // otherwise, correct the node and the inventory.
                     self.resend_node(from, above);
                     self.send_inventory(from);
                     return;
@@ -1701,9 +1729,24 @@ impl Server {
         self.send_to_players(&packet);
     }
 
+    /// Play a sound at a position (BS units) for everyone in earshot
+    /// (32 nodes, Luanti's default max_hear_distance).
+    fn play_sound_near(&mut self, sound: &str, gain: f32, pos_bs: [f32; 3]) {
+        let packet = build_play_sound(sound, gain, pos_bs);
+        let near: Vec<SocketAddr> = self
+            .peers
+            .iter()
+            .filter(|(_, p)| p.ready && (0..3).map(|i| (p.pos_bs[i] - pos_bs[i]).powi(2)).sum::<f32>() <= 320.0f32.powi(2))
+            .map(|(a, _)| *a)
+            .collect();
+        for addr in near {
+            self.send_command(addr, 0, &packet);
+        }
+    }
+
     /// Put an item stack into the world and show it to everyone.
     /// `motion` is position and velocity, in nodes.
-    fn spawn_item(&mut self, stack: (u16, u16), motion: ([f32; 3], [f32; 3])) {
+    fn spawn_item(&mut self, stack: Stack, motion: ([f32; 3], [f32; 3])) {
         let world = &self.world;
         let solid = |x: i32, y: i32, z: i32| content::walkable(world.node((x, y, z)));
         let (id, evicted) = self.items.add(stack, motion, &solid);
@@ -1727,7 +1770,7 @@ impl Server {
         if dist > MAX_INTERACT_DISTANCE {
             return;
         }
-        let left = peer.inventory.add(d.item, d.count);
+        let left = peer.inventory.add(d.stack());
         let name = peer.display_name().to_string();
         if left == d.count {
             return; // inventory full
@@ -1868,26 +1911,42 @@ impl Server {
         }
         let text = String::from_utf8_lossy(&payload[2..]).into_owned();
         let name = peer.display_name().to_string();
+        let own = |loc: &str| inventory::is_own(loc, &name);
+        // The craft preview only shows a result: taking from it is a Craft
+        // action, and nothing can be put into it or the craft result
+        // (Luanti's serverpackethandler refuses those too).
+        let list = |l: &str| List::from_name(l);
         let mut dropped = None;
         let ok = match inventory::parse_action(&text) {
-            Some(Action::Move { count, from: (fi, fl, fs), to: (ti, tl, ts) })
-                if inventory::is_own(&fi, &name)
-                    && inventory::is_own(&ti, &name)
-                    && fl == "main"
-                    && tl == "main" =>
-            {
-                peer.inventory.move_items(fs, ts, count)
+            Some(Action::Move { count, from: (fi, fl, fs), to: (ti, tl, ts) }) if own(&fi) && own(&ti) => {
+                match (list(&fl), list(&tl)) {
+                    (Some(fl), Some(tl)) => peer.inventory.move_items((fl, fs), (tl, ts), count),
+                    _ => false,
+                }
             }
-            Some(Action::Drop { count, from: (fi, fl, fs) }) if inventory::is_own(&fi, &name) && fl == "main" => {
-                let stack = peer.inventory.take(fs, count);
+            Some(Action::MoveSomewhere { count, from: (fi, fl, fs), to: (ti, tl) }) if own(&fi) && own(&ti) => {
+                match (list(&fl), list(&tl)) {
+                    (Some(fl), Some(tl)) => peer.inventory.move_somewhere((fl, fs), tl, count),
+                    _ => false,
+                }
+            }
+            Some(Action::Craft { count, inv }) if own(&inv) => match peer.inventory.craft(count) {
+                Some(made) => {
+                    info!("{name} crafted {}", made.item_string());
+                    true
+                }
+                None => false,
+            },
+            Some(Action::Drop { count, from: (fi, fl, fs) }) if own(&fi) => {
+                let stack = list(&fl).and_then(|fl| peer.inventory.take(fl, fs, count));
                 if let Some(stack) = stack {
-                    info!("{name} dropped {} {}", stack.count, content::name_of(stack.id));
-                    dropped = Some(((stack.id, stack.count), drop_motion(peer.pos_bs, peer.yaw, peer.pitch)));
+                    info!("{name} dropped {}", stack.item_string());
+                    dropped = Some((stack, drop_motion(peer.pos_bs, peer.yaw, peer.pitch)));
                 }
                 stack.is_some()
             }
             Some(Action::Other(kind)) => {
-                info!("{name}: inventory action {kind} isn't supported yet");
+                info!("{name}: inventory action {kind} isn't supported");
                 false
             }
             _ => {
@@ -1917,7 +1976,13 @@ impl Server {
         let Some(peer) = self.peers.get(&addr) else {
             return;
         };
-        let packet = build_inventory(&peer.inventory.slots());
+        let lists: Vec<_> = peer
+            .inventory
+            .lists()
+            .into_iter()
+            .map(|(name, width, slots)| (name, width, slots.iter().map(|s| s.map(|s| s.item_string())).collect()))
+            .collect();
+        let packet = build_inventory(&lists);
         self.send_command(addr, 0, &packet);
     }
 

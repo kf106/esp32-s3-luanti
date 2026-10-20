@@ -60,6 +60,24 @@ pub const CONTENT_BIRCH_TREE: u16 = 11;
 pub const CONTENT_BIRCH_LEAVES: u16 = 12;
 pub const CONTENT_FIR_TREE: u16 = 13;
 pub const CONTENT_FIR_NEEDLES: u16 = 14;
+pub const CONTENT_BIRCH_WOOD: u16 = 15;
+pub const CONTENT_FIR_WOOD: u16 = 16;
+pub const CONTENT_COBBLE: u16 = 17;
+
+/// Items that aren't nodes (minetest_game's craftitems) have ids from
+/// 0x1000 up, well clear of node content ids.
+pub const ITEM_STICK: u16 = 0x1000;
+pub const ITEM_COAL_LUMP: u16 = 0x1001;
+pub const ITEM_IRON_LUMP: u16 = 0x1002;
+/// Tools have ids from 0x2000 up.
+pub const TOOL_PICK_WOOD: u16 = 0x2000;
+pub const TOOL_PICK_STONE: u16 = 0x2001;
+pub const TOOL_SHOVEL_WOOD: u16 = 0x2002;
+pub const TOOL_SHOVEL_STONE: u16 = 0x2003;
+pub const TOOL_AXE_WOOD: u16 = 0x2004;
+pub const TOOL_AXE_STONE: u16 = 0x2005;
+pub const TOOL_SWORD_WOOD: u16 = 0x2006;
+pub const TOOL_SWORD_STONE: u16 = 0x2007;
 /// Light given off by a torch (minetest_game: LIGHT_MAX - 1 = 13; 12 is
 /// slightly gentler and keeps the lit area, and the work, smaller).
 pub const TORCH_LIGHT: u8 = 12;
@@ -72,7 +90,8 @@ pub const NODES: &[Node] = &[
         description: "Stone",
         tiles: ["esp_stone.png"; 6],
         groups: &[("cracky", 3), ("stone", 1)],
-        drop: CONTENT_STONE,
+        // minetest_game: stone gives cobblestone.
+        drop: CONTENT_COBBLE,
         drop_count: 1,
         kind: Kind::Solid,
     },
@@ -118,7 +137,7 @@ pub const NODES: &[Node] = &[
         name: "esp:sandstone",
         description: "Sandstone",
         tiles: ["esp_sandstone.png"; 6],
-        groups: &[("crumbly", 2), ("cracky", 3)],
+        groups: &[("crumbly", 1), ("cracky", 3)],
         drop: CONTENT_SANDSTONE,
         drop_count: 1,
         kind: Kind::Solid,
@@ -140,17 +159,15 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Solid,
     },
-    // Ores drop themselves until there are items to drop instead. Cracky 3
-    // (rather than minetest_game's 2) so the bare hand can dig them.
+    // Ores give lumps, as in minetest_game.
     Node {
         id: CONTENT_COAL,
         name: "esp:stone_with_coal",
         description: "Coal Ore",
         tiles: ["esp_stone_with_coal.png"; 6],
         groups: &[("cracky", 3)],
-        // Stands in for coal lump + stick until there is crafting.
-        drop: CONTENT_TORCH,
-        drop_count: 4,
+        drop: ITEM_COAL_LUMP,
+        drop_count: 1,
         kind: Kind::Solid,
     },
     Node {
@@ -158,8 +175,9 @@ pub const NODES: &[Node] = &[
         name: "esp:stone_with_iron",
         description: "Iron Ore",
         tiles: ["esp_stone_with_iron.png"; 6],
-        groups: &[("cracky", 3)],
-        drop: CONTENT_IRON,
+        // Needs a stone pickaxe or better.
+        groups: &[("cracky", 2)],
+        drop: ITEM_IRON_LUMP,
         drop_count: 1,
         kind: Kind::Solid,
     },
@@ -249,7 +267,303 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Leaves,
     },
+    // Planks, as minetest_game's aspen and pine wood: four from a trunk.
+    Node {
+        id: CONTENT_BIRCH_WOOD,
+        name: "esp:birch_wood",
+        description: "Birch Wood Planks",
+        tiles: ["esp_birch_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("wood", 1)],
+        drop: CONTENT_BIRCH_WOOD,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_FIR_WOOD,
+        name: "esp:fir_wood",
+        description: "Fir Wood Planks",
+        tiles: ["esp_fir_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("wood", 1)],
+        drop: CONTENT_FIR_WOOD,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_COBBLE,
+        name: "esp:cobble",
+        description: "Cobblestone",
+        tiles: ["esp_cobble.png"; 6],
+        groups: &[("cracky", 3), ("stone", 2)],
+        drop: CONTENT_COBBLE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
 ];
+
+/// An item that is only an item, never a node: crafting material.
+pub struct CraftItem {
+    pub id: u16,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub image: &'static str,
+    pub groups: &'static [(&'static str, i16)],
+}
+
+/// minetest_game's craftitems, with its pictures (CC BY-SA 3.0, see
+/// media/LICENSE-items.txt).
+pub const CRAFTITEMS: &[CraftItem] = &[
+    CraftItem {
+        id: ITEM_STICK,
+        name: "esp:stick",
+        description: "Stick",
+        image: "default_stick.png",
+        groups: &[("stick", 1), ("flammable", 2)],
+    },
+    CraftItem {
+        id: ITEM_COAL_LUMP,
+        name: "esp:coal_lump",
+        description: "Coal Lump",
+        image: "default_coal_lump.png",
+        groups: &[("coal", 1), ("flammable", 1)],
+    },
+    CraftItem {
+        id: ITEM_IRON_LUMP,
+        name: "esp:iron_lump",
+        description: "Iron Lump",
+        image: "default_iron_lump.png",
+        groups: &[],
+    },
+];
+
+fn craftitem(id: u16) -> Option<&'static CraftItem> {
+    CRAFTITEMS.iter().find(|c| c.id == id)
+}
+
+// ---------------------------------------------------------------------------
+// Tools
+// ---------------------------------------------------------------------------
+
+/// What a tool (or the hand) can dig in one group: the time for each
+/// rating of the group, how many digs it lasts (0: for ever), and the
+/// highest node "level" it can dig (Luanti's ToolGroupCap).
+pub struct GroupCap {
+    pub group: &'static str,
+    pub times: &'static [(i16, f32)],
+    pub uses: u32,
+    pub maxlevel: i16,
+}
+
+/// Luanti's ToolCapabilities.
+pub struct ToolCaps {
+    pub full_punch_interval: f32,
+    pub max_drop_level: i16,
+    pub groupcaps: &'static [GroupCap],
+    /// Damage to the "fleshy" armour group when punching.
+    pub fleshy: i16,
+}
+
+/// minetest_game's hand (tools.lua): dirt and sand, leaves, and trunks and
+/// planks slowly, but no stone. It never wears out.
+pub const HAND: ToolCaps = ToolCaps {
+    full_punch_interval: 0.9,
+    max_drop_level: 0,
+    groupcaps: &[
+        GroupCap { group: "crumbly", times: &[(2, 3.0), (3, 0.7)], uses: 0, maxlevel: 1 },
+        GroupCap { group: "snappy", times: &[(3, 0.4)], uses: 0, maxlevel: 1 },
+        GroupCap { group: "oddly_breakable_by_hand", times: &[(1, 3.5), (2, 2.0), (3, 0.7)], uses: 0, maxlevel: 1 },
+    ],
+    fleshy: 1,
+};
+
+pub struct Tool {
+    pub id: u16,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub image: &'static str,
+    pub wield_image: &'static str,
+    pub caps: ToolCaps,
+    pub groups: &'static [(&'static str, i16)],
+}
+
+/// minetest_game's wood and stone tools (tools.lua), with its pictures
+/// (CC BY-SA 3.0, see media/LICENSE-items.txt). They break with
+/// "default_tool_breaks".
+pub const TOOLS: &[Tool] = &[
+    Tool {
+        id: TOOL_PICK_WOOD,
+        name: "esp:pick_wood",
+        description: "Wooden Pickaxe",
+        image: "default_tool_woodpick.png",
+        wield_image: "default_tool_woodpick.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.2,
+            max_drop_level: 0,
+            groupcaps: &[GroupCap { group: "cracky", times: &[(3, 1.6)], uses: 10, maxlevel: 1 }],
+            fleshy: 2,
+        },
+        groups: &[("pickaxe", 1), ("flammable", 2)],
+    },
+    Tool {
+        id: TOOL_PICK_STONE,
+        name: "esp:pick_stone",
+        description: "Stone Pickaxe",
+        image: "default_tool_stonepick.png",
+        wield_image: "default_tool_stonepick.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.3,
+            max_drop_level: 0,
+            groupcaps: &[GroupCap { group: "cracky", times: &[(2, 2.0), (3, 1.0)], uses: 20, maxlevel: 1 }],
+            fleshy: 3,
+        },
+        groups: &[("pickaxe", 1)],
+    },
+    Tool {
+        id: TOOL_SHOVEL_WOOD,
+        name: "esp:shovel_wood",
+        description: "Wooden Shovel",
+        image: "default_tool_woodshovel.png",
+        wield_image: "default_tool_woodshovel.png^[transformR90",
+        caps: ToolCaps {
+            full_punch_interval: 1.2,
+            max_drop_level: 0,
+            groupcaps: &[GroupCap { group: "crumbly", times: &[(1, 3.0), (2, 1.6), (3, 0.6)], uses: 10, maxlevel: 1 }],
+            fleshy: 2,
+        },
+        groups: &[("shovel", 1), ("flammable", 2)],
+    },
+    Tool {
+        id: TOOL_SHOVEL_STONE,
+        name: "esp:shovel_stone",
+        description: "Stone Shovel",
+        image: "default_tool_stoneshovel.png",
+        wield_image: "default_tool_stoneshovel.png^[transformR90",
+        caps: ToolCaps {
+            full_punch_interval: 1.4,
+            max_drop_level: 0,
+            groupcaps: &[GroupCap { group: "crumbly", times: &[(1, 1.8), (2, 1.2), (3, 0.5)], uses: 20, maxlevel: 1 }],
+            fleshy: 2,
+        },
+        groups: &[("shovel", 1)],
+    },
+    Tool {
+        id: TOOL_AXE_WOOD,
+        name: "esp:axe_wood",
+        description: "Wooden Axe",
+        image: "default_tool_woodaxe.png",
+        wield_image: "default_tool_woodaxe.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.0,
+            max_drop_level: 0,
+            groupcaps: &[GroupCap { group: "choppy", times: &[(2, 3.0), (3, 1.6)], uses: 10, maxlevel: 1 }],
+            fleshy: 2,
+        },
+        groups: &[("axe", 1), ("flammable", 2)],
+    },
+    Tool {
+        id: TOOL_AXE_STONE,
+        name: "esp:axe_stone",
+        description: "Stone Axe",
+        image: "default_tool_stoneaxe.png",
+        wield_image: "default_tool_stoneaxe.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.2,
+            max_drop_level: 0,
+            groupcaps: &[GroupCap { group: "choppy", times: &[(1, 3.0), (2, 2.0), (3, 1.3)], uses: 20, maxlevel: 1 }],
+            fleshy: 3,
+        },
+        groups: &[("axe", 1)],
+    },
+    Tool {
+        id: TOOL_SWORD_WOOD,
+        name: "esp:sword_wood",
+        description: "Wooden Sword",
+        image: "default_tool_woodsword.png",
+        wield_image: "default_tool_woodsword.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.0,
+            max_drop_level: 0,
+            groupcaps: &[GroupCap { group: "snappy", times: &[(2, 1.6), (3, 0.4)], uses: 10, maxlevel: 1 }],
+            fleshy: 2,
+        },
+        groups: &[("sword", 1), ("flammable", 2)],
+    },
+    Tool {
+        id: TOOL_SWORD_STONE,
+        name: "esp:sword_stone",
+        description: "Stone Sword",
+        image: "default_tool_stonesword.png",
+        wield_image: "default_tool_stonesword.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.2,
+            max_drop_level: 0,
+            groupcaps: &[GroupCap { group: "snappy", times: &[(2, 1.4), (3, 0.4)], uses: 20, maxlevel: 1 }],
+            fleshy: 4,
+        },
+        groups: &[("sword", 1)],
+    },
+];
+
+/// The sound a tool makes when it wears out (minetest_game's sound.breaks).
+pub const TOOL_BREAKS: &str = "default_tool_breaks";
+
+fn tool(id: u16) -> Option<&'static Tool> {
+    TOOLS.iter().find(|t| t.id == id)
+}
+
+pub fn is_tool(id: u16) -> bool {
+    tool(id).is_some()
+}
+
+/// The capabilities an item digs with: a tool's own, otherwise the
+/// hand's (ItemStack::getToolCapabilities).
+pub fn caps_of(id: Option<u16>) -> &'static ToolCaps {
+    id.and_then(tool).map_or(&HAND, |t| &t.caps)
+}
+
+/// The wear one use adds to a tool that lasts `uses` uses, spread so that
+/// it breaks after exactly that many (Luanti's calculateResultWear).
+fn use_wear(uses: u32, wear: u16) -> u32 {
+    if uses == 0 {
+        return 0;
+    }
+    let normal = 65536 / uses;
+    let oversize = 65536 % uses;
+    let extra = if oversize > 0 && wear as u32 >= (uses - oversize) * normal { 1 } else { 0 };
+    normal + extra
+}
+
+/// Whether `caps` can dig a node, and if so how long it takes and how much
+/// wear it adds (Luanti's getDigParams).
+pub fn dig_params(node: u16, caps: &ToolCaps, wear: u16) -> Option<(f32, u32)> {
+    // dig_immediate: fixed times, no wear, whatever the tool.
+    if !caps.groupcaps.iter().any(|c| c.group == "dig_immediate") {
+        match group_of(node, "dig_immediate") {
+            2 => return Some((0.5, 0)),
+            3 => return Some((0.0, 0)),
+            _ => {}
+        }
+    }
+    let level = group_of(node, "level");
+    let mut best: Option<(f32, u32)> = None;
+    for cap in caps.groupcaps {
+        let leveldiff = cap.maxlevel - level;
+        if leveldiff < 0 {
+            continue;
+        }
+        let rating = group_of(node, cap.group);
+        let Some(&(_, mut time)) = cap.times.iter().find(|(r, _)| *r == rating) else {
+            continue;
+        };
+        if leveldiff > 1 {
+            time /= leveldiff as f32;
+        }
+        if !matches!(best, Some((t, _)) if time >= t) {
+            let uses = (cap.uses as f64 * 3f64.powi(leveldiff as i32)).min(65535.0) as u32;
+            best = Some((time, use_wear(uses, wear)));
+        }
+    }
+    best
+}
 
 /// minetest_game's torch texture: 16 frames of flame, one above another.
 const TORCH_TILE: &str = "esp_torch_animated.png";
@@ -341,24 +655,65 @@ pub fn wallmounted_param2(under: [i16; 3], above: [i16; 3]) -> u8 {
 }
 
 /// Content id for a node name, including the built-in "air".
-pub fn id_of(name: &str) -> Option<u16> {
+pub fn node_id_of(name: &str) -> Option<u16> {
     if name == "air" {
         return Some(crate::world::CONTENT_AIR);
     }
     NODES.iter().find(|n| n.name == name).map(|n| n.id)
 }
 
+/// Id of any item (node or craftitem) by name.
+pub fn id_of(name: &str) -> Option<u16> {
+    node_id_of(name)
+        .or_else(|| CRAFTITEMS.iter().find(|c| c.name == name).map(|c| c.id))
+        .or_else(|| TOOLS.iter().find(|t| t.name == name).map(|t| t.id))
+}
+
 pub fn name_of(id: u16) -> &'static str {
-    NODES.iter().find(|n| n.id == id).map_or("air", |n| n.name)
+    match (def(id), craftitem(id), tool(id)) {
+        (Some(n), _, _) => n.name,
+        (_, Some(c), _) => c.name,
+        (_, _, Some(t)) => t.name,
+        _ => "air",
+    }
 }
 
 pub fn description_of(id: u16) -> &'static str {
-    def(id).map_or("", |n| n.description)
+    match (def(id), craftitem(id), tool(id)) {
+        (Some(n), _, _) => n.description,
+        (_, Some(c), _) => c.description,
+        (_, _, Some(t)) => t.description,
+        _ => "",
+    }
 }
 
-/// Whether an id is an item a player can hold (any of our nodes).
+/// Whether an id is an item a player can hold: any of our nodes,
+/// craftitems or tools.
 pub fn is_item(id: u16) -> bool {
-    NODES.iter().any(|n| n.id == id)
+    def(id).is_some() || craftitem(id).is_some() || tool(id).is_some()
+}
+
+/// How many of an item fit in one inventory slot: 99 (Luanti's default),
+/// or 1 for tools.
+pub fn stack_max(id: u16) -> u16 {
+    if is_tool(id) { 1 } else { 99 }
+}
+
+/// Whether an item can be placed as a node.
+pub fn is_node(id: u16) -> bool {
+    def(id).is_some()
+}
+
+/// An item's rating in a group (0: not in it), as for "group:wood" in
+/// recipes.
+pub fn group_of(id: u16, group: &str) -> i16 {
+    let groups = match (def(id), craftitem(id), tool(id)) {
+        (Some(n), _, _) => n.groups,
+        (_, Some(c), _) => c.groups,
+        (_, _, Some(t)) => t.groups,
+        _ => &[],
+    };
+    groups.iter().find(|(g, _)| *g == group).map_or(0, |(_, r)| *r)
 }
 
 /// The item digging a node gives, if any, and how many.
@@ -439,6 +794,26 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     // Extra skins to choose from in the inventory (see skins.rs).
     ("esp_skin_wizard.png", include_bytes!("../media/esp_skin_wizard.png")),
     ("esp_skin_elf.png", include_bytes!("../media/esp_skin_elf.png")),
+    ("esp_birch_wood.png", include_bytes!("../media/esp_birch_wood.png")),
+    ("esp_fir_wood.png", include_bytes!("../media/esp_fir_wood.png")),
+    ("esp_cobble.png", include_bytes!("../media/esp_cobble.png")),
+    // Item pictures and the crafting arrow from minetest_game's default mod
+    // (CC BY-SA 3.0, see media/LICENSE-items.txt), under their own names.
+    ("default_stick.png", include_bytes!("../media/default_stick.png")),
+    ("default_coal_lump.png", include_bytes!("../media/default_coal_lump.png")),
+    ("default_iron_lump.png", include_bytes!("../media/default_iron_lump.png")),
+    ("gui_furnace_arrow_bg.png", include_bytes!("../media/gui_furnace_arrow_bg.png")),
+    ("default_tool_woodpick.png", include_bytes!("../media/default_tool_woodpick.png")),
+    ("default_tool_stonepick.png", include_bytes!("../media/default_tool_stonepick.png")),
+    ("default_tool_woodshovel.png", include_bytes!("../media/default_tool_woodshovel.png")),
+    ("default_tool_stoneshovel.png", include_bytes!("../media/default_tool_stoneshovel.png")),
+    ("default_tool_woodaxe.png", include_bytes!("../media/default_tool_woodaxe.png")),
+    ("default_tool_stoneaxe.png", include_bytes!("../media/default_tool_stoneaxe.png")),
+    ("default_tool_woodsword.png", include_bytes!("../media/default_tool_woodsword.png")),
+    ("default_tool_stonesword.png", include_bytes!("../media/default_tool_stonesword.png")),
+    ("default_tool_breaks.1.ogg", include_bytes!("../media/default_tool_breaks.1.ogg")),
+    ("default_tool_breaks.2.ogg", include_bytes!("../media/default_tool_breaks.2.ogg")),
+    ("default_tool_breaks.3.ogg", include_bytes!("../media/default_tool_breaks.3.ogg")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -447,6 +822,8 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
 
 const ITEM_NONE: u8 = 0;
 const ITEM_NODE: u8 = 1;
+const ITEM_CRAFT: u8 = 2;
+const ITEM_TOOL: u8 = 3;
 
 struct Item<'a> {
     item_type: u8,
@@ -461,26 +838,24 @@ struct Item<'a> {
     tool_capabilities: Vec<u8>,
     /// Played when the item is placed (a block's "place" sound).
     place_sound: Sound,
+    stack_max: u16,
+    groups: &'a [(&'a str, i16)],
 }
 
-/// The hand's digging abilities, modelled on minetest_game's hand: dirt
-/// quickly, stone slowly, 1 damage when punching.
-fn hand_tool_capabilities() -> Vec<u8> {
+/// Serialised ToolCapabilities (version 5, protocol >= 38).
+fn tool_capabilities(caps: &ToolCaps) -> Vec<u8> {
     let mut w = Writer::plain();
-    w.u8(5) // version (protocol >= 38)
-        .f32(0.9) // full_punch_interval
-        .i16(0) // max_drop_level
-        .u32(4); // group capabilities:
-    w.string16("crumbly").i16(0).i16(1).u32(2); // uses, maxlevel, times
-    w.i16(2).f32(3.0).i16(3).f32(0.7);
-    w.string16("cracky").i16(0).i16(1).u32(1);
-    w.i16(3).f32(4.0);
-    // minetest_game's hand: leaves quickly, tree trunks slowly.
-    w.string16("snappy").i16(0).i16(1).u32(1);
-    w.i16(3).f32(0.4);
-    w.string16("oddly_breakable_by_hand").i16(0).i16(1).u32(3);
-    w.i16(1).f32(3.5).i16(2).f32(2.0).i16(3).f32(0.7);
-    w.u32(1).string16("fleshy").i16(1); // damage groups
+    w.u8(5)
+        .f32(caps.full_punch_interval)
+        .i16(caps.max_drop_level)
+        .u32(caps.groupcaps.len() as u32);
+    for cap in caps.groupcaps {
+        w.string16(cap.group).i16(cap.uses as i16).i16(cap.maxlevel).u32(cap.times.len() as u32);
+        for &(rating, time) in cap.times {
+            w.i16(rating).f32(time);
+        }
+    }
+    w.u32(1).string16("fleshy").i16(caps.fleshy); // damage groups
     w.u16(0); // punch_attack_uses
     w.into_inner()
 }
@@ -551,7 +926,7 @@ fn sounds_of(id: u16) -> Sounds {
             dug: ("default_grass_footstep", 0.7),
             place: ("default_place_node", 1.0),
         },
-        CONTENT_BIRCH_TREE | CONTENT_FIR_TREE => wood,
+        CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD => wood,
         id if is_torch(id) => wood,
         // stone, sandstone, ores
         _ => stone,
@@ -569,12 +944,15 @@ fn serialize_item(item: &Item) -> Vec<u8> {
     for v in item.wield_scale {
         w.f32(v);
     }
-    w.i16(99) // stack_max
+    w.i16(item.stack_max as i16)
         .u8(0) // usable
         .u8(0) // liquids_pointable
         .bytes16(&item.tool_capabilities)
-        .u16(0) // groups
-        .string16(item.place_prediction);
+        .u16(item.groups.len() as u16);
+    for (group, rating) in item.groups {
+        w.string16(group).i16(*rating);
+    }
+    w.string16(item.place_prediction);
     sound(&mut w, item.place_sound); // sound_place
     no_sound(&mut w); // sound_place_failed
     w.f32(4.0) // range
@@ -603,8 +981,10 @@ pub fn itemdef_bytes() -> Vec<u8> {
         wield_image: "esp_hand.png",
         wield_scale: [1.0, 1.0, 2.5],
         place_prediction: "",
-        tool_capabilities: hand_tool_capabilities(),
+        tool_capabilities: tool_capabilities(&HAND),
         place_sound: ("", 1.0),
+        stack_max: 99,
+        groups: &[],
     }];
     for n in NODES {
         items.push(Item {
@@ -618,6 +998,38 @@ pub fn itemdef_bytes() -> Vec<u8> {
             place_prediction: n.name,
             tool_capabilities: Vec::new(),
             place_sound: sounds_of(n.id).place,
+            stack_max: stack_max(n.id),
+            groups: n.groups,
+        });
+    }
+    for c in CRAFTITEMS {
+        items.push(Item {
+            item_type: ITEM_CRAFT,
+            name: c.name,
+            description: c.description,
+            inventory_image: c.image,
+            wield_image: c.image,
+            wield_scale: [1.0, 1.0, 1.0],
+            place_prediction: "",
+            tool_capabilities: Vec::new(),
+            place_sound: ("", 1.0),
+            stack_max: stack_max(c.id),
+            groups: c.groups,
+        });
+    }
+    for t in TOOLS {
+        items.push(Item {
+            item_type: ITEM_TOOL,
+            name: t.name,
+            description: t.description,
+            inventory_image: t.image,
+            wield_image: t.wield_image,
+            wield_scale: [1.0, 1.0, 1.0],
+            place_prediction: "",
+            tool_capabilities: tool_capabilities(&t.caps),
+            place_sound: ("", 1.0),
+            stack_max: stack_max(t.id),
+            groups: t.groups,
         });
     }
 
