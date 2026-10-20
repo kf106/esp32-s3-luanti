@@ -24,6 +24,16 @@ pub struct Status {
     pub edits: u64,
     /// Recent happenings, newest last.
     pub events: VecDeque<String>,
+    /// Time the server loop spent working rather than waiting for
+    /// packets, in microseconds since start.
+    pub busy_us: u64,
+    /// Map blocks built (generated and compressed), and the time that took
+    /// in microseconds. Blocks are built once and may be sent to several
+    /// players.
+    pub blocks_built: u64,
+    pub block_us: u64,
+    /// Packets that couldn't be sent (Wi-Fi transmit buffers full).
+    pub send_failures: u64,
 }
 
 pub type SharedStatus = Arc<Mutex<Status>>;
@@ -40,6 +50,10 @@ impl Status {
             blocks_sent: 0,
             edits: 0,
             events: VecDeque::new(),
+            busy_us: 0,
+            blocks_built: 0,
+            block_us: 0,
+            send_failures: 0,
         }))
     }
 

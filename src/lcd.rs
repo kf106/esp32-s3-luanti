@@ -1,5 +1,6 @@
 //! The board's 1.47" 172x320 ST7789 LCD, driven through ESP-IDF's esp_lcd
-//! component, and the thread that redraws the status screen.
+//! component, and the thread that redraws the status screens. The BOOT
+//! button pages through them.
 //!
 //! Pins (Waveshare ESP32-S3-LCD-1.47): MOSI 45, SCLK 40, CS 42, DC 41,
 //! RST 39, backlight 48 (active high). The panel's 172 columns sit in the
@@ -13,7 +14,7 @@ use esp_idf_svc::hal::spi::{Dma, SpiAnyPins, SpiDriver, SpiDriverConfig};
 use esp_idf_svc::sys::*;
 use log::{info, warn};
 
-use crate::screen::{self, Frame, System, HEIGHT, WIDTH};
+use crate::screen::{self, Frame, Page, System, View, HEIGHT, WIDTH};
 use crate::status::{self, SharedStatus};
 
 const PIN_CS: i32 = 42;
@@ -33,6 +34,13 @@ const STRIP_BYTES: usize = WIDTH * STRIP_ROWS * 2;
 const ST7789_NOP: i32 = 0x00;
 
 const REFRESH: Duration = Duration::from_secs(1);
+/// The BOOT button: GPIO 0, pulled up, low while pressed.
+const PIN_BUTTON: i32 = 0;
+/// How often the button is checked; also its debounce time.
+const BUTTON_POLL: Duration = Duration::from_millis(30);
+/// The SD card's free space is looked up this often (it can be slow).
+const SD_INTERVAL: Duration = Duration::from_secs(30);
+const SD_MOUNT: &str = "/sd";
 /// Measured peak use is about 3.5 KB; this leaves a wide margin.
 const DISPLAY_STACK: usize = 12 * 1024;
 
@@ -158,29 +166,160 @@ pub fn start(
 
 fn run(lcd: Lcd, status: SharedStatus) {
     let mut frame = Frame::new();
+    let mut page = Page::Overview;
+    let button = Button::new();
+    let mut cpu = CpuLoad::new();
     let mut last = (Instant::now(), 0u64, 0u64);
+    let mut last_server = (0u64, 0u64, 0u64); // busy_us, block_us, blocks
+    let mut block_ms = None;
+    // When the SD card was last checked, and what it said.
+    let mut sd: (Option<Instant>, Option<(u64, u64)>) = (None, None);
+    let mut drawn: Option<Instant> = None;
     loop {
+        let pressed = button.pressed();
+        if pressed {
+            page = page.next();
+        }
+        if !pressed && drawn.is_some_and(|t| t.elapsed() < REFRESH) {
+            std::thread::sleep(BUTTON_POLL);
+            continue;
+        }
+        drawn = Some(Instant::now());
+
         let snapshot = status::lock(&status).clone();
         let now = Instant::now();
         let dt = now.duration_since(last.0).as_secs_f32().max(0.001);
-        let sys = System {
-            internal_free_kb: unsafe { heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) } as u32 / 1024,
-            psram_free_kb: unsafe { heap_caps_get_free_size(MALLOC_CAP_SPIRAM) } as u32 / 1024,
-            rssi: rssi(),
-            packets_in_per_s: (snapshot.packets_in - last.1) as f32 / dt,
-            packets_out_per_s: (snapshot.packets_out - last.2) as f32 / dt,
+        // Server load and block time since the last redraw.
+        let busy = (snapshot.busy_us - last_server.0) as f32 / (dt * 1e6) * 100.0;
+        let blocks = snapshot.blocks_built - last_server.2;
+        if blocks > 0 {
+            block_ms = Some((snapshot.block_us - last_server.1) as f32 / blocks as f32 / 1000.0);
+        } else if block_ms.is_none() && snapshot.blocks_built > 0 {
+            block_ms = Some(snapshot.block_us as f32 / snapshot.blocks_built as f32 / 1000.0);
+        }
+        last_server = (snapshot.busy_us, snapshot.block_us, snapshot.blocks_built);
+        // Only while the Device page is up: the first look can mean reading
+        // the card's whole allocation table, and the server waits for the
+        // card meanwhile.
+        if page == Page::Device && sd.0.map_or(true, |t| t.elapsed() >= SD_INTERVAL) {
+            sd = (Some(Instant::now()), sd_space());
+        }
+        let (rssi, channel) = wifi();
+        let sys = unsafe {
+            System {
+                internal_free_kb: heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) as u32 / 1024,
+                internal_min_kb: heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) as u32 / 1024,
+                internal_largest_kb: heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) as u32 / 1024,
+                psram_free_kb: heap_caps_get_free_size(MALLOC_CAP_SPIRAM) as u32 / 1024,
+                psram_min_kb: heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) as u32 / 1024,
+                rssi,
+                channel,
+                packets_in_per_s: (snapshot.packets_in - last.1) as f32 / dt,
+                packets_out_per_s: (snapshot.packets_out - last.2) as f32 / dt,
+                cpu: cpu.sample(),
+                server_busy: busy.clamp(0.0, 100.0),
+                block_ms,
+                sd: sd.1,
+            }
         };
         last = (now, snapshot.packets_in, snapshot.packets_out);
 
-        screen::render(&mut frame, &snapshot, &sys);
+        screen::render(&mut frame, &View { page, status: &snapshot, system: &sys });
         if let Err(e) = lcd.show(&frame) {
             warn!("LCD update failed: {e}");
         }
-        std::thread::sleep(REFRESH.saturating_sub(now.elapsed()));
     }
 }
 
-fn rssi() -> Option<i8> {
+/// The BOOT button, with a press reported once (on going down).
+struct Button {
+    was_down: std::cell::Cell<bool>,
+}
+
+impl Button {
+    fn new() -> Self {
+        unsafe {
+            gpio_reset_pin(PIN_BUTTON as _);
+            gpio_set_direction(PIN_BUTTON as _, gpio_mode_t_GPIO_MODE_INPUT);
+            gpio_set_pull_mode(PIN_BUTTON as _, gpio_pull_mode_t_GPIO_PULLUP_ONLY);
+        }
+        Self { was_down: std::cell::Cell::new(false) }
+    }
+
+    /// Whether the button has been pressed since the last call. Polled
+    /// every BUTTON_POLL, which also rides out contact bounce.
+    fn pressed(&self) -> bool {
+        let down = unsafe { gpio_get_level(PIN_BUTTON as _) } == 0;
+        let pressed = down && !self.was_down.get();
+        self.was_down.set(down);
+        pressed
+    }
+}
+
+/// CPU load per core, from how long each core's FreeRTOS idle task ran
+/// (needs CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS; the run-time clock is
+/// esp_timer, in microseconds).
+struct CpuLoad {
+    idle: [u32; 2],
+    at: u64,
+}
+
+impl CpuLoad {
+    fn new() -> Self {
+        let mut c = Self { idle: [0; 2], at: 0 };
+        c.sample();
+        c
+    }
+
+    /// Load since the last call, in percent.
+    fn sample(&mut self) -> [Option<f32>; 2] {
+        let now = unsafe { esp_timer_get_time() } as u64;
+        let mut tasks: Vec<TaskStatus_t> = Vec::with_capacity(32);
+        let mut total: u32 = 0;
+        let n = unsafe {
+            let capacity = uxTaskGetNumberOfTasks() + 4;
+            tasks.reserve(capacity as usize);
+            let n = uxTaskGetSystemState(tasks.as_mut_ptr(), capacity, &mut total);
+            tasks.set_len(n as usize);
+            n
+        };
+        let mut idle = [None; 2];
+        for t in &tasks[..n as usize] {
+            let name = unsafe { std::ffi::CStr::from_ptr(t.pcTaskName) }.to_bytes();
+            match name {
+                b"IDLE0" => idle[0] = Some(t.ulRunTimeCounter as u32),
+                b"IDLE1" => idle[1] = Some(t.ulRunTimeCounter as u32),
+                _ => {}
+            }
+        }
+        let elapsed = now.saturating_sub(self.at).max(1) as f32;
+        let mut load = [None; 2];
+        for core in 0..2 {
+            if let Some(i) = idle[core] {
+                let ran = i.wrapping_sub(self.idle[core]) as f32;
+                if self.at != 0 {
+                    load[core] = Some((100.0 - ran / elapsed * 100.0).clamp(0.0, 100.0));
+                }
+                self.idle[core] = i;
+            }
+        }
+        self.at = now;
+        load
+    }
+}
+
+/// The SD card's size and free space, in bytes.
+fn sd_space() -> Option<(u64, u64)> {
+    let path = std::ffi::CString::new(SD_MOUNT).ok()?;
+    let (mut total, mut free) = (0u64, 0u64);
+    (unsafe { esp_vfs_fat_info(path.as_ptr(), &mut total, &mut free) } == 0).then_some((total, free))
+}
+
+fn wifi() -> (Option<i8>, Option<u8>) {
     let mut ap: wifi_ap_record_t = Default::default();
-    (unsafe { esp_wifi_sta_get_ap_info(&mut ap) } == 0).then_some(ap.rssi)
+    if unsafe { esp_wifi_sta_get_ap_info(&mut ap) } == 0 {
+        (Some(ap.rssi), Some(ap.primary))
+    } else {
+        (None, None)
+    }
 }

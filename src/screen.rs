@@ -28,11 +28,51 @@ const RULE: u16 = rgb(52, 58, 64);
 #[derive(Clone, Copy, Default)]
 pub struct System {
     pub internal_free_kb: u32,
+    /// The least internal RAM there has been free since start.
+    pub internal_min_kb: u32,
+    /// The biggest single piece of internal RAM free (new tasks need one).
+    pub internal_largest_kb: u32,
     pub psram_free_kb: u32,
-    /// Wi-Fi signal strength, if connected.
+    pub psram_min_kb: u32,
+    /// Wi-Fi signal strength and channel, if connected.
     pub rssi: Option<i8>,
+    pub channel: Option<u8>,
     pub packets_in_per_s: f32,
     pub packets_out_per_s: f32,
+    /// Load on each CPU core over the last second, 0..=100, if known.
+    pub cpu: [Option<f32>; 2],
+    /// Share of the last second the server loop spent working, 0..=100.
+    pub server_busy: f32,
+    /// Average time to build a map block over the last second (or the
+    /// whole run, if none were built just now), in milliseconds.
+    pub block_ms: Option<f32>,
+    /// SD card size and free space, in bytes.
+    pub sd: Option<(u64, u64)>,
+}
+
+/// The status screens, paged through with the BOOT button.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Page {
+    Overview,
+    Device,
+}
+
+impl Page {
+    pub const COUNT: usize = 2;
+
+    pub fn next(self) -> Self {
+        match self {
+            Page::Overview => Page::Device,
+            Page::Device => Page::Overview,
+        }
+    }
+
+    fn number(self) -> usize {
+        match self {
+            Page::Overview => 1,
+            Page::Device => 2,
+        }
+    }
 }
 
 /// How to draw text: font, colours, and the x at which to clip. Grouped
@@ -149,8 +189,108 @@ fn kb(v: u32) -> String {
     }
 }
 
+/// What to draw, gathered in one struct (see Pen for why).
+pub struct View<'a> {
+    pub page: Page,
+    pub status: &'a Status,
+    pub system: &'a System,
+}
+
 /// Draw the whole screen.
-pub fn render(f: &mut Frame, st: &Status, sys: &System) {
+pub fn render(f: &mut Frame, view: &View) {
+    match view.page {
+        Page::Overview => render_overview(f, view.status, view.system),
+        Page::Device => render_device(f, view.status, view.system),
+    }
+    // Which page this is, as dots along the bottom edge.
+    let (dot, gap) = (4, 6);
+    let x0 = WIDTH - 6 - Page::COUNT * (dot + gap) + gap;
+    for i in 0..Page::COUNT {
+        let colour = if i + 1 == view.page.number() { TEXT } else { RULE };
+        f.fill(x0 + i * (dot + gap), HEIGHT - dot - 3, dot, dot, colour);
+    }
+}
+
+/// A bar `w` pixels wide, filled to `percent`, coloured by how full it is.
+fn bar(f: &mut Frame, at: (usize, usize), w: usize, percent: f32) {
+    let h = SMALL.h - 7;
+    let (x, y) = (at.0, at.1 + 4);
+    f.fill(x, y, w, h, RULE);
+    let filled = ((percent.clamp(0.0, 100.0) / 100.0) * w as f32).round() as usize;
+    let colour = if percent < 60.0 { GOOD } else if percent < 85.0 { EVENT } else { rgb(239, 83, 80) };
+    f.fill(x, y, filled, h, colour);
+}
+
+fn gb(bytes: u64) -> String {
+    let g = bytes as f64 / 1e9;
+    if g >= 10.0 { format!("{g:.0}G") } else { format!("{g:.1}G") }
+}
+
+/// The second page: how hard the device is working, and its resources.
+fn render_device(f: &mut Frame, st: &Status, sys: &System) {
+    let margin = 6;
+    let right = WIDTH - margin;
+    f.fill(0, 0, WIDTH, HEIGHT, BACKGROUND);
+
+    let header_h = BIG.h + 4;
+    f.fill(0, 0, WIDTH, header_h, HEADER);
+    f.text(&Pen::new(&BIG, TEXT, HEADER, WIDTH), margin, 2, "Device");
+    let up = uptime(st.started.elapsed());
+    f.text_right(&Pen::new(&SMALL, TEXT, HEADER, WIDTH), right, 2 + (BIG.h - SMALL.h) / 2 + 1, &up);
+
+    let line = SMALL.h + 2;
+    let mut y = header_h + 4;
+    let label = Pen::new(&SMALL, LABEL, BACKGROUND, WIDTH);
+    let value = Pen::new(&SMALL, TEXT, BACKGROUND, WIDTH);
+    let col2 = WIDTH / 2 + 4;
+
+    // CPU cores, with bars
+    for (core, load) in sys.cpu.iter().enumerate() {
+        let x0 = if core == 0 { margin } else { col2 };
+        let x = f.text(&label, x0, y, &format!("CPU{core} "));
+        match load {
+            Some(p) => {
+                bar(f, (x, y), 60, *p);
+                f.text(&value, x + 64, y, &format!("{p:>3.0}%"));
+            }
+            None => {
+                f.text(&value, x, y, "n/a");
+            }
+        }
+    }
+    y += line;
+
+    // The server itself
+    f.pair(&(margin, y), "Server ", &format!("{:.0}% busy", sys.server_busy));
+    let block = sys.block_ms.map_or("-".to_string(), |ms| format!("{ms:.0} ms"));
+    f.pair(&(col2, y), "Block ", &block);
+    y += line;
+
+    // Memory
+    f.pair(&(margin, y), "RAM ", &format!("{} free", kb(sys.internal_free_kb)));
+    f.pair(&(col2, y), "low ", &format!("{} big {}", kb(sys.internal_min_kb), kb(sys.internal_largest_kb)));
+    y += line;
+    f.pair(&(margin, y), "PSRAM ", &format!("{} free", kb(sys.psram_free_kb)));
+    f.pair(&(col2, y), "low ", &kb(sys.psram_min_kb));
+    y += line;
+
+    // Network
+    let wifi = match (sys.rssi, sys.channel) {
+        (Some(r), Some(c)) => format!("{r} dBm ch {c}"),
+        (Some(r), None) => format!("{r} dBm"),
+        _ => "down".to_string(),
+    };
+    f.pair(&(margin, y), "Wi-Fi ", &wifi);
+    f.pair(&(col2, y), "Send fails ", &st.send_failures.to_string());
+    y += line;
+
+    // Storage
+    let sd = sys.sd.map_or("-".to_string(), |(total, free)| format!("{} free of {}", gb(free), gb(total)));
+    f.pair(&(margin, y), "SD card ", &sd);
+}
+
+/// The first page: who is playing and what is happening.
+fn render_overview(f: &mut Frame, st: &Status, sys: &System) {
     let margin = 6;
     let right = WIDTH - margin;
     f.fill(0, 0, WIDTH, HEIGHT, BACKGROUND);

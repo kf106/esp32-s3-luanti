@@ -62,7 +62,9 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - extra skins can be added on the SD card;
   - 64×64 Minecraft skins are accepted.
 - **Saving:** player positions, health, skins and inventories are saved and restored.
-- **Status screen:** the LCD shows players online, packet and block counts, memory, and recent events.
+- **Status screens:** the LCD has two pages, switched with the board's BOOT button:
+  - **Overview:** players online, packet and block counts, memory, and recent events.
+  - **Device:** load on each CPU core, how busy the server is, time per map block, memory (free, lowest, largest piece), Wi-Fi signal and channel, failed sends, and SD card space.
 
 ## What doesn't (yet)
 
@@ -88,7 +90,7 @@ You need the Rust toolchain for Xtensa, plus `git` and Python 3 with the `venv` 
    ```
    cargo install ldproxy espflash
    ```
-3. Connect the board by USB, then build and flash, giving your Wi-Fi details as environment variables. They are compiled into the firmware and are not stored in the repository.
+3. Connect the board by USB, then build and flash. Give your Wi-Fi details as environment variables the first time. The firmware writes them to `wifi.txt` on the SD card when it starts (see [Wi-Fi networks](#wi-fi-networks)), and they are not stored in the repository.
    ```
    WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
    ```
@@ -104,6 +106,7 @@ The ESP-IDF settings that matter, in `sdkconfig.defaults`:
 - **Flash and PSRAM:** 16 MB flash and 8 MB octal PSRAM at 80 MHz, with PSRAM available to `malloc`.
 - **Main task stack:** 16 KB.
 - **Wi-Fi and network buffers in PSRAM:** `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP` lets them live there where possible.
+- **CPU statistics:** `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` lets the status screen show the load on each core.
 - **UDP receive queue:** `CONFIG_LWIP_UDP_RECVMBOX_SIZE=32` lengthens it, so bursts of client packets aren't dropped while the server is busy.
 
 ## The SD card
@@ -116,9 +119,31 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 /sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin)
 /sd/media/      optional extra media (see below)
 /sd/motd.txt    optional welcome message (see below)
+/sd/wifi.txt    the Wi-Fi networks to join (see below)
 ```
 
 All of these are plain text or simple binary files, so you can inspect or edit them on a PC. If a future version changes the terrain generator, the old change log is kept as `nodes-v<n>.log` and the world starts afresh.
+
+### Wi-Fi networks
+
+The server joins Wi-Fi using `/sd/wifi.txt`, a plain text file you can edit on a PC:
+
+```
+network My Home Wi-Fi
+password correct horse battery staple
+
+network Office
+password hunter2
+```
+
+Each `network` line starts an entry. Its `password` line is optional; leave it out for an open network. Everything after the first space is the value, spaces included. Lines starting with `#` are ignored.
+
+How the server chooses a network:
+- **Which one:** at start-up it scans, then joins the networks it can see, in the file's order. If none are in range it also tries the rest, in case one is hidden, and keeps retrying every 10 seconds. The LCD shows what it is doing.
+- **Building with Wi-Fi details:** if you build with `WIFI_SSID` and `WIFI_PASS`, that network is written to the top of `wifi.txt` the first time the new firmware starts, or its password is updated if it is already listed. After that the file is yours: later edits are kept, even through reflashing the same firmware. It is only rewritten if you build with a different network or password.
+- **Building without them:** plain `cargo run --release` uses whatever `wifi.txt` holds.
+
+The passwords are stored on the card in plain text, so treat the card accordingly.
 
 ### Welcome message
 
@@ -175,6 +200,7 @@ media/             built-in textures and models
 
 - **Read the engine source.** The protocol has no separate specification. The Luanti source (`src/network/`, `src/server/`, `src/client/`) is the reference, and the comments in this code point to the functions they follow.
 - **The Xtensa argument limit.** Functions here are kept to at most six argument words, counting a hidden pointer for large return values. A seventh argument is passed on the stack, and in one build it arrived corrupted, which crashed the server on the first packet. Group arguments into a struct instead; `server::Setup` is the example.
+- **Two cores.** The server loop (network and game logic) runs on core 0, next to the Wi-Fi driver. Map blocks, the expensive part, are generated and compressed by a thread on core 1, working from a snapshot of the world's changes. Built blocks are cached, so players near each other share them. A block the world changed around while it was being built is built again.
 - **Memory.** The global allocator in `main.rs` puts the server's data in PSRAM. Left to the default, small allocations fill the internal RAM, and then Wi-Fi sends fail and threads can't start.
 
 ## Licence

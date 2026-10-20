@@ -26,10 +26,13 @@
 //! fresh.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
+
+use crate::fasthash::{FastMap, FastSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use log::{info, warn};
 
@@ -107,22 +110,45 @@ impl BlockColumn {
     }
 }
 
-pub struct World {
-    changes: HashMap<NodePos, u16>,
+/// How many recent changes are remembered for `changed_near_since`.
+const RECENT_CHANGES: usize = 512;
+
+/// What players have done to the world: everything that isn't generated.
+/// Shared (copy on write) with the thread that builds map blocks, which
+/// works from a snapshot while the server carries on changing the world.
+#[derive(Clone, Default)]
+pub struct State {
+    changes: FastMap<NodePos, u16>,
     /// param2 of changed nodes, where non-zero.
-    param2s: HashMap<NodePos, u8>,
+    param2s: FastMap<NodePos, u8>,
     /// Light fields of torches, FIELD_SIDE^3 levels around each.
-    torch_light: HashMap<NodePos, Vec<u8>>,
+    torch_light: FastMap<NodePos, Arc<Vec<u8>>>,
     /// Highest y of any solid node players have placed in each column, so
     /// sunlight is blocked by towers and roofs.
-    column_top: HashMap<(i32, i32), i32>,
+    column_top: FastMap<(i32, i32), i32>,
     /// Map blocks containing any changes, so unchanged blocks skip the
     /// per-node lookups.
-    changed_blocks: HashSet<BlockPos>,
-    log_path: PathBuf,
-    /// Terrain caches (filled on demand; the server is single-threaded).
-    block_columns: RefCell<HashMap<(i16, i16), std::sync::Arc<BlockColumn>>>,
-    cave_samples: RefCell<HashMap<(i32, i32, i32), (f32, f32)>>,
+    changed_blocks: FastSet<BlockPos>,
+    /// Counts changes; a block built from a snapshot is tagged with it.
+    version: u64,
+    /// The latest changes and their versions, oldest first.
+    recent: VecDeque<(u64, NodePos)>,
+}
+
+impl State {
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+}
+
+pub struct World {
+    state: Arc<State>,
+    /// The change log on the SD card; None for a copy that only builds
+    /// map blocks.
+    log_path: Option<PathBuf>,
+    /// Terrain caches (filled on demand; each World is used by one thread).
+    block_columns: RefCell<FastMap<(i16, i16), Arc<BlockColumn>>>,
+    cave_samples: RefCell<FastMap<(i32, i32, i32), (f32, f32)>>,
 }
 
 impl World {
@@ -133,17 +159,13 @@ impl World {
         let log_path = dir.join("nodes.log");
         Self::check_generator(&dir, &log_path)?;
         let mut world = Self {
-            changes: HashMap::new(),
-            param2s: HashMap::new(),
-            torch_light: HashMap::new(),
-            column_top: HashMap::new(),
-            changed_blocks: HashSet::new(),
-            log_path,
-            block_columns: RefCell::new(HashMap::new()),
-            cave_samples: RefCell::new(HashMap::new()),
+            state: Arc::new(State::default()),
+            log_path: Some(log_path.clone()),
+            block_columns: RefCell::new(FastMap::default()),
+            cave_samples: RefCell::new(FastMap::default()),
         };
 
-        let data = match storage::read(&world.log_path) {
+        let data = match storage::read(&log_path) {
             Ok(d) => d,
             Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
             Err(e) => return Err(e),
@@ -151,25 +173,72 @@ impl World {
         let (records, unknown) = world.load_log(&data);
         info!(
             "World: {} changed nodes from {} log records{}",
-            world.changes.len(),
+            world.state.changes.len(),
             records,
             if unknown > 0 { format!(" ({unknown} with unknown node names skipped)") } else { String::new() }
         );
         // Light up the torches now that the world is complete.
-        let torches: Vec<NodePos> = world.changes.iter().filter(|(_, &id)| content::is_torch(id)).map(|(&p, _)| p).collect();
+        let torches: Vec<NodePos> = world.state.changes.iter().filter(|(_, &id)| content::is_torch(id)).map(|(&p, _)| p).collect();
         for p in torches {
-            let field = world.torch_field(p);
-            world.torch_light.insert(p, field);
+            let field = Arc::new(world.torch_field(p));
+            Arc::make_mut(&mut world.state).torch_light.insert(p, field);
         }
-        if !world.torch_light.is_empty() {
-            info!("World: {} torches lit", world.torch_light.len());
+        if !world.state.torch_light.is_empty() {
+            info!("World: {} torches lit", world.state.torch_light.len());
         }
-        if records > 2 * world.changes.len() + 256 {
-            if let Err(e) = world.compact() {
-                warn!("Compacting {}: {e}", world.log_path.display());
+        if records > 2 * world.state.changes.len() + 256 {
+            if let Err(e) = world.compact(&log_path) {
+                warn!("Compacting {}: {e}", log_path.display());
             }
         }
         Ok(world)
+    }
+
+    /// A world for building map blocks on another thread: no change log,
+    /// its own terrain caches, and the changes from `snapshot` (replaced
+    /// with `use_snapshot` before each block).
+    pub fn builder() -> Self {
+        Self {
+            state: Arc::new(State::default()),
+            log_path: None,
+            block_columns: RefCell::new(FastMap::default()),
+            cave_samples: RefCell::new(FastMap::default()),
+        }
+    }
+
+    /// The current changes, cheaply shared.
+    pub fn snapshot(&self) -> Arc<State> {
+        self.state.clone()
+    }
+
+    pub fn use_snapshot(&mut self, state: Arc<State>) {
+        self.state = state;
+    }
+
+    pub fn version(&self) -> u64 {
+        self.state.version
+    }
+
+    /// Whether a change since `version` could make a copy of block `pos`
+    /// built then out of date: a change in or near it (torch light reaches
+    /// TORCH_REACH nodes) or above it (shade from a new roof). True if
+    /// `version` is too old to tell.
+    pub fn changed_near_since(&self, pos: BlockPos, version: u64) -> bool {
+        if version == self.state.version {
+            return false;
+        }
+        let oldest = self.state.recent.front().map_or(u64::MAX, |r| r.0);
+        if version + 1 < oldest {
+            return true; // the changes since then are no longer listed
+        }
+        let (bx, by, bz) = (pos.0 as i32 * 16, pos.1 as i32 * 16, pos.2 as i32 * 16);
+        let near = |v: i32, b: i32| v >= b - TORCH_REACH && v < b + BLOCK_SIZE + TORCH_REACH;
+        self.state
+            .recent
+            .iter()
+            .rev()
+            .take_while(|(v, _)| *v > version)
+            .any(|(_, p)| near(p.0, bx) && near(p.2, bz) && p.1 >= by - TORCH_REACH)
     }
 
     /// If the change log was made with another terrain generator, rename it
@@ -197,6 +266,7 @@ impl World {
     }
 
     fn load_log(&mut self, mut data: &[u8]) -> (usize, usize) {
+        // Loading isn't "changing": no versions or recent list.
         let (mut records, mut unknown) = (0, 0);
         while data.len() >= 13 {
             let i = |o: usize| i32::from_be_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]);
@@ -225,13 +295,13 @@ impl World {
     }
 
     /// Rewrite the log with one record per changed node.
-    fn compact(&self) -> io::Result<()> {
+    fn compact(&self, log_path: &std::path::Path) -> io::Result<()> {
         let mut out = Vec::new();
-        for (&pos, &id) in &self.changes {
+        for (&pos, &id) in &self.state.changes {
             out.extend_from_slice(&record(pos, id, self.param2(pos)));
         }
-        storage::write(&self.log_path, &out)?;
-        info!("World log compacted to {} records", self.changes.len());
+        storage::write(log_path, &out)?;
+        info!("World log compacted to {} records", self.state.changes.len());
         Ok(())
     }
 
@@ -239,7 +309,7 @@ impl World {
     // Terrain with caches
     // -----------------------------------------------------------------------
 
-    fn block_column(&self, bx: i16, bz: i16) -> std::sync::Arc<BlockColumn> {
+    fn block_column(&self, bx: i16, bz: i16) -> Arc<BlockColumn> {
         if let Some(c) = self.block_columns.borrow().get(&(bx, bz)) {
             return c.clone();
         }
@@ -263,7 +333,7 @@ impl World {
             }
         }
         let max_tree_top = tree_top.iter().copied().max().unwrap_or(i32::MIN);
-        let bc = std::sync::Arc::new(BlockColumn { columns, min_height, max_height, trees, tree_top, max_tree_top });
+        let bc = Arc::new(BlockColumn { columns, min_height, max_height, trees, tree_top, max_tree_top });
         let mut cache = self.block_columns.borrow_mut();
         if cache.len() >= COLUMN_CACHE_MAX {
             cache.clear();
@@ -303,27 +373,29 @@ impl World {
     // -----------------------------------------------------------------------
 
     fn apply(&mut self, pos: NodePos, id: u16, param2: u8) {
-        // Kept even if the change is undone; it only costs some lookups.
-        self.changed_blocks.insert(block_of_node(pos));
         let col = self.column(pos.0, pos.2);
-        if id == self.generated(pos.0, pos.1, pos.2, &col) && param2 == 0 {
-            self.changes.remove(&pos);
+        let generated = self.generated(pos.0, pos.1, pos.2, &col);
+        let st = Arc::make_mut(&mut self.state);
+        // Kept even if the change is undone; it only costs some lookups.
+        st.changed_blocks.insert(block_of_node(pos));
+        if id == generated && param2 == 0 {
+            st.changes.remove(&pos);
         } else {
-            self.changes.insert(pos, id);
+            st.changes.insert(pos, id);
         }
         if param2 == 0 {
-            self.param2s.remove(&pos);
+            st.param2s.remove(&pos);
         } else {
-            self.param2s.insert(pos, param2);
+            st.param2s.insert(pos, param2);
         }
         if !content::passes_sunlight(id) {
-            let top = self.column_top.entry((pos.0, pos.2)).or_insert(pos.1);
+            let top = st.column_top.entry((pos.0, pos.2)).or_insert(pos.1);
             *top = (*top).max(pos.1);
         }
     }
 
     pub fn param2(&self, pos: NodePos) -> u8 {
-        self.param2s.get(&pos).copied().unwrap_or(0)
+        self.state.param2s.get(&pos).copied().unwrap_or(0)
     }
 
     pub fn node(&self, pos: NodePos) -> u16 {
@@ -332,7 +404,7 @@ impl World {
     }
 
     fn node_with(&self, x: i32, y: i32, z: i32, col: &Column) -> u16 {
-        if let Some(&id) = self.changes.get(&(x, y, z)) {
+        if let Some(&id) = self.state.changes.get(&(x, y, z)) {
             return id;
         }
         self.generated(x, y, z, col)
@@ -342,33 +414,42 @@ impl World {
     pub fn set_node(&mut self, pos: NodePos, id: u16, param2: u8) {
         let was_torch = content::is_torch(self.node(pos));
         self.apply(pos, id, param2);
-        let result = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_path)
-            .and_then(|mut f: File| f.write_all(&record(pos, id, param2)));
-        if let Err(e) = result {
-            warn!("Saving node change to {}: {e}", self.log_path.display());
+        if let Some(log_path) = &self.log_path {
+            let result = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+                .and_then(|mut f: File| f.write_all(&record(pos, id, param2)));
+            if let Err(e) = result {
+                warn!("Saving node change to {}: {e}", log_path.display());
+            }
         }
         self.relight(pos, was_torch, content::is_torch(id));
+        let st = Arc::make_mut(&mut self.state);
+        st.version += 1;
+        let version = st.version;
+        st.recent.push_back((version, pos));
+        if st.recent.len() > RECENT_CHANGES {
+            st.recent.pop_front();
+        }
     }
 
     /// Keep torch light up to date after a node changed: the torch there
     /// (if any) and any torch whose light could reach it.
     fn relight(&mut self, pos: NodePos, was_torch: bool, is_torch: bool) {
         if was_torch && !is_torch {
-            self.torch_light.remove(&pos);
+            Arc::make_mut(&mut self.state).torch_light.remove(&pos);
         }
         let near = |t: &NodePos| {
             (t.0 - pos.0).abs() <= TORCH_REACH && (t.1 - pos.1).abs() <= TORCH_REACH && (t.2 - pos.2).abs() <= TORCH_REACH
         };
-        let mut affected: Vec<NodePos> = self.torch_light.keys().filter(|t| near(t)).copied().collect();
+        let mut affected: Vec<NodePos> = self.state.torch_light.keys().filter(|t| near(t)).copied().collect();
         if is_torch && !affected.contains(&pos) {
             affected.push(pos);
         }
         for t in affected {
-            let field = self.torch_field(t);
-            self.torch_light.insert(t, field);
+            let field = Arc::new(self.torch_field(t));
+            Arc::make_mut(&mut self.state).torch_light.insert(t, field);
         }
     }
 
@@ -414,7 +495,7 @@ impl World {
 
     fn highest_solid_with(&self, x: i32, z: i32, col: &Column) -> i32 {
         let generated = self.block_column(block_of(x), block_of(z)).generated_top(x, z);
-        let start = generated.max(self.column_top.get(&(x, z)).copied().unwrap_or(i32::MIN));
+        let start = generated.max(self.state.column_top.get(&(x, z)).copied().unwrap_or(i32::MIN));
         let mut y = start;
         // Scan down past dug-out nodes and cave mouths. A very deep shaft is
         // rare; stop after a while rather than scan forever.
@@ -436,7 +517,7 @@ impl World {
         let mut lit = VecDeque::new();
         let mut any_shaded = false;
         let bc = self.block_column(pos.0, pos.2);
-        let changed = self.changed_blocks.contains(&pos);
+        let changed = self.state.changed_blocks.contains(&pos);
         // Cave samples for the 5x5x5 grid points around this block, filled
         // on first use. Same values as the shared cache, just quicker to
         // reach than through a hash map.
@@ -461,12 +542,14 @@ impl World {
                 // solid node needs no scan.
                 let top = bc
                     .generated_top(bx + x, bz + z)
-                    .max(self.column_top.get(&(bx + x, bz + z)).copied().unwrap_or(i32::MIN));
+                    .max(self.state.column_top.get(&(bx + x, bz + z)).copied().unwrap_or(i32::MIN));
                 let floor = if top < by { top } else { self.highest_solid_with(bx + x, bz + z, &col) };
                 for y in 0..BLOCK_SIZE {
                     let (wx, wy, wz) = (bx + x, by + y, bz + z);
-                    let id = match self.changes.get(&(wx, wy, wz)) {
-                        Some(&id) if changed => id,
+                    // Look for a player's change only in blocks that have any.
+                    let change = if changed { self.state.changes.get(&(wx, wy, wz)) } else { None };
+                    let id = match change {
+                        Some(&id) => id,
                         _ if wy > col.height => bc.above_ground(wx, wy, wz),
                         _ => {
                             let cell = ((z / 4) * 16 + (y / 4) * 4 + x / 4) as usize;
@@ -529,7 +612,7 @@ impl World {
             let reach = |t: i32, b: i32| t + TORCH_REACH >= b && t - TORCH_REACH < b + BLOCK_SIZE;
             reach(t.0, bx) && reach(t.1, by) && reach(t.2, bz)
         };
-        for (t, field) in self.torch_light.iter().filter(|(t, _)| in_block(t)) {
+        for (t, field) in self.state.torch_light.iter().filter(|(t, _)| in_block(t)) {
             let side = FIELD_SIDE;
             for z in 0..BLOCK_SIZE {
                 let dz = bz + z - t.2;

@@ -64,6 +64,14 @@ const MAX_VIEW_RADIUS: i16 = 5;
 /// Keep at most this many packets queued on the block channel, so blocks
 /// are generated as the client takes them rather than all at once.
 const BLOCK_QUEUE_LIMIT: usize = 8;
+/// Blocks taking longer than this to build are reported in the log.
+const SLOW_BLOCK: Duration = Duration::from_millis(500);
+/// How many map blocks the builder thread may have in hand at once. Few,
+/// so that newly wanted (nearer) blocks don't wait behind a long queue.
+const BUILDS_IN_FLIGHT: usize = 4;
+/// Built blocks kept for other players (or a return visit); emptied when
+/// full. A block is about 1 to 3 KB.
+const BUILT_CACHE_MAX: usize = 600;
 /// Block data goes on channel 2, like the Luanti server.
 const BLOCK_CHANNEL: usize = 2;
 const PRIVILEGES: &[&str] = &["interact", "shout", "fly", "fast", "noclip"];
@@ -139,9 +147,11 @@ struct Peer {
     content_sent: bool,
     ready: bool,
     /// Blocks the client has (sent, and not reported deleted).
-    sent_blocks: HashSet<BlockPos>,
+    sent_blocks: crate::fasthash::FastSet<BlockPos>,
     /// Blocks still to send, nearest first.
     pending_blocks: VecDeque<BlockPos>,
+    /// Blocks being built for this player, in the order wanted.
+    awaiting: VecDeque<BlockPos>,
     /// Block the player was in when `pending_blocks` was planned.
     view_center: Option<BlockPos>,
     view_radius: i16,
@@ -179,8 +189,9 @@ impl Peer {
             authenticated: false,
             content_sent: false,
             ready: false,
-            sent_blocks: HashSet::new(),
+            sent_blocks: Default::default(),
             pending_blocks: VecDeque::new(),
+            awaiting: VecDeque::new(),
             view_center: None,
             view_radius: MAX_VIEW_RADIUS,
             pos_bs: [0.0; 3],
@@ -255,6 +266,14 @@ pub struct Server {
     srp_results: Receiver<SrpResult>,
     /// Logins waiting for the SRP thread; None if it couldn't be started.
     srp_jobs: Option<Sender<SrpJob>>,
+    /// The thread on the second core that builds map blocks (None if it
+    /// couldn't be started: then blocks are built in the server loop).
+    builder: Option<BlockBuilder>,
+    /// Blocks the builder is working on.
+    building: HashSet<BlockPos>,
+    /// Built blocks (TOCLIENT_BLOCKDATA commands), with the world version
+    /// they were built from.
+    built: crate::fasthash::FastMap<BlockPos, (u64, Arc<Vec<u8>>)>,
     /// Dropped items, and when they were last moved on.
     items: Items,
     items_stepped: Instant,
@@ -297,10 +316,7 @@ struct SrpJob {
 /// out one at a time.
 fn start_srp_thread(results: Sender<SrpResult>) -> Option<Sender<SrpJob>> {
     let (jobs, queue) = mpsc::channel::<SrpJob>();
-    let spawned = std::thread::Builder::new()
-        .name("srp".into())
-        .stack_size(16 * 1024)
-        .spawn(move || {
+    let spawned = spawn_on_second_core(b"srp\0", 16 * 1024, 4, move || {
             for job in queue {
                 let started = Instant::now();
                 let challenge = srp::start(&srp::Login {
@@ -325,6 +341,111 @@ fn start_srp_thread(results: Sender<SrpResult>) -> Option<Sender<SrpJob>> {
             None
         }
     }
+}
+
+/// A map block for the builder to make, from a snapshot of the world's
+/// changes.
+struct BuildJob {
+    pos: BlockPos,
+    state: Arc<world::State>,
+}
+
+/// A finished block: the TOCLIENT_BLOCKDATA command, and the world version
+/// it was built from.
+struct Built {
+    pos: BlockPos,
+    version: u64,
+    payload: Vec<u8>,
+}
+
+struct BlockBuilder {
+    jobs: Sender<BuildJob>,
+    done: Receiver<Built>,
+}
+
+/// Start the thread that builds (generates and compresses) map blocks, on
+/// the second CPU core, which otherwise has little to do: the server loop
+/// on the first core then only sends them.
+fn start_block_builder(status: SharedStatus, port: u16) -> Option<BlockBuilder> {
+    let (jobs, queue) = mpsc::channel::<BuildJob>();
+    let (finished, done) = mpsc::channel::<Built>();
+    // Each finished block is followed by an empty datagram to the server's
+    // own port, which wakes the server loop from waiting for packets so it
+    // sends the block straight away.
+    let nudge = UdpSocket::bind(("127.0.0.1", 0))
+        .map_err(|e| warn!("Block builder: no wake-up socket ({e}); blocks may wait up to {POLL_INTERVAL:?}"))
+        .ok();
+    // Priority 1, just above core 1's idle task; logins and the display
+    // come first. After each block it pauses for a scheduler tick so the
+    // idle task (which the task watchdog checks on) gets a turn.
+    let spawned = spawn_on_second_core(b"blocks\0", 24 * 1024, 1, move || {
+        // Its own copy of the terrain caches; the changes come with each job.
+        let mut world = World::builder();
+        for job in queue {
+            let started = Instant::now();
+            let version = job.state.version();
+            world.use_snapshot(job.state);
+            let payload = build_blockdata(&world.block_payload(job.pos));
+            let took = started.elapsed();
+            if took >= SLOW_BLOCK {
+                warn!("Block {:?} took {} ms to build", job.pos, took.as_millis());
+            }
+            {
+                let mut st = status::lock(&status);
+                st.blocks_built += 1;
+                st.block_us += took.as_micros() as u64;
+            }
+            if finished.send(Built { pos: job.pos, version, payload }).is_err() {
+                break;
+            }
+            if let Some(n) = &nudge {
+                let _ = n.send_to(&[], ("127.0.0.1", port));
+            }
+            let_other_tasks_run();
+        }
+    });
+    match spawned {
+        Ok(()) => Some(BlockBuilder { jobs, done }),
+        Err(e) => {
+            warn!("Starting the block builder: {e}; building blocks in the server loop instead");
+            None
+        }
+    }
+}
+
+/// Start a thread pinned to the second core (core 1). The server loop runs
+/// on core 0, with the Wi-Fi driver; core 1 is otherwise nearly idle.
+/// `priority` is FreeRTOS's (the server loop has 1; higher runs first).
+#[cfg(target_os = "espidf")]
+fn spawn_on_second_core<F>(name: &'static [u8], stack: usize, priority: u8, f: F) -> std::io::Result<()>
+where
+    F: FnOnce() + Send + 'static,
+{
+    use esp_idf_svc::sys::{esp_pthread_get_default_config, esp_pthread_set_cfg};
+    // The next thread this one starts takes these settings.
+    unsafe {
+        let mut cfg = esp_pthread_get_default_config();
+        cfg.thread_name = name.as_ptr() as *const _;
+        cfg.pin_to_core = 1;
+        cfg.prio = priority as _;
+        cfg.stack_size = stack as _;
+        esp_pthread_set_cfg(&cfg);
+    }
+    let spawned = std::thread::Builder::new().stack_size(stack).spawn(f).map(|_| ());
+    unsafe {
+        let cfg = esp_pthread_get_default_config();
+        esp_pthread_set_cfg(&cfg);
+    }
+    spawned
+}
+
+#[cfg(not(target_os = "espidf"))]
+fn spawn_on_second_core<F>(name: &'static [u8], stack: usize, _priority: u8, f: F) -> std::io::Result<()>
+where
+    F: FnOnce() + Send + 'static,
+{
+    let name = String::from_utf8_lossy(name.strip_suffix(b"\0").unwrap_or(name)).into_owned();
+    std::thread::Builder::new().name(name).stack_size(stack).spawn(f).map(|_| ())
 }
 
 struct SrpResult {
@@ -369,6 +490,8 @@ impl Server {
         let skins = Skins::from_media(&media);
         let (srp_sender, srp_results) = mpsc::channel();
         let srp_jobs = start_srp_thread(srp_sender);
+        let port = socket.local_addr().map(|a| a.port()).unwrap_or(0);
+        let builder = start_block_builder(status.clone(), port);
         Self {
             socket,
             auth,
@@ -388,6 +511,9 @@ impl Server {
             stale_told: HashMap::new(),
             srp_results,
             srp_jobs,
+            builder,
+            building: HashSet::new(),
+            built: Default::default(),
             items: Items::new(),
             items_stepped: Instant::now(),
             skins,
@@ -414,11 +540,16 @@ impl Server {
         self.socket.set_read_timeout(Some(POLL_INTERVAL))?;
         let mut buf = [0u8; 1500];
         let mut last_wait = Instant::now();
+        // For the status screen: how long the loop works rather than waits.
+        let (mut busy, mut reported) = (Duration::ZERO, Instant::now());
         loop {
             // Wait up to POLL_INTERVAL for a packet, then take everything
             // else already waiting before doing anything slow: the socket's
             // queue is short, and packets that don't fit are lost.
-            match self.socket.recv_from(&mut buf) {
+            let pass = Instant::now();
+            let received = self.socket.recv_from(&mut buf);
+            let waited = pass.elapsed();
+            match received {
                 Ok((len, from)) => {
                     self.handle_datagram(&buf[..len], from);
                     self.socket.set_nonblocking(true)?;
@@ -443,10 +574,21 @@ impl Server {
                 let_other_tasks_run();
                 last_wait = Instant::now();
             }
+            busy += pass.elapsed().saturating_sub(waited);
+            if reported.elapsed() >= Duration::from_millis(250) {
+                status::lock(&self.status).busy_us += busy.as_micros() as u64;
+                busy = Duration::ZERO;
+                reported = Instant::now();
+            }
         }
     }
 
     fn handle_datagram(&mut self, data: &[u8], from: SocketAddr) {
+        // The block builder's "a block is ready" nudge (see BlockBuilder):
+        // it only needed to wake the loop.
+        if data.is_empty() && from.ip().is_loopback() {
+            return;
+        }
         status::lock(&self.status).packets_in += 1;
         let dg = match parse_datagram(data) {
             Ok(dg) => dg,
@@ -1729,8 +1871,11 @@ impl Server {
         peer.view_radius = radius;
     }
 
-    /// Generate and send pending blocks while the block channel has room.
+    /// Send players the blocks they still need: from the cache of built
+    /// blocks when possible, otherwise asking the builder thread for them
+    /// (nearest first) and sending them as they are finished.
     fn send_blocks(&mut self) {
+        self.collect_built();
         let started = Instant::now();
         // Take turns between players, so one player loading a lot doesn't
         // hold up the others.
@@ -1740,9 +1885,9 @@ impl Server {
             addrs.rotate_left(n);
             self.block_turn = self.block_turn.wrapping_add(1);
         }
-        for addr in addrs {
+        for &addr in &addrs {
             loop {
-                if started.elapsed() >= BLOCK_TIME_BUDGET || self.congested() {
+                if self.congested() {
                     return;
                 }
                 let Some(peer) = self.peers.get_mut(&addr) else {
@@ -1751,26 +1896,149 @@ impl Server {
                 if !peer.ready {
                     break;
                 }
-                let ch = &peer.channels[BLOCK_CHANNEL];
-                if ch.queue.len() >= BLOCK_QUEUE_LIMIT {
+                // Keep a few blocks queued or being built per player, no more:
+                // the plan changes as the player moves.
+                if peer.channels[BLOCK_CHANNEL].queue.len() + peer.awaiting.len() >= BLOCK_QUEUE_LIMIT {
                     break;
                 }
                 let Some(pos) = peer.pending_blocks.pop_front() else {
                     break;
                 };
-                if !peer.sent_blocks.insert(pos) {
+                if peer.sent_blocks.contains(&pos) || peer.awaiting.contains(&pos) {
                     continue;
                 }
-                let finished = peer.pending_blocks.is_empty();
-                let total = peer.sent_blocks.len();
-                let name = peer.display_name().to_string();
-                let payload = build_blockdata(&self.world.block_payload(pos));
-                status::lock(&self.status).blocks_sent += 1;
-                self.send_command(addr, BLOCK_CHANNEL, &payload);
-                if finished {
-                    info!("{name}: all nearby blocks sent ({total} in view)");
+                if let Some(payload) = self.built_block(pos) {
+                    self.deliver(addr, pos, &payload);
+                } else if self.builder.is_some() {
+                    if let Some(peer) = self.peers.get_mut(&addr) {
+                        peer.awaiting.push_back(pos);
+                    }
+                } else {
+                    // No builder thread: build here, a little at a time.
+                    if started.elapsed() >= BLOCK_TIME_BUDGET {
+                        if let Some(peer) = self.peers.get_mut(&addr) {
+                            peer.pending_blocks.push_front(pos);
+                        }
+                        return;
+                    }
+                    let building = Instant::now();
+                    let payload = Arc::new(build_blockdata(&self.world.block_payload(pos)));
+                    {
+                        let mut st = status::lock(&self.status);
+                        st.blocks_built += 1;
+                        st.block_us += building.elapsed().as_micros() as u64;
+                    }
+                    self.keep_built(pos, self.world.version(), payload.clone());
+                    self.deliver(addr, pos, &payload);
                 }
             }
+        }
+        self.submit_builds(&addrs);
+    }
+
+    /// A built copy of a block that is still up to date, if there is one.
+    fn built_block(&mut self, pos: BlockPos) -> Option<Arc<Vec<u8>>> {
+        let (version, payload) = self.built.get(&pos)?;
+        if self.world.changed_near_since(pos, *version) {
+            self.built.remove(&pos);
+            return None;
+        }
+        Some(payload.clone())
+    }
+
+    fn keep_built(&mut self, pos: BlockPos, version: u64, payload: Arc<Vec<u8>>) {
+        if self.built.len() >= BUILT_CACHE_MAX {
+            self.built.clear();
+        }
+        self.built.insert(pos, (version, payload));
+    }
+
+    /// Take finished blocks from the builder and send them to whoever is
+    /// waiting. A block the world has changed around since it was started is
+    /// dropped; it gets built again.
+    fn collect_built(&mut self) {
+        let Some(builder) = &self.builder else {
+            return;
+        };
+        let finished: Vec<Built> = builder.done.try_iter().collect();
+        for b in finished {
+            self.building.remove(&b.pos);
+            if self.world.changed_near_since(b.pos, b.version) {
+                continue;
+            }
+            let payload = Arc::new(b.payload);
+            self.keep_built(b.pos, b.version, payload.clone());
+            let waiting: Vec<SocketAddr> = self
+                .peers
+                .iter()
+                .filter(|(_, p)| p.awaiting.contains(&b.pos))
+                .map(|(a, _)| *a)
+                .collect();
+            for addr in waiting {
+                if let Some(peer) = self.peers.get_mut(&addr) {
+                    peer.awaiting.retain(|p| *p != b.pos);
+                }
+                self.deliver(addr, b.pos, &payload);
+            }
+        }
+    }
+
+    /// Hand the builder the next blocks players are waiting for, taking
+    /// turns between players, keeping at most BUILDS_IN_FLIGHT in hand.
+    fn submit_builds(&mut self, addrs: &[SocketAddr]) {
+        let Some(builder) = &self.builder else {
+            return;
+        };
+        let mut round = 0;
+        while self.building.len() < BUILDS_IN_FLIGHT {
+            let mut submitted = false;
+            for addr in addrs {
+                if self.building.len() >= BUILDS_IN_FLIGHT {
+                    break;
+                }
+                let Some(peer) = self.peers.get(addr) else {
+                    continue;
+                };
+                // This player's next block not already being built.
+                let Some(&pos) = peer.awaiting.iter().filter(|p| !self.building.contains(p)).nth(round) else {
+                    continue;
+                };
+                if builder.jobs.send(BuildJob { pos, state: self.world.snapshot() }).is_err() {
+                    warn!("The block builder has stopped; building blocks in the server loop instead");
+                    self.builder = None;
+                    // Hand the waiting blocks back to be built here.
+                    for peer in self.peers.values_mut() {
+                        for p in peer.awaiting.drain(..).rev() {
+                            peer.pending_blocks.push_front(p);
+                        }
+                    }
+                    self.building.clear();
+                    return;
+                }
+                self.building.insert(pos);
+                submitted = true;
+            }
+            if !submitted {
+                break;
+            }
+            round += 1;
+        }
+    }
+
+    /// Send a block to a player and note that they have it.
+    fn deliver(&mut self, addr: SocketAddr, pos: BlockPos, payload: &[u8]) {
+        let Some(peer) = self.peers.get_mut(&addr) else {
+            return;
+        };
+        if !peer.sent_blocks.insert(pos) {
+            return;
+        }
+        let finished = peer.pending_blocks.is_empty() && peer.awaiting.is_empty();
+        let (total, name) = (peer.sent_blocks.len(), peer.display_name().to_string());
+        status::lock(&self.status).blocks_sent += 1;
+        self.send_command(addr, BLOCK_CHANNEL, payload);
+        if finished {
+            info!("{name}: all nearby blocks sent ({total} in view)");
         }
     }
 
@@ -1871,6 +2139,7 @@ impl Server {
     /// way): back off, and report it now and then rather than per packet.
     fn note_send_failure(&mut self) {
         self.congested_until = Instant::now() + CONGESTION_BACKOFF;
+        status::lock(&self.status).send_failures += 1;
         self.send_failures += 1;
         if self.send_failures_reported.elapsed() >= SEND_FAILURE_REPORT_INTERVAL {
             warn!(

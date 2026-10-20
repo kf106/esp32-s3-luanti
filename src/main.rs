@@ -1,5 +1,6 @@
 mod auth;
 mod content;
+mod fasthash;
 mod font;
 mod inventory;
 mod items;
@@ -16,6 +17,7 @@ mod srp;
 mod status;
 mod storage;
 mod terrain;
+mod wifi_config;
 mod world;
 mod zstd;
 
@@ -35,8 +37,12 @@ use esp_idf_svc::wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWif
 use log::info;
 
 const MOUNT: &str = "/sd";
-const SSID: &str = env!("WIFI_SSID");
-const PASS: &str = env!("WIFI_PASS");
+/// Wi-Fi networks, editable on a PC (see wifi_config.rs).
+const WIFI_FILE: &str = "/sd/wifi.txt";
+/// Which built-in network was last written to WIFI_FILE.
+const WIFI_WRITTEN: &str = "/sd/wifi-written";
+/// How long to wait before looking for known networks again.
+const WIFI_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
 const PORT: u16 = 30000;
 
 fn main() -> anyhow::Result<()> {
@@ -69,24 +75,38 @@ fn main() -> anyhow::Result<()> {
         info!("  {:?}", entry?.file_name());
     }
 
-    // Wi-Fi
+    // The status screen starts now, so it can say what Wi-Fi is doing.
+    let status = status::Status::new("Wi-Fi...".to_string());
+    lcd::start(status.clone(), p.spi2, pins.gpio40, pins.gpio45);
+
+    // Wi-Fi: the networks in wifi.txt, plus one given when building
+    // (WIFI_SSID, WIFI_PASS), which is written into wifi.txt.
+    let built_in = option_env!("WIFI_SSID").filter(|s| !s.is_empty()).map(|ssid| wifi_config::Network {
+        ssid: ssid.to_string(),
+        password: option_env!("WIFI_PASS").unwrap_or("").to_string(),
+    });
+    let networks = wifi_config::load(&wifi_config::Files { networks: WIFI_FILE, written: WIFI_WRITTEN }, built_in);
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
     let mut wifi = BlockingWifi::wrap(
         EspWifi::new(p.modem, sysloop.clone(), Some(nvs))?,
         sysloop,
     )?;
+    // No network yet, just scanning. (The default asks for WPA2 with an
+    // empty password, which the driver warns about.)
     wifi.set_configuration(&Configuration::Client(ClientConfiguration {
-        ssid: SSID.try_into().expect("SSID too long"),
-        password: PASS.try_into().expect("password too long"),
+        auth_method: esp_idf_svc::wifi::AuthMethod::None,
         ..Default::default()
     }))?;
     wifi.start()?;
-    info!("Connecting to {SSID}...");
-    wifi.connect()?;
-    wifi.wait_netif_up()?;
+    let joined = join_wifi(&mut wifi, &networks, &status);
     let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
-    info!("Connected, IP address {ip}");
+    info!("Connected to {joined}, IP address {ip}");
+    {
+        let mut st = status::lock(&status);
+        st.address = format!("{ip}:{PORT}");
+        st.event(format!("Joined Wi-Fi {joined}"));
+    }
     // Power saving makes the radio doze between beacons, which delays and
     // drops outgoing packets. A server should stay awake.
     esp_idf_svc::sys::esp!(unsafe {
@@ -101,8 +121,6 @@ fn main() -> anyhow::Result<()> {
     let players = player::PlayerStore::open(format!("{MOUNT}/players"))?;
     let media = content::Media::load(&format!("{MOUNT}/media"));
     let socket = UdpSocket::bind(("0.0.0.0", PORT))?;
-    let status = status::Status::new(format!("{ip}:{PORT}"));
-    lcd::start(status.clone(), p.spi2, pins.gpio40, pins.gpio45);
     let sent = std::sync::Arc::as_ptr(&status) as usize;
     // An optional welcome message of your own, one chat line per line.
     let motd = fs::read_to_string(format!("{MOUNT}/motd.txt")).ok();
@@ -174,6 +192,78 @@ unsafe impl GlobalAlloc for PreferPsram {
 
 #[global_allocator]
 static ALLOCATOR: PreferPsram = PreferPsram;
+
+/// Join one of `networks`, trying those in range in the file's order, and
+/// keep trying until one works. Returns its name.
+fn join_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>, networks: &[wifi_config::Network], status: &status::SharedStatus) -> String {
+    use esp_idf_svc::wifi::AuthMethod;
+    let say = |text: String| {
+        info!("{text}");
+        status::lock(status).event(text);
+    };
+    if networks.is_empty() {
+        say(format!("No Wi-Fi networks: add one to {WIFI_FILE}"));
+    }
+    loop {
+        let seen = match wifi.scan() {
+            Ok(aps) => aps,
+            Err(e) => {
+                log::warn!("Wi-Fi scan failed: {e}");
+                Vec::new()
+            }
+        };
+        // Known networks in range first (in the file's order), then the
+        // rest, in case one is hidden (not broadcasting its name).
+        let mut order: Vec<(&wifi_config::Network, Option<&esp_idf_svc::wifi::AccessPointInfo>)> = Vec::new();
+        for net in networks {
+            let ap = seen
+                .iter()
+                .filter(|ap| ap.ssid.as_str() == net.ssid)
+                .max_by_key(|ap| ap.signal_strength);
+            if ap.is_some() {
+                order.push((net, ap));
+            }
+        }
+        if order.is_empty() && !networks.is_empty() {
+            say(format!("None of the {} known Wi-Fi networks is in range", networks.len()));
+        }
+        for net in networks {
+            if !order.iter().any(|(n, _)| n.ssid == net.ssid) {
+                order.push((net, None));
+            }
+        }
+        for (net, ap) in order {
+            let (Ok(ssid), Ok(password)) = (net.ssid.as_str().try_into(), net.password.as_str().try_into()) else {
+                continue;
+            };
+            let auth_method = match ap.and_then(|ap| ap.auth_method) {
+                Some(m) => m,
+                None if net.password.is_empty() => AuthMethod::None,
+                None => AuthMethod::WPA2Personal,
+            };
+            let config = Configuration::Client(ClientConfiguration {
+                ssid,
+                password,
+                auth_method,
+                channel: ap.map(|ap| ap.channel),
+                ..Default::default()
+            });
+            say(format!("Joining Wi-Fi {}...", net.ssid));
+            let joined = wifi
+                .set_configuration(&config)
+                .and_then(|_| wifi.connect())
+                .and_then(|_| wifi.wait_netif_up());
+            match joined {
+                Ok(()) => return net.ssid.clone(),
+                Err(e) => {
+                    log::warn!("Joining {} failed: {e}", net.ssid);
+                    let _ = wifi.disconnect();
+                }
+            }
+        }
+        std::thread::sleep(WIFI_RETRY);
+    }
+}
 
 /// Game data on the SD card that a reset deletes. Extra media (skins and
 /// textures in /sd/media) are kept.
