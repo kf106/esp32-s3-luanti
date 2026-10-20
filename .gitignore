@@ -1,0 +1,12 @@
+# Build output
+/target/
+
+# ESP-IDF and its tools, downloaded into the project by embuild
+# (ESP_IDF_TOOLS_INSTALL_DIR = "workspace" in .cargo/config.toml)
+/.embuild/
+
+# Source bundles and editor files
+*.zip
+*.swp
+.vscode/
+.idea/

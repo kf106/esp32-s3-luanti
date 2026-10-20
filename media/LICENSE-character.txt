@@ -1,0 +1,27 @@
+character.b3d and character.png are from the player_api mod of Minetest Game
+(https://github.com/luanti-org/minetest_game, mods/player_api), unmodified.
+
+Licence: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+https://creativecommons.org/licenses/by-sa/3.0/
+
+Copyright (C) 2011 celeron55, Perttu Ahola <celeron55@gmail.com>
+Copyright (C) 2012 MirceaKitsune
+Copyright (C) 2012 Jordach
+Copyright (C) 2015 kilbith
+Copyright (C) 2016 sofar
+Copyright (C) 2016 xunto
+Copyright (C) 2016 Rogier-5
+Copyright (C) 2017 TeTpaAka
+Copyright (C) 2017 Desour
+Copyright (C) 2018 stujones11
+Copyright (C) 2019 An0n3m0us
+
+The other textures in this folder (esp_*.png) were generated for this project
+(MIT licence, see ../LICENSE),
+except the torch files (see LICENSE-torch.txt) and the skins
+esp_skin_wizard.png and esp_skin_elf.png.
+
+esp_skin_wizard.png and esp_skin_elf.png
+Copyright (C) 2026 Keir Finlow-Bates
+Licence: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+https://creativecommons.org/licenses/by-sa/3.0/

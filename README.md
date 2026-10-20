@@ -1,0 +1,168 @@
+# esp32-s3-luanti
+
+A minimal [Luanti](https://www.luanti.org/) (formerly Minetest) server that runs on an ESP32-S3 microcontroller, written in Rust on ESP-IDF.
+
+A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. You can create an account, log in, explore a generated world with hills, caves, biomes and ores, dig and build, place torches, drop and pick up items, choose a skin, and see the other players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
+
+The server does not run Lua. A normal Luanti server runs a game (such as Minetest Game) written in Lua mods. This one implements the engine's network protocol directly and builds a small built-in game on top of it, in about 7,000 lines of Rust.
+
+![The server running on a Waveshare ESP32-S3-LCD-1.47, with its status on the built-in screen](assets/server.jpeg)
+
+## What it looks like
+
+A Luanti client playing on the ESP32:
+
+![In game, connected to the ESP32 server](assets/screen-001.png)
+
+![In game, connected to the ESP32 server](assets/screen-002.png)
+
+## Hardware
+
+Developed on a **Waveshare ESP32-S3-LCD-1.47**:
+
+| | |
+|---|---|
+| Chip | ESP32-S3, dual-core Xtensa LX7 at 240 MHz |
+| RAM | 512 KB internal SRAM, plus 8 MB octal PSRAM |
+| Flash | 16 MB |
+| Display | 1.47" ST7789 LCD, 172 × 320 |
+| Storage | microSD slot (4-bit SDMMC) |
+| Network | 2.4 GHz Wi-Fi |
+
+![The back of the board, with the microSD card that holds the world](assets/esp32-waveshare.jpeg)
+
+Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. The SD card pins are set in `src/main.rs` (CMD 15, CLK 14, D0 16, D1 18, D2 17, D3 21) and the LCD pins in `src/lcd.rs`. PSRAM is required: the server keeps its own data there and leaves the internal RAM to Wi-Fi and the system.
+
+## What works
+
+- **Protocol:** the Luanti network protocol as spoken by Luanti 5.17 (protocol version 53), including the reliable-UDP layer with split packets, acknowledgements, resends and out-of-order delivery.
+- **Accounts:** SRP-6a password login, the same scheme the real server uses. New players register on first connect, and passwords are never stored or sent.
+- **World generation:**
+  - rolling hills and mountains;
+  - grassland, desert and snow biomes;
+  - caves with entrances;
+  - coal and iron ore.
+- **World storage:** the world is generated on demand from a fixed seed. Only the changes players make are stored, as an append-only log on the SD card.
+- **Digging and building:** changes appear for every player at once.
+- **Survival inventory:** 32 slots, with stacks you can rearrange in the inventory window. New players start with 20 torches.
+- **Torches:** they mount on floors, walls and ceilings using Minetest Game's 3D models. The server computes their light, so caves and nights are lit, and they fall off when the block they hang on is dug.
+- **Day and night:** a normal day and night cycle. Map blocks carry separate day and night light.
+- **Health:** fall damage, a health bar, death and respawn.
+- **Dropped items:**
+  - `Q` drops the whole stack in your hand; `Shift+Q` drops one;
+  - punch an item to pick it up;
+  - items fall, land, and merge with matching items nearby.
+- **Players:** other players are shown with the animated Minetest Game character and their name tags.
+- **Skins:**
+  - chosen with a live 3D preview in the inventory window;
+  - extra skins can be added on the SD card;
+  - 64×64 Minecraft skins are accepted.
+- **Saving:** player positions, health, skins and inventories are saved and restored.
+- **Status screen:** the LCD shows players online, packet and block counts, memory, and recent events.
+
+## What doesn't (yet)
+
+- No crafting, no chat, no admin commands.
+- No Lua mods: the game content is built in.
+- Dropped items are not saved over a restart.
+- One world per SD card.
+- The time of day restarts at 10:00 when the server starts.
+- Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
+
+## Building
+
+You need the Rust toolchain for Xtensa, plus `git` and Python 3 (with `venv`) for the ESP-IDF build. On Ubuntu, `sudo apt install git python3 python3-venv` covers the latter.
+
+1. Install the Rust Xtensa toolchain with [espup](https://github.com/esp-rs/espup), then load its environment (in every new shell, or from your shell profile):
+   ```
+   cargo install espup
+   espup install
+   . ~/export-esp.sh
+   ```
+   `rust-toolchain.toml` selects that toolchain (`esp`) for this project.
+2. Install the linker wrapper and the flashing tool:
+   ```
+   cargo install ldproxy espflash
+   ```
+3. Connect the board by USB, then build and flash, giving your Wi-Fi details as environment variables. They are compiled into the firmware and are not stored in the repository.
+   ```
+   WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
+   ```
+   `cargo run` flashes the board with `espflash` and opens the serial monitor.
+
+**The first build is slow.** It downloads ESP-IDF v5.5.1 and its tools into `.embuild/` inside the project and compiles them.
+
+**Rebuilding after configuration changes:** run `cargo clean` before building if you change `sdkconfig.defaults` or the ESP-IDF version (set in `.cargo/config.toml`). Neither change is picked up by an incremental build.
+
+### Configuration
+
+The ESP-IDF settings that matter, in `sdkconfig.defaults`:
+- **Flash and PSRAM:** 16 MB flash and 8 MB octal PSRAM at 80 MHz, with PSRAM available to `malloc`.
+- **Main task stack:** 16 KB.
+- **Wi-Fi and network buffers in PSRAM:** `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP` lets them live there where possible.
+- **UDP receive queue:** `CONFIG_LWIP_UDP_RECVMBOX_SIZE=32` lengthens it, so bursts of client packets aren't dropped while the server is busy.
+
+## The SD card
+
+Format the card as FAT32 and insert it before powering up. The server creates what it needs:
+
+```
+/sd/auth/       accounts (salt and SRP verifier per player)
+/sd/world/      the world: nodes.log (every change made) and the generator version
+/sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin)
+/sd/media/      optional extra media (see below)
+```
+
+All of these are plain text or simple binary files, so you can inspect or edit them on a PC. If a future version changes the terrain generator, the old change log is kept as `nodes-v<n>.log` and the world starts afresh.
+
+### Extra media and skins
+
+Textures and models are built into the firmware. A file in `/sd/media` with the same name as a built-in one replaces it, and new files are offered to clients as well.
+
+To add a skin, put `skin_<name>.png` in `/sd/media` and restart. It appears in the skin chooser as "<Name>": for example, `skin_red_knight.png` appears as "Red knight". Both skin formats are accepted:
+- **64×32:** the classic Minetest and old Minecraft layout;
+- **64×64:** modern Minecraft skins. Luanti's player model has no place for their overlay layers, so only the top half is used.
+
+## Connecting
+
+1. Watch the serial monitor or the LCD for the board's IP address.
+2. In Luanti, open **Join Game** and enter that address with port **30000**.
+3. Pick a name and password; the first login creates the account.
+
+## Project layout
+
+```
+src/main.rs        start-up: SD card, Wi-Fi, LCD, and the memory allocator
+src/server.rs      the server loop: peers, reliability, and all game logic
+src/protocol.rs    Luanti's UDP packet framing
+src/messages.rs    building and parsing protocol commands
+src/content.rs     node and item definitions, media
+src/world.rs       the world: generated blocks, player changes, lighting
+src/terrain.rs     terrain, biomes, caves and ores
+src/items.rs       dropped items and their physics
+src/inventory.rs   inventories and inventory actions
+src/player.rs      saved player state
+src/skins.rs       player skins
+src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto
+src/zstd.rs        a small zstd compressor for map blocks
+src/lcd.rs, screen.rs, font.rs, status.rs   the status display
+src/storage.rs     safe file writes on FAT
+media/             built-in textures and models
+```
+
+## Notes for hackers
+
+- **Read the engine source.** The protocol has no separate specification. The Luanti source (`src/network/`, `src/server/`, `src/client/`) is the reference, and the comments in this code point to the functions they follow.
+- **The Xtensa argument limit.** Functions here are kept to at most six argument words, counting a hidden pointer for large return values. A seventh argument is passed on the stack, and in one build it arrived corrupted, which crashed the server on the first packet. Group arguments into a struct instead; `server::Setup` is the example.
+- **Memory.** The global allocator in `main.rs` puts the server's data in PSRAM. Left to the default, small allocations fill the internal RAM, and then Wi-Fi sends fail and threads can't start.
+
+## Licence
+
+The code is released under the [MIT licence](LICENSE).
+
+The media in `media/` have their own licences:
+- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, and the torch models and textures. Their credits are in `media/LICENSE-character.txt` and `media/LICENSE-torch.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
+- **The skins `esp_skin_wizard.png` and `esp_skin_elf.png`:** made by Keir Finlow-Bates, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
+- **The other `esp_*.png` textures:** made for this project and covered by the MIT licence.
+
+Luanti is a trademark of its respective owners. This project is not affiliated with the Luanti project.
