@@ -401,7 +401,8 @@ struct SrpJob {
 /// out one at a time.
 fn start_srp_thread(results: Sender<SrpResult>) -> Option<Sender<SrpJob>> {
     let (jobs, queue) = mpsc::channel::<SrpJob>();
-    let spawned = spawn_on_second_core(b"srp\0", 16 * 1024, 4, move || {
+    // Measured: under 3 KB used (see the "Stack left" report).
+    let spawned = spawn_on_second_core(b"srp\0", 8 * 1024, 4, move || {
             for job in queue {
                 let started = Instant::now();
                 let challenge = srp::start(&srp::Login {
@@ -463,7 +464,8 @@ fn start_block_builder(status: SharedStatus, port: u16) -> Option<BlockBuilder> 
     // Priority 1, just above core 1's idle task; logins and the display
     // come first. After each block it pauses for a scheduler tick so the
     // idle task (which the task watchdog checks on) gets a turn.
-    let spawned = spawn_on_second_core(b"blocks\0", 24 * 1024, 1, move || {
+    // Measured: about 7.5 KB used (see the "Stack left" report).
+    let spawned = spawn_on_second_core(b"blocks\0", 16 * 1024, 1, move || {
         // Its own copy of the terrain caches; the changes come with each job.
         let mut world = World::builder();
         for job in queue {

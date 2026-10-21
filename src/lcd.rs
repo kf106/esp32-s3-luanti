@@ -409,7 +409,8 @@ impl Button {
 
 /// How often to report every task's unused stack.
 const STACK_REPORT: Duration = Duration::from_secs(60);
-/// Below this much unused stack (bytes), a task is reported as a warning.
+/// Below this much unused stack (bytes), one of our tasks is reported as a
+/// warning.
 const STACK_LOW: u32 = 1536;
 
 /// Log how much of its stack each task has never used (FreeRTOS's high
@@ -435,7 +436,10 @@ fn report_stacks() {
         .collect();
     list.sort_by_key(|(_, free)| *free);
     let text: Vec<String> = list.iter().map(|(name, free)| format!("{name} {free}")).collect();
-    if list.first().is_some_and(|(_, free)| *free < STACK_LOW) {
+    // Only our own tasks: some of ESP-IDF's (ipc0, ipc1, Tmr Svc) always run
+    // with a few hundred bytes to spare. Rust threads show as "pthread".
+    let ours = |name: &str| matches!(name, "main" | "blocks" | "srp" | "pthread");
+    if list.iter().any(|(name, free)| ours(name) && *free < STACK_LOW) {
         warn!("Stack left (bytes), lowest first: {}", text.join(", "));
         crate::status::problem();
     } else {
