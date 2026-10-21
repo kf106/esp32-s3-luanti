@@ -63,11 +63,13 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - Corner stairs: 6 blocks in a staircase shape with the middle left empty (one on top in the middle, one either side below, a full row underneath) make 7 inner corners; 4 as an upside-down T make 6 outer corners. They place like stairs, so which way a corner turns depends on where you stand.
   - Stairs face away from you. Placed against the underside of a block, or the upper half of its side, they go upside down. A slab placed on top of the same kind of slab joins it into a full block (or under it, if it is upside down), as in older Minetest Game; on a different slab it takes that slab's way up.
   - Light gets in, so a slab roof doesn't make a dark room. Wooden ones burn, for three quarters (stairs) or half (slabs) the time of the planks.
+- **Doors:** Minetest Game's wooden, glass and steel doors: two columns of three planks, glass or steel ingots make one. A door faces the way you look as you place it, and one placed beside another hinges on the other side, so the pair opens outwards. Right-click opens and shuts it, with its sound; with sneak held, right-click builds against it instead. A steel door belongs to whoever placed it: only they can open or dig it (with a steel pickaxe). Owners are kept in `world/doors.txt`.
+- **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
 - **Glass:** smelt sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
   - steel pickaxes, shovels, axes and swords from steel ingots.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
   - It smelts iron lumps into steel ingots and cobblestone into stone, 3 seconds each.
-  - Fuel: coal lumps burn for 40 s, trunks 22 to 26 s, planks 5 or 6 s, leaves, torches and wooden tools a few seconds, sticks 1 s. A piece of fuel that is alight burns to the end.
+  - Fuel: coal lumps burn for 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, wooden trapdoors 7 s, planks 5 to 7 s, leaves, torches and wooden tools a few seconds, sticks 1 s. A piece of fuel that is alight burns to the end.
   - It burns whether or not anyone has it open. While lit, its front shows the fire, it glows, the window's flame and arrow fill up, and you hear it.
   - Only fuel goes in the fuel slot, and nothing into the output. Empty it before digging it (with a stone pickaxe). Its contents are kept on the SD card in `world/furnaces.txt`.
 - **Chests:** Minetest Game's, 32 slots, placed facing you. Right-click opens one: the lid lifts with a creak while anyone has it open (unless a block sits on it) and closes with a thud. A locked chest opens only for whoever placed it. Empty a chest before digging it. Contents are kept in `world/chests.txt`.
@@ -101,7 +103,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- No doors, beds, water or the other Minetest Game blocks yet; no admin commands.
+- No beds, fences, fence gates, water or the other Minetest Game blocks yet; no admin commands.
 - No Lua mods: the game content is built in.
 - One world per SD card.
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
@@ -146,7 +148,7 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 
 ```
 /sd/auth/       accounts (salt and SRP verifier per player)
-/sd/world/      the world: nodes.log (every change made), furnaces.txt and chests.txt (their contents), items.txt (dropped items),
+/sd/world/      the world: nodes.log (every change made), furnaces.txt and chests.txt (their contents), items.txt (dropped items), doors.txt (steel doors' and trapdoors' owners),
                 env_meta.txt (the time of day, as Luanti keeps it) and the generator version
 /sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin)
 /sd/media/      optional extra media (see below)
@@ -237,6 +239,7 @@ src/chest.rs       chests
 src/nature.rs      leaf decay, saplings and apples
 src/clock.rs       the time of day, kept over restarts
 src/stairs.rs      stairs and slabs
+src/doors.rs       doors and trapdoors
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto

@@ -18,6 +18,7 @@ use crate::items::{Change, Items};
 use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
+use crate::doors::{self, Door};
 use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
@@ -42,6 +43,8 @@ const CHEST_HEARING: f32 = 10.0;
 const FURNACE_HEARING: f32 = 16.0;
 /// How far sounds carry by default (Luanti's max_hear_distance).
 const HEARING: f32 = 32.0;
+/// How far a door is heard opening and closing (its max_hear_distance).
+const DOOR_HEARING: f32 = 10.0;
 /// Wi-Fi power saving goes on after this long with nobody doing anything
 /// (no one connected, or every player standing still).
 const IDLE_POWER_SAVE: Duration = Duration::from_secs(30);
@@ -350,6 +353,8 @@ pub struct Server {
     furnaces_stepped: Instant,
     /// The time of day, kept over restarts.
     clock: Clock,
+    /// Who owns each steel door.
+    door_owners: doors::Owners,
     /// Id for the next sound that may need fading out.
     next_sound_id: i32,
     /// When a player last did something (moved, looked, dug, chatted...)
@@ -385,6 +390,7 @@ pub struct Setup {
     pub chests: Chests,
     pub items: Items,
     pub clock: Clock,
+    pub door_owners: doors::Owners,
     pub media: Media,
     pub status: SharedStatus,
 }
@@ -565,7 +571,7 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, media, status } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, media, status } = setup;
         // Items dropped before a restart: out of any block built over them.
         items.settle(&|x, y, z| content::walkable(world.node((x, y, z))));
         let itemdef = build_itemdef(&content::itemdef_bytes());
@@ -635,6 +641,7 @@ impl Server {
             built: Default::default(),
             items,
             clock,
+            door_owners,
             items_stepped: Instant::now(),
             furnaces_stepped: Instant::now(),
             next_sound_id: 1,
@@ -1584,6 +1591,23 @@ impl Server {
                     self.close_chest_windows(furnace_at);
                     self.chests.remove(furnace_at);
                 }
+                // A steel door or trapdoor only by its owner.
+                if doors::is_door(current) || doors::is_trapdoor(current) {
+                    if !self.door_owners.allows(furnace_at, &name) {
+                        info!("{name}: can't dig the locked door at {under:?}");
+                        self.resend_node(from, under);
+                        return;
+                    }
+                    self.door_owners.remove(furnace_at);
+                }
+                if doors::is_door(current) {
+                    // Its hidden top goes with it (after_dig_node).
+                    let top = [under[0], under[1] + 1, under[2]];
+                    if self.world.node(node_pos(top)) == doors::HIDDEN {
+                        self.world.set_node(node_pos(top), world::CONTENT_AIR, 0);
+                        self.broadcast_node(top, &build_removenode(top));
+                    }
+                }
                 if content::is_furnace(current) {
                     self.close_furnace(furnace_at);
                     if let Some(gone) = self.furnaces.remove(furnace_at) {
@@ -1661,10 +1685,32 @@ impl Server {
                     }
                     return;
                 }
+                // Doors and trapdoors open and close the same way.
+                let target = self.world.node(node_pos(under));
+                if (doors::is_door(target) || doors::is_trapdoor(target)) && !sneaking {
+                    if in_reach(under) {
+                        self.toggle_door(from, node_pos(under));
+                    }
+                    return;
+                }
+                // Where the player looks (the stairs and doors use it).
+                let (pitch, yaw) = match (&msg.pos, self.peers.get(&from)) {
+                    (Some(pp), _) => (pp.pitch, pp.yaw),
+                    (None, Some(p)) => (p.pitch, p.yaw),
+                    (None, None) => (0.0, 0.0),
+                };
                 // The client predicts placing the wielded item, if it is a
                 // node. An empty slot predicts nothing.
                 let slot = msg.item as usize;
                 let wielded = self.peers.get(&from).and_then(|p| p.inventory.get(slot));
+                // A door item places a door (it isn't a node itself).
+                if let Some(door) = wielded.filter(|_| slot < HOTBAR_SIZE).and_then(|s| doors::door_item(s.id)) {
+                    let place = DoorPlace { under, above, look: look_dir(pitch, yaw), slot };
+                    if in_reach(above) {
+                        self.place_door(from, door, place);
+                    }
+                    return;
+                }
                 let Some(stack) = wielded.filter(|s| slot < HOTBAR_SIZE && content::is_node(s.id)) else {
                     // Nothing to place (an empty hand, or an item such as a
                     // stick that isn't a node). If the client thought
@@ -1714,16 +1760,11 @@ impl Server {
                 // Torches and ladders face what they were placed against.
                 let param2 = if content::is_wallmounted(id) {
                     content::wallmounted_param2(under, above)
-                } else if content::is_furnace(id) || content::is_chest(id) {
+                } else if content::is_furnace(id) || content::is_chest(id) || doors::is_trapdoor(id) {
                     content::facedir_param2(above, body)
                 } else if stairs::shape_of(id).is_some() {
                     // Stairs and slabs: the way the player looks decides
                     // which way up they go (the stairs mod's on_place).
-                    let (pitch, yaw) = match (&msg.pos, self.peers.get(&from)) {
-                        (Some(pp), _) => (pp.pitch, pp.yaw),
-                        (None, Some(p)) => (p.pitch, p.yaw),
-                        (None, None) => (0.0, 0.0),
-                    };
                     let placer = stairs::Placer { feet: [body[0], body[1] - 1.0, body[2]], pitch, yaw };
                     stairs::place_param2(id, under, above, support, self.world.param2(node_pos(under)), &placer)
                 } else if content::is_leaves(id) || content::is_apple(id) {
@@ -1753,16 +1794,81 @@ impl Server {
                     let after = nature::grow_delay(&mut self.rng);
                     self.timers.start(node_pos(above), Job::Grow, after);
                 }
-                // A locked chest belongs to whoever placed it.
+                // A locked chest belongs to whoever placed it; so does a
+                // steel trapdoor.
                 if content::is_locked_chest(node) {
                     self.chests.get_or_add(node_pos(above)).owner = Some(name.clone());
                     self.chests.save();
+                }
+                if doors::is_locked(node) {
+                    self.door_owners.set(node_pos(above), &name);
                 }
             }
             // Starting and stopping digging need nothing from us; the mining
             // animation follows the dig key in TOSERVER_PLAYERPOS.
             _ => {}
         }
+    }
+
+    /// Right-clicking a door or trapdoor: open it if it's shut, shut it if
+    /// it's open (doors.door_toggle, trapdoor_toggle), with its sound. A
+    /// steel one only for its owner.
+    fn toggle_door(&mut self, from: SocketAddr, pos: NodePos) {
+        let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
+        if !self.door_owners.allows(pos, &name) {
+            let owner = self.door_owners.owner(pos).unwrap_or_default().to_string();
+            self.tell(from, &format!("This door is locked; it belongs to {owner}."));
+            return;
+        }
+        let (node, param2) = (self.world.node(pos), self.world.param2(pos));
+        // A door changes node and turn; a trapdoor only node.
+        let toggled = match (doors::door_of(node), doors::trapdoor_of(node)) {
+            (Some((door, _)), _) => doors::toggle(node, param2).map(|(to, p2, opened)| (to, p2, opened, door.open, door.close)),
+            (_, Some((trap, _))) => doors::trapdoor_toggle(node).map(|(to, opened)| (to, param2, opened, trap.open, trap.close)),
+            _ => None,
+        };
+        let Some((to, to_param2, opened, open_sound, close_sound)) = toggled else {
+            return;
+        };
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.world.set_node(pos, to, to_param2);
+        self.broadcast_node(p16, &build_addnode(p16, to, to_param2));
+        let (sound, gain) = if opened { open_sound } else { close_sound };
+        self.play_sound_near(-1, sound, gain, p16.map(|v| v as f32 * 10.0), DOOR_HEARING);
+    }
+
+    /// Placing a door (the door item's on_place): in the node pointed at
+    /// (or into an apple mark), with room above for its top, facing the
+    /// way the player looks, and hinged to pair with a door beside it.
+    fn place_door(&mut self, from: SocketAddr, door: &'static Door, at: DoorPlace) {
+        let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
+        let node_pos = |p: [i16; 3]| (p[0] as i32, p[1] as i32, p[2] as i32);
+        let free = |id: u16| id == world::CONTENT_AIR || content::is_mark(id);
+        let pos = if content::is_mark(self.world.node(node_pos(at.under))) { at.under } else { at.above };
+        let top = [pos[0], pos[1] + 1, pos[2]];
+        if !free(self.world.node(node_pos(pos))) || !free(self.world.node(node_pos(top))) {
+            info!("{name}: no room for a door at {pos:?}");
+            return;
+        }
+        let dir = doors::facedir_of(at.look);
+        // minetest_game looks for anything in group "door": trapdoors too.
+        let next_to_door = content::group_of(self.world.node(doors::beside(node_pos(pos), dir)), "door") > 0;
+        let (node, param2, top_param2) = doors::placed(door, dir, next_to_door);
+        info!("{name} placed {} at {pos:?}", content::name_of(door.item));
+        self.edit_event(&name, "placed", door.item);
+        if let Some(peer) = self.peers.get_mut(&from) {
+            peer.inventory.take_one(at.slot);
+        }
+        self.inventory_changed(from);
+        self.world.set_node(node_pos(pos), node, param2);
+        self.broadcast_node(pos, &build_addnode(pos, node, param2));
+        self.world.set_node(node_pos(top), doors::HIDDEN, top_param2);
+        self.broadcast_node(top, &build_addnode(top, doors::HIDDEN, top_param2));
+        if door.locked {
+            self.door_owners.set(node_pos(pos), &name);
+        }
+        let (sound, gain) = content::place_sound(node);
+        self.play_sound_near(-1, sound, gain, pos.map(|v| v as f32 * 10.0), HEARING);
     }
 
     /// Remove what was attached to the node at `pos` (just removed):
@@ -3227,13 +3333,27 @@ pub fn hexdump(data: &[u8]) {
     }
 }
 
+/// The way a player with this pitch and yaw (degrees, as the client sends
+/// them) looks (ObjectRef::get_look_dir).
+fn look_dir(pitch: f32, yaw: f32) -> [f32; 3] {
+    let p = (-pitch).to_radians();
+    let y = (yaw + 90.0).to_radians();
+    [p.cos() * y.cos(), p.sin(), p.cos() * y.sin()]
+}
+
+/// Where a player puts a door: what they pointed at, where they look, and
+/// the hotbar slot holding it.
+struct DoorPlace {
+    under: [i16; 3],
+    above: [i16; 3],
+    look: [f32; 3],
+    slot: usize,
+}
+
 /// Where builtin's item_drop puts a dropped item, and how it throws it:
 /// position and velocity in nodes.
 fn drop_motion(pos_bs: [f32; 3], yaw: f32, pitch: f32) -> ([f32; 3], [f32; 3]) {
-    // ObjectRef::get_look_dir
-    let p = (-pitch).to_radians();
-    let y = (yaw + 90.0).to_radians();
-    let dir = [p.cos() * y.cos(), p.sin(), p.cos() * y.sin()];
+    let dir = look_dir(pitch, yaw);
     let pos = [pos_bs[0] / 10.0, pos_bs[1] / 10.0 + DROP_HEIGHT, pos_bs[2] / 10.0];
     let vel = [dir[0] * DROP_SPEED, dir[1] * DROP_SPEED + DROP_LIFT, dir[2] * DROP_SPEED];
     (pos, vel)

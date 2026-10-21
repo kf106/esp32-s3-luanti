@@ -12,6 +12,7 @@ use log::{info, warn};
 
 use crate::messages::Writer;
 use crate::sha1::sha1;
+use crate::doors;
 use crate::stairs;
 
 // ---------------------------------------------------------------------------
@@ -70,6 +71,14 @@ pub enum Kind {
     /// A stair or slab (stairs.rs): boxes (nodebox) turned by facedir, with
     /// light passing into it as minetest_game's paramtype "light" lets it.
     Shaped,
+    /// The bottom of a door (doors.rs): a model two nodes tall, turned by
+    /// facedir, opened and closed with a right-click.
+    Door,
+    /// The invisible node above a door's bottom, keeping its top half free.
+    DoorHidden,
+    /// A trapdoor (doors.rs), closed or open: a panel (nodebox) turned by
+    /// facedir, opened and closed with a right-click.
+    Trapdoor,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -126,6 +135,11 @@ pub const ITEM_STICK: u16 = 0x1000;
 pub const ITEM_COAL_LUMP: u16 = 0x1001;
 pub const ITEM_IRON_LUMP: u16 = 0x1002;
 pub const ITEM_STEEL_INGOT: u16 = 0x1003;
+/// Door items (doors.rs): minetest_game's are craftitems that place the
+/// door's two nodes.
+pub const ITEM_DOOR_WOOD: u16 = 0x1004;
+pub const ITEM_DOOR_STEEL: u16 = 0x1005;
+pub const ITEM_DOOR_GLASS: u16 = 0x1006;
 /// Tools have ids from 0x2000 up.
 pub const TOOL_PICK_WOOD: u16 = 0x2000;
 pub const TOOL_PICK_STONE: u16 = 0x2001;
@@ -155,6 +169,22 @@ macro_rules! shaped {
             drop: $id,
             drop_count: 1,
             kind: Kind::Shaped,
+        }
+    };
+}
+
+/// A door's bottom node: it drops the door item.
+macro_rules! door {
+    ($id:expr, $name:literal, $description:literal, $tile:literal, $groups:expr, $item:expr) => {
+        Node {
+            id: $id,
+            name: concat!("esp:", $name),
+            description: $description,
+            tiles: [$tile; 6],
+            groups: $groups,
+            drop: $item,
+            drop_count: 1,
+            kind: Kind::Door,
         }
     };
 }
@@ -692,6 +722,73 @@ pub const NODES: &[Node] = &[
     shaped!(stairs::FIRST_OUTER + 7, "stair_outer_sandstone", "Outer Sandstone Stair", "esp_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
     shaped!(stairs::FIRST_OUTER + 8, "stair_outer_sandstonebrick", "Outer Sandstone Brick Stair", "esp_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
     shaped!(stairs::FIRST_OUTER + 9, "stair_outer_sandstone_block", "Outer Sandstone Block Stair", "esp_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    // Doors (doors.rs): wooden, steel and glass, each as nodes a, b, c and d,
+    // then the hidden node above them all.
+    door!(doors::FIRST_DOOR + 0, "door_wood_a", "Wooden Door", "doors_door_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("door", 1)], ITEM_DOOR_WOOD),
+    door!(doors::FIRST_DOOR + 1, "door_wood_b", "Wooden Door", "doors_door_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("door", 1)], ITEM_DOOR_WOOD),
+    door!(doors::FIRST_DOOR + 2, "door_wood_c", "Wooden Door", "doors_door_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("door", 1)], ITEM_DOOR_WOOD),
+    door!(doors::FIRST_DOOR + 3, "door_wood_d", "Wooden Door", "doors_door_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("door", 1)], ITEM_DOOR_WOOD),
+    door!(doors::FIRST_DOOR + 4, "door_steel_a", "Steel Door", "doors_door_steel.png", &[("cracky", 1), ("level", 2), ("door", 1)], ITEM_DOOR_STEEL),
+    door!(doors::FIRST_DOOR + 5, "door_steel_b", "Steel Door", "doors_door_steel.png", &[("cracky", 1), ("level", 2), ("door", 1)], ITEM_DOOR_STEEL),
+    door!(doors::FIRST_DOOR + 6, "door_steel_c", "Steel Door", "doors_door_steel.png", &[("cracky", 1), ("level", 2), ("door", 1)], ITEM_DOOR_STEEL),
+    door!(doors::FIRST_DOOR + 7, "door_steel_d", "Steel Door", "doors_door_steel.png", &[("cracky", 1), ("level", 2), ("door", 1)], ITEM_DOOR_STEEL),
+    door!(doors::FIRST_DOOR + 8, "door_glass_a", "Glass Door", "doors_door_glass.png", &[("cracky", 3), ("oddly_breakable_by_hand", 3), ("door", 1)], ITEM_DOOR_GLASS),
+    door!(doors::FIRST_DOOR + 9, "door_glass_b", "Glass Door", "doors_door_glass.png", &[("cracky", 3), ("oddly_breakable_by_hand", 3), ("door", 1)], ITEM_DOOR_GLASS),
+    door!(doors::FIRST_DOOR + 10, "door_glass_c", "Glass Door", "doors_door_glass.png", &[("cracky", 3), ("oddly_breakable_by_hand", 3), ("door", 1)], ITEM_DOOR_GLASS),
+    door!(doors::FIRST_DOOR + 11, "door_glass_d", "Glass Door", "doors_door_glass.png", &[("cracky", 3), ("oddly_breakable_by_hand", 3), ("door", 1)], ITEM_DOOR_GLASS),
+    Node {
+        id: doors::HIDDEN,
+        name: "esp:door_hidden",
+        description: "Hidden Door Segment",
+        tiles: [""; 6],
+        groups: &[("not_in_creative_inventory", 1)],
+        drop: doors::HIDDEN,
+        drop_count: 0,
+        kind: Kind::DoorHidden,
+    },
+    // Trapdoors, closed then open, with minetest_game's pictures turned
+    // as it turns them for each side (CC BY-SA 3.0, see
+    // media/LICENSE-doors.txt). The open one gives the closed one.
+    Node {
+        id: doors::FIRST_TRAPDOOR,
+        name: "esp:trapdoor",
+        description: "Wooden Trapdoor",
+        tiles: TRAPDOOR_WOOD_CLOSED,
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("door", 1)],
+        drop: doors::FIRST_TRAPDOOR,
+        drop_count: 1,
+        kind: Kind::Trapdoor,
+    },
+    Node {
+        id: doors::FIRST_TRAPDOOR + 1,
+        name: "esp:trapdoor_open",
+        description: "Wooden Trapdoor",
+        tiles: TRAPDOOR_WOOD_OPEN,
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("door", 1), ("not_in_creative_inventory", 1)],
+        drop: doors::FIRST_TRAPDOOR,
+        drop_count: 1,
+        kind: Kind::Trapdoor,
+    },
+    Node {
+        id: doors::FIRST_TRAPDOOR + 2,
+        name: "esp:trapdoor_steel",
+        description: "Steel Trapdoor",
+        tiles: TRAPDOOR_STEEL_CLOSED,
+        groups: &[("cracky", 1), ("level", 2), ("door", 1)],
+        drop: doors::FIRST_TRAPDOOR + 2,
+        drop_count: 1,
+        kind: Kind::Trapdoor,
+    },
+    Node {
+        id: doors::FIRST_TRAPDOOR + 3,
+        name: "esp:trapdoor_steel_open",
+        description: "Steel Trapdoor",
+        tiles: TRAPDOOR_STEEL_OPEN,
+        groups: &[("cracky", 1), ("level", 2), ("door", 1), ("not_in_creative_inventory", 1)],
+        drop: doors::FIRST_TRAPDOOR + 2,
+        drop_count: 1,
+        kind: Kind::Trapdoor,
+    },
 ];
 
 // Saplings, from leaves (one time in SAPLING_RARITY), as minetest_game's
@@ -732,6 +829,41 @@ const CHEST_LOCKED_OPEN_TILES: [&str; 6] = [
     "default_chest_side.png",
     "default_chest_lock.png",
     "default_chest_inside.png",
+];
+
+/// minetest_game's trapdoor tiles: closed, the picture on top and flipped
+/// underneath, the edge picture round the sides; open, turned to stand up.
+const TRAPDOOR_WOOD_CLOSED: [&str; 6] = [
+    "doors_trapdoor.png",
+    "doors_trapdoor.png^[transformFY",
+    "doors_trapdoor_side.png",
+    "doors_trapdoor_side.png",
+    "doors_trapdoor_side.png",
+    "doors_trapdoor_side.png",
+];
+const TRAPDOOR_WOOD_OPEN: [&str; 6] = [
+    "doors_trapdoor_side.png",
+    "doors_trapdoor_side.png^[transform2",
+    "doors_trapdoor_side.png^[transform3",
+    "doors_trapdoor_side.png^[transform1",
+    "doors_trapdoor.png^[transform46",
+    "doors_trapdoor.png^[transform6",
+];
+const TRAPDOOR_STEEL_CLOSED: [&str; 6] = [
+    "doors_trapdoor_steel.png",
+    "doors_trapdoor_steel.png^[transformFY",
+    "doors_trapdoor_steel_side.png",
+    "doors_trapdoor_steel_side.png",
+    "doors_trapdoor_steel_side.png",
+    "doors_trapdoor_steel_side.png",
+];
+const TRAPDOOR_STEEL_OPEN: [&str; 6] = [
+    "doors_trapdoor_steel_side.png",
+    "doors_trapdoor_steel_side.png^[transform2",
+    "doors_trapdoor_steel_side.png^[transform3",
+    "doors_trapdoor_steel_side.png^[transform1",
+    "doors_trapdoor_steel.png^[transform46",
+    "doors_trapdoor_steel.png^[transform6",
 ];
 
 /// The open and closed nodes of a chest: (closed, open).
@@ -800,6 +932,29 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Steel Ingot",
         image: "default_steel_ingot.png",
         groups: &[],
+    },
+    // minetest_game's doors, with their pictures (CC BY-SA 3.0, see
+    // media/LICENSE-doors.txt).
+    CraftItem {
+        id: ITEM_DOOR_WOOD,
+        name: "esp:door_wood",
+        description: "Wooden Door",
+        image: "doors_item_wood.png",
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2)],
+    },
+    CraftItem {
+        id: ITEM_DOOR_STEEL,
+        name: "esp:door_steel",
+        description: "Steel Door",
+        image: "doors_item_steel.png",
+        groups: &[("cracky", 1), ("level", 2)],
+    },
+    CraftItem {
+        id: ITEM_DOOR_GLASS,
+        name: "esp:door_glass",
+        description: "Glass Door",
+        image: "doors_item_glass.png",
+        groups: &[("cracky", 3), ("oddly_breakable_by_hand", 3)],
     },
 ];
 
@@ -1134,18 +1289,18 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor))
 }
 
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -1468,6 +1623,25 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_tool_breaks.1.ogg", include_bytes!("../media/default_tool_breaks.1.ogg")),
     ("default_tool_breaks.2.ogg", include_bytes!("../media/default_tool_breaks.2.ogg")),
     ("default_tool_breaks.3.ogg", include_bytes!("../media/default_tool_breaks.3.ogg")),
+    // minetest_game's doors (see media/LICENSE-doors.txt).
+    ("door_a.b3d", include_bytes!("../media/door_a.b3d")),
+    ("door_b.b3d", include_bytes!("../media/door_b.b3d")),
+    ("doors_door_wood.png", include_bytes!("../media/doors_door_wood.png")),
+    ("doors_door_steel.png", include_bytes!("../media/doors_door_steel.png")),
+    ("doors_door_glass.png", include_bytes!("../media/doors_door_glass.png")),
+    ("doors_item_wood.png", include_bytes!("../media/doors_item_wood.png")),
+    ("doors_item_steel.png", include_bytes!("../media/doors_item_steel.png")),
+    ("doors_item_glass.png", include_bytes!("../media/doors_item_glass.png")),
+    ("doors_door_open.ogg", include_bytes!("../media/doors_door_open.ogg")),
+    ("doors_door_close.ogg", include_bytes!("../media/doors_door_close.ogg")),
+    ("doors_steel_door_open.ogg", include_bytes!("../media/doors_steel_door_open.ogg")),
+    ("doors_steel_door_close.ogg", include_bytes!("../media/doors_steel_door_close.ogg")),
+    ("doors_glass_door_open.ogg", include_bytes!("../media/doors_glass_door_open.ogg")),
+    ("doors_glass_door_close.ogg", include_bytes!("../media/doors_glass_door_close.ogg")),
+    ("doors_trapdoor.png", include_bytes!("../media/doors_trapdoor.png")),
+    ("doors_trapdoor_side.png", include_bytes!("../media/doors_trapdoor_side.png")),
+    ("doors_trapdoor_steel.png", include_bytes!("../media/doors_trapdoor_steel.png")),
+    ("doors_trapdoor_steel_side.png", include_bytes!("../media/doors_trapdoor_steel_side.png")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -1597,6 +1771,11 @@ fn sounds_of(id: u16) -> Sounds {
             dug: ("default_break_glass", 1.0),
             place: ("default_place_node_hard", 1.0),
         },
+        id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_WOOD) => wood,
+        id if doors::trapdoor_of(id).is_some_and(|(t, _)| !t.locked) => wood,
+        id if doors::trapdoor_of(id).is_some() => sounds_of(CONTENT_STEEL_BLOCK),
+        id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_GLASS) => sounds_of(CONTENT_GLASS),
+        id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_STEEL) => sounds_of(CONTENT_STEEL_BLOCK),
         CONTENT_STEEL_BLOCK | CONTENT_LADDER_STEEL => Sounds {
             footstep: ("default_metal_footstep", 0.2),
             dig: ("default_dig_metal", 0.5),
@@ -1607,6 +1786,19 @@ fn sounds_of(id: u16) -> Sounds {
         // stone, sandstone, ores
         _ => stone,
     }
+}
+
+/// A trapdoor item's picture (minetest_game's inventory_image).
+fn trapdoor_image(id: u16) -> &'static str {
+    match doors::trapdoor_of(id) {
+        Some((t, _)) if t.locked => TRAPDOOR_STEEL_CLOSED[0],
+        _ => TRAPDOOR_WOOD_CLOSED[0],
+    }
+}
+
+/// The sound of placing a node, and its gain.
+pub fn place_sound(id: u16) -> (&'static str, f32) {
+    sounds_of(id).place
 }
 
 fn serialize_item(item: &Item) -> Vec<u8> {
@@ -1672,11 +1864,13 @@ pub fn itemdef_bytes() -> Vec<u8> {
             inventory_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
                 Kind::Sapling | Kind::Apple | Kind::Ladder => n.tiles[0],
+                Kind::Trapdoor => trapdoor_image(n.id),
                 _ => "",
             },
             wield_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
                 Kind::Sapling | Kind::Apple | Kind::Ladder => n.tiles[0],
+                Kind::Trapdoor => trapdoor_image(n.id),
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
@@ -1838,6 +2032,10 @@ fn ladder_selection_box(w: &mut Writer) {
 /// minetest_game's open chest model.
 const CHEST_OPEN_MESH: &str = "chest_open.obj";
 
+/// A door's selection and collision box: two nodes tall, a thin slab at the
+/// front, turned by facedir.
+const DOOR_BOX: [f32; 6] = [-0.5, -0.5, -0.5, 0.5, 1.5, -6.0 / 16.0];
+
 /// minetest_game's apple box, in BS units.
 fn apple_selection_box(w: &mut Writer) {
     w.u8(6).u8(NODEBOX_FIXED).u16(1);
@@ -1876,6 +2074,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let glass = n.kind == Kind::Glass;
     let ladder = n.kind == Kind::Ladder;
     let shaped = stairs::shape_of(n.id);
+    let door = doors::door_of(n.id).map(|(d, _)| d);
+    let hidden = n.kind == Kind::DoorHidden;
+    let trapdoor = doors::trapdoor_of(n.id);
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -1891,7 +2092,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else if sapling || mark {
         w.u8(CPT_LIGHT).u8(0);
-    } else if shaped.is_some() {
+    } else if shaped.is_some() || door.is_some() || hidden || trapdoor.is_some() {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else {
         w.u8(0) // param_type: none
@@ -1909,6 +2110,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Sapling | Kind::Apple => (NDT_PLANTLIKE, ""),
         Kind::Mark => (NDT_AIRLIKE, ""),
         Kind::Shaped => (NDT_NODEBOX, ""),
+        Kind::Door => (NDT_MESH, doors::mesh_of(n.id)),
+        Kind::DoorHidden => (NDT_AIRLIKE, ""),
+        Kind::Trapdoor => (NDT_NODEBOX, ""),
     };
     w.u8(drawtype).string16(mesh).f32(1.0); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
@@ -1917,6 +2121,11 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // for plantlike by default, as for meshes).
     let flags = if torch {
         TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL
+    } else if let Some(d) = door {
+        // Wooden and steel doors cull their back faces, as minetest_game
+        // asks; the glass door, left to the mesh default, doesn't.
+        let culling = if d.item == ITEM_DOOR_GLASS { 0 } else { TILE_FLAG_BACKFACE_CULLING };
+        TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL | culling
     } else if sapling || ladder {
         0
     } else {
@@ -1953,20 +2162,23 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0); // leveled
 
     // lighting
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some()) as u8) // light_propagates
-        .u8((torch || sapling || mark || glass || ladder) as u8) // sunlight_propagates
+    let doorway = door.is_some() || hidden;
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some()) as u8) // light_propagates
+        .u8((torch || sapling || mark || glass || ladder || doorway) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
     let tree = n.groups.iter().any(|(g, _)| *g == "tree");
     w.u8((n.kind == Kind::Solid && !tree) as u8); // is_ground_content
 
     // interaction
-    w.u8(walkable(n.id) as u8) // walkable
-        .u8(if mark { 0 } else { POINTABLE })
-        .u8(!mark as u8) // diggable
+    // The hidden door node is walkable, as minetest_game's (falling nodes
+    // stop on it), though its collision box is tiny.
+    w.u8((walkable(n.id) || hidden) as u8) // walkable
+        .u8(if mark || hidden { 0 } else { POINTABLE })
+        .u8(!(mark || hidden) as u8) // diggable
         .u8(ladder as u8) // climbable
         .u8(mark as u8) // buildable_to
-        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen) as u8) // rightclickable
+        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor) as u8) // rightclickable
         .u32(0); // damage_per_second
 
     // liquid
@@ -1979,11 +2191,16 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0) // drowning
         .u8(0); // floodable
 
-    match shaped {
-        Some((shape, _)) => fixed_nodebox(&mut w, shape.boxes()), // node_box
-        None => regular_nodebox(&mut w), // node_box (unused by meshes)
+    match (shaped, trapdoor) {
+        (Some((shape, _)), _) => fixed_nodebox(&mut w, shape.boxes()), // node_box
+        (_, Some((_, open))) => fixed_nodebox(&mut w, &[doors::trapdoor_box(open)]),
+        _ => regular_nodebox(&mut w), // node_box (unused by meshes)
     }
-    if let Some((shape, _)) = shaped {
+    if let Some((_, open)) = trapdoor {
+        // Its selection box is its node box; so, left empty, is its
+        // collision box.
+        fixed_nodebox(&mut w, &[doors::trapdoor_box(open)]);
+    } else if let Some((shape, _)) = shaped {
         // builtin's register_node: a nodebox's selection box is its node
         // box. Its collision box is left empty, so the client uses the
         // node box for that too.
@@ -1998,10 +2215,19 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         ladder_selection_box(&mut w);
     } else if sapling {
         sapling_selection_box(&mut w);
+    } else if door.is_some() {
+        fixed_nodebox(&mut w, &[DOOR_BOX]);
     } else {
         regular_nodebox(&mut w); // selection_box
     }
-    regular_nodebox(&mut w); // collision_box (torches aren't walkable)
+    if door.is_some() {
+        fixed_nodebox(&mut w, &[DOOR_BOX]);
+    } else if hidden {
+        // 1px block inside the door's hinge, near the top.
+        fixed_nodebox(&mut w, &[[-15.0 / 32.0, 13.0 / 32.0, -15.0 / 32.0, -13.0 / 32.0, 0.5, -13.0 / 32.0]]);
+    } else {
+        regular_nodebox(&mut w); // collision_box (torches aren't walkable)
+    }
 
     let sounds = sounds_of(n.id);
     sound(&mut w, sounds.footstep);
@@ -2011,9 +2237,11 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     w.u8(0) // legacy_facedir_simple
         .u8(0); // legacy_wallmounted
 
-    w.string16("air") // node_dig_prediction
+    // A steel door's owner alone can dig it, so the client doesn't guess
+    // that it went (minetest_game's node_dig_prediction = "").
+    w.string16(if doors::is_locked(n.id) { "" } else { "air" }) // node_dig_prediction
         .u8(LEVELED_MAX)
-        .u8(if torch || leaves || sapling || mark || glass || ladder { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
+        .u8(if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
         .u8(0) // move_resistance
         .u8(0) // liquid_move_physics
         .u8(0); // post_effect_color_shaded

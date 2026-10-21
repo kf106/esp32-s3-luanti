@@ -1,0 +1,236 @@
+Doors and trapdoors: models, textures and sounds from Minetest Game's doors mod
+(https://github.com/luanti-org/minetest_game, mods/doors), unchanged:
+
+  door_a.b3d, door_b.b3d
+  doors_door_wood.png, doors_door_steel.png, doors_door_glass.png
+  doors_item_wood.png, doors_item_steel.png, doors_item_glass.png
+  doors_door_open.ogg, doors_door_close.ogg, doors_steel_door_open.ogg,
+  doors_steel_door_close.ogg, doors_glass_door_open.ogg, doors_glass_door_close.ogg
+  doors_trapdoor.png, doors_trapdoor_side.png, doors_trapdoor_steel.png,
+  doors_trapdoor_steel_side.png
+
+Credits, from the mod's README.md:
+
+## Authors of media (textures)
+
+Following textures created by Fernando Zapata (CC BY-SA 3.0):
+
+- `door_wood.png`
+- `door_wood_a.png`
+- `door_wood_a_r.png`
+- `door_wood_b.png`
+- `door_wood_b_r.png`
+
+Following textures created by BlockMen (CC BY-SA 3.0):
+
+- `door_trapdoor.png`
+- `door_obsidian_glass_side.png`
+
+Following textures created by celeron55 (CC BY-SA 3.0):
+
+- `door_glass_a.png`
+- `door_glass_b.png`
+
+Following textures created by PenguinDad (CC BY-SA 4.0):
+
+- `door_glass.png`
+- `door_obsidian_glass.png`
+
+Following textures created by sofar (CC-BY-SA-3.0):
+
+- `doors_trapdoor_steel.png`
+
+Following textures created by paramat (CC-BY-SA-3.0):
+
+- `door_trapdoor_side.png`
+- `doors_trapdoor_steel_side.png`
+
+Obsidian door textures by red-001 based on textures by Pilzadam and BlockMen (CC BY-SA 3.0):
+
+- `door_obsidian_glass.png`
+
+Glass door textures by Krock and paramat based on textures by VanessaE (CC BY-SA 3.0):
+
+- `doors_door_glass.png`
+- `doors_item_glass.png`
+
+All other textures (created by PilzAdam) (CC BY-SA 3.0):
+
+Door textures were converted to the new texture map by sofar, paramat and
+red-001, under the same license as the originals.
+
+## Authors of media (models)
+
+Door 3d models by sofar (CC-BY-SA-3.0)
+
+- `door_a.obj`
+- `door_b.obj`
+
+Fence gate models by sofar (CC-BY-SA-3.0)
+
+- `fencegate_open.obj`
+- `fencegate_closed.obj`
+
+## Authors of media (sounds)
+
+Opening-Sound created by CGEffex (CC BY 3.0), modified by BlockMen
+
+- `door_open.ogg`
+
+Closing-Sound created by bennstir (CC BY 3.0)
+
+- `door_close.ogg`
+
+`fencegate_open.ogg`:
+http://www.freesound.org/people/mhtaylor67/sounds/126041/ - (CC0 1.0)
+
+`fencegate_close.ogg`:
+http://www.freesound.org/people/BarkersPinhead/sounds/274807/ - (CC-BY-3.0)
+http://www.freesound.org/people/rivernile7/sounds/249573/ - (CC-BY-3.0)
+
+Steel door sounds open & close (CC-BY-3.0) by HazMatt
+
+- http://www.freesound.org/people/HazMattt/sounds/187283/
+- `doors_steel_door_open.ogg`
+- `doors_steel_door_close.ogg`
+
+`doors_glass_door_open.ogg`, `doors_glass_door_close.ogg`:
+https://www.freesound.org/people/SkeetMasterFunk69/sounds/235546/ (CC0 1.0)
+
+Licences, from the mod's license.txt:
+
+Licenses of media (textures, models and sounds)
+-----------------------------------------------
+
+Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+Copyright (C) 2011-2016 Fernando Zapata
+Copyright (C) 2014-2016 celeron55
+Copyright (C) 2012-2016 PilzAdam
+Copyright (C) 2014-2016 BlockMen
+Copyright (C) 2015-2016 sofar
+Copyright (C) 2016 red-001
+Copyright (C) 2016 paramat
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+ShareAlike — If you remix, transform, or build upon the material, you must distribute
+your contributions under the same license as the original.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by-sa/3.0/
+
+-----------------------
+
+Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+Copyright (C) 2014-2016 PenguinDad
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+ShareAlike — If you remix, transform, or build upon the material, you must distribute
+your contributions under the same license as the original.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by-sa/4.0/
+
+-----------------------
+
+Attribution 3.0 Unported (CC BY 3.0)
+Copyright (C) 2014 CGEffex
+Copyright (C) 2014 bennstir
+Copyright (C) 2016 BarkersPinhead
+Copyright (C) 2016 rivernile7
+Copyright (C) 2016 HazMatt
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by/3.0/
+
+-----------------------
+
+CC0 1.0 Universal (CC0 1.0) Public Domain Dedication
+mhtaylor67
+SkeetMasterFunk69
+
+No Copyright
+
+The person who associated a work with this deed has dedicated the work to the public
+domain by waiving all of his or her rights to the work worldwide under copyright law,
+including all related and neighboring rights, to the extent allowed by law.
+
+You can copy, modify, distribute and perform the work, even for commercial purposes, all
+without asking permission. See Other Information below.
+
+Other Information
+
+In no way are the patent or trademark rights of any person affected by CC0, nor are the
+rights that other persons may have in the work or in how the work is used, such as
+publicity or privacy rights.
+Unless expressly stated otherwise, the person who associated a work with this deed makes
+no warranties about the work, and disclaims liability for all uses of the work, to the
+fullest extent permitted by applicable law.
+When using or citing the work, you should not imply endorsement by the author or the
+affirmer.
+
+For more details:
+https://creativecommons.org/publicdomain/zero/1.0/

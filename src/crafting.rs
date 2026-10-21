@@ -79,6 +79,15 @@ pub const RECIPES: &[Recipe] = &[
     // locked one (chests.lua).
     Recipe { width: 3, pattern: &ring(G("wood"), E), output: CONTENT_CHEST, count: 1 },
     Recipe { width: 3, pattern: &ring(G("wood"), I(ITEM_STEEL_INGOT)), output: CONTENT_CHEST_LOCKED, count: 1 },
+    // Doors: two columns of three planks, steel ingots or glass
+    // (doors/init.lua).
+    Recipe { width: 2, pattern: &[G("wood"); 6], output: ITEM_DOOR_WOOD, count: 1 },
+    Recipe { width: 2, pattern: &[I(ITEM_STEEL_INGOT); 6], output: ITEM_DOOR_STEEL, count: 1 },
+    Recipe { width: 2, pattern: &[I(CONTENT_GLASS); 6], output: ITEM_DOOR_GLASS, count: 1 },
+    // Trapdoors: two rows of three planks make 2, a square of four steel
+    // ingots 1.
+    Recipe { width: 3, pattern: &[G("wood"); 6], output: crate::doors::FIRST_TRAPDOOR, count: 2 },
+    Recipe { width: 2, pattern: &[I(ITEM_STEEL_INGOT); 4], output: crate::doors::FIRST_TRAPDOOR + 2, count: 1 },
     // A ring of stone (furnace.lua).
     Recipe {
         width: 3,
@@ -125,6 +134,8 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_CHEST | CONTENT_CHEST_LOCKED => 30.0,
         CONTENT_COAL_BLOCK => 370.0,
         CONTENT_LADDER_WOOD => 7.0,
+        ITEM_DOOR_WOOD => 14.0,
+        crate::doors::FIRST_TRAPDOOR => 7.0,
         id => crate::stairs::burn_time(id, burn_time),
     }
 }
