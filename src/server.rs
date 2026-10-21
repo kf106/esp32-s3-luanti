@@ -43,6 +43,10 @@ const CHEST_HEARING: f32 = 10.0;
 const FURNACE_HEARING: f32 = 16.0;
 /// How far sounds carry by default (Luanti's max_hear_distance).
 const HEARING: f32 = 32.0;
+/// How often the heaps are checked for damage.
+const HEAP_CHECK_INTERVAL: Duration = Duration::from_secs(2);
+/// How many recent events the heap check reports.
+const RECENT: usize = 32;
 /// How far a door is heard opening and closing (its max_hear_distance).
 const DOOR_HEARING: f32 = 10.0;
 /// Wi-Fi power saving goes on after this long with nobody doing anything
@@ -156,7 +160,35 @@ struct Channel {
     /// Reliable packets from the client that arrived before `next_in`'s,
     /// by sequence number: the inner packet's bytes.
     early: HashMap<u16, Vec<u8>>,
+    /// Commands from the client that came split into chunks, by their
+    /// split sequence number, while chunks are still to come.
+    splits: HashMap<u16, IncomingSplit>,
 }
+
+/// One chunk of a split command, as it arrived. (A struct, as Xtensa
+/// function calls carry only six argument words.)
+struct SplitChunk<'a> {
+    seqnum: u16,
+    count: u16,
+    num: u16,
+    data: &'a [u8],
+}
+
+/// A command arriving in chunks (Luanti's IncomingSplitPacket).
+struct IncomingSplit {
+    chunks: Vec<Option<Vec<u8>>>,
+    received: usize,
+    started: Instant,
+}
+
+/// At most this many chunks in one split command: a client's biggest is a
+/// request for every media file, a few kilobytes.
+const MAX_SPLIT_CHUNKS: u16 = 64;
+/// At most this many split commands being put together on a channel.
+const MAX_SPLITS: usize = 4;
+/// Unfinished split commands are dropped after this long (Luanti drops
+/// unreliable ones after 30 s; reliable ones always complete).
+const SPLIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Channel {
     fn new() -> Self {
@@ -167,6 +199,7 @@ impl Channel {
             unacked: Vec::new(),
             queue: VecDeque::new(),
             early: HashMap::new(),
+            splits: HashMap::new(),
         }
     }
 }
@@ -355,6 +388,11 @@ pub struct Server {
     clock: Clock,
     /// Who owns each steel door.
     door_owners: doors::Owners,
+    /// The last RECENT things the server did, for the heap check.
+    recent: VecDeque<(Instant, &'static str, u16)>,
+    heap_checked: Instant,
+    heap_check_timed: bool,
+    heap_damaged: bool,
     /// Id for the next sound that may need fading out.
     next_sound_id: i32,
     /// When a player last did something (moved, looked, dug, chatted...)
@@ -411,8 +449,9 @@ struct SrpJob {
 /// out one at a time.
 fn start_srp_thread(results: Sender<SrpResult>) -> Option<Sender<SrpJob>> {
     let (jobs, queue) = mpsc::channel::<SrpJob>();
-    // Measured: under 3 KB used (see the "Stack left" report).
-    let spawned = spawn_on_second_core(b"srp\0", 8 * 1024, 4, move || {
+    // Measured at 2 KB used, but once 6.5 KB (see the "Stack left"
+    // report): room to spare.
+    let spawned = spawn_on_second_core(b"srp\0", 12 * 1024, 4, move || {
             for job in queue {
                 let started = Instant::now();
                 let challenge = srp::start(&srp::Login {
@@ -642,6 +681,10 @@ impl Server {
             items,
             clock,
             door_owners,
+            recent: VecDeque::new(),
+            heap_checked: Instant::now(),
+            heap_check_timed: false,
+            heap_damaged: false,
             items_stepped: Instant::now(),
             furnaces_stepped: Instant::now(),
             next_sound_id: 1,
@@ -881,18 +924,57 @@ impl Server {
                 chunk_num,
                 data,
             } => {
-                warn!(
-                    "Incoming split packet {seqnum} chunk {chunk_num}/{chunk_count} ({} bytes) not supported yet",
-                    data.len()
-                );
+                let chunk = SplitChunk { seqnum, count: chunk_count, num: chunk_num, data };
+                if let Some(payload) = self.add_split_chunk(from, channel, chunk) {
+                    self.handle_command(from, channel, &payload);
+                }
             }
         }
+    }
+
+    /// One chunk of a split command (Luanti's IncomingSplitBuffer::insert):
+    /// the whole command once its last chunk is in.
+    fn add_split_chunk(&mut self, from: SocketAddr, channel: usize, chunk: SplitChunk<'_>) -> Option<Vec<u8>> {
+        let SplitChunk { seqnum, count, num, data } = chunk;
+        let ch = &mut self.peers.get_mut(&from)?.channels[channel];
+        if count == 0 || count > MAX_SPLIT_CHUNKS || num >= count {
+            warn!("Split packet {seqnum} from {from}: chunk {num} of {count} refused");
+            return None;
+        }
+        ch.splits.retain(|_, s| s.started.elapsed() < SPLIT_TIMEOUT);
+        if !ch.splits.contains_key(&seqnum) && ch.splits.len() >= MAX_SPLITS {
+            warn!("Split packet {seqnum} from {from}: too many unfinished; dropped");
+            return None;
+        }
+        let split = ch.splits.entry(seqnum).or_insert_with(|| IncomingSplit {
+            chunks: vec![None; count as usize],
+            received: 0,
+            started: Instant::now(),
+        });
+        if split.chunks.len() != count as usize {
+            warn!("Split packet {seqnum} from {from}: chunk count changed from {} to {count}", split.chunks.len());
+            return None;
+        }
+        let slot = &mut split.chunks[num as usize];
+        if slot.is_none() {
+            *slot = Some(data.to_vec());
+            split.received += 1;
+        }
+        if split.received < split.chunks.len() {
+            return None;
+        }
+        let split = ch.splits.remove(&seqnum)?;
+        let payload: Vec<u8> = split.chunks.into_iter().flatten().flatten().collect();
+        debug!("Split packet {seqnum} from {from}: {count} chunks, {} bytes", payload.len());
+        Some(payload)
     }
 
     fn handle_command(&mut self, from: SocketAddr, channel: usize, payload: &[u8]) {
         let Some(cmd) = messages::command_id(payload) else {
             return; // empty ORIGINAL packet: the client's "hello", nothing to do
         };
+        let peer_id = self.peers.get(&from).map_or(0, |p| p.id);
+        self.note_command(cmd, peer_id);
         // Logging in and loading, and anything a player does, keep Wi-Fi
         // fully awake. (Positions count only if something changed: see
         // on_playerpos.)
@@ -3185,6 +3267,47 @@ impl Server {
     }
 
     /// Someone is doing something: Wi-Fi fully awake, at once.
+    /// Remember something the server did, for the heap check's report.
+    fn note(&mut self, what: &'static str, n: u16) {
+        if self.recent.len() >= RECENT {
+            self.recent.pop_front();
+        }
+        self.recent.push_back((Instant::now(), what, n));
+    }
+
+    fn note_command(&mut self, cmd: u16, peer: u16) {
+        // The command and the peer it came from, in one number.
+        self.note("command (id << 4 | peer)", cmd << 4 | (peer & 0xf));
+    }
+
+    /// Every HEAP_CHECK_INTERVAL, check the heaps (and, with heap
+    /// poisoning on, every block's guard words). Damage is reported with
+    /// what the server did just before, so it can be traced to its cause
+    /// rather than crashing later somewhere unrelated.
+    fn check_heap(&mut self, now: Instant) {
+        if self.heap_damaged || now.duration_since(self.heap_checked) < HEAP_CHECK_INTERVAL {
+            return;
+        }
+        let last_good = self.heap_checked;
+        self.heap_checked = now;
+        let started = Instant::now();
+        let ok = heap_intact();
+        let took = started.elapsed();
+        if !self.heap_check_timed {
+            self.heap_check_timed = true;
+            info!("Heap check: {} us", took.as_micros());
+        }
+        if ok {
+            return;
+        }
+        self.heap_damaged = true;
+        log::error!("HEAP DAMAGED: found now, intact {} ms ago. What the server did lately, oldest first:", now.duration_since(last_good).as_millis());
+        for (at, what, n) in &self.recent {
+            log::error!("  {:>6} ms ago: {what} {n:#06x}", now.duration_since(*at).as_millis());
+        }
+        crate::status::problem();
+    }
+
     fn wake(&mut self) {
         self.last_activity = Instant::now();
         if self.power_saving {
@@ -3232,8 +3355,13 @@ impl Server {
             self.items_stepped = now;
             self.step_items(dt);
         }
-        self.items.save_if_due();
-        self.clock.save_if_due();
+        if self.items.save_if_due() {
+            self.note("items saved", 0);
+        }
+        if self.clock.save_if_due() {
+            self.note("time saved", 0);
+        }
+        self.check_heap(now);
         self.update_power_saving();
         self.run_timers();
         if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
@@ -3243,6 +3371,7 @@ impl Server {
         }
 
         let mut gone = Vec::new();
+        let mut saved = Vec::new();
         let before = self.peers.len();
         let players = &self.players;
         self.peers.retain(|addr, peer| {
@@ -3250,14 +3379,19 @@ impl Server {
             if !alive {
                 info!("Peer {} ({}) at {addr} timed out", peer.id, peer.display_name());
                 peer.save(players);
+                saved.push(peer.id);
                 if peer.ready {
                     gone.push((peer.id, peer.display_name().to_string()));
                 }
             } else if peer.ready && now.duration_since(peer.saved_at) >= SAVE_INTERVAL {
                 peer.save(players);
+                saved.push(peer.id);
             }
             alive
         });
+        for id in saved {
+            self.note("player saved", id);
+        }
         for (id, name) in gone {
             self.remove_player_object(id);
             self.event(format!("{name} timed out"));
@@ -3443,6 +3577,18 @@ fn set_wifi_power_save(on: bool) {
 
 #[cfg(not(target_os = "espidf"))]
 fn set_wifi_power_save(_on: bool) {}
+
+/// Whether ESP-IDF's heaps are intact (heap_caps_check_integrity_all,
+/// which prints what it finds wrong).
+#[cfg(target_os = "espidf")]
+fn heap_intact() -> bool {
+    unsafe { esp_idf_svc::sys::heap_caps_check_integrity_all(true) }
+}
+
+#[cfg(not(target_os = "espidf"))]
+fn heap_intact() -> bool {
+    true
+}
 
 /// For testing on a PC: with LUANTI_FAIL_SENDS=n set, every nth send
 /// fails, as sends do on the ESP32 when its Wi-Fi buffers are full.

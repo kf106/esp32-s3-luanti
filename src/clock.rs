@@ -74,11 +74,14 @@ impl Clock {
         format!("{}:{:02}", minutes / 60, minutes % 60)
     }
 
-    /// Save, if SAVE_INTERVAL has passed since the last time.
-    pub fn save_if_due(&mut self) {
-        if self.saved_at.elapsed() >= SAVE_INTERVAL {
+    /// Save, if SAVE_INTERVAL has passed since the last time. Returns
+    /// whether it saved.
+    pub fn save_if_due(&mut self) -> bool {
+        let due = self.saved_at.elapsed() >= SAVE_INTERVAL;
+        if due {
             self.save();
         }
+        due
     }
 
     pub fn save(&mut self) {

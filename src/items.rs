@@ -131,11 +131,14 @@ impl Items {
         }
     }
 
-    /// Save, if the items changed SAVE_DELAY or more ago.
-    pub fn save_if_due(&mut self) {
-        if self.changed.is_some_and(|t| t.elapsed() >= SAVE_DELAY) {
+    /// Save, if the items changed SAVE_DELAY or more ago. Returns whether
+    /// it saved.
+    pub fn save_if_due(&mut self) -> bool {
+        let due = self.changed.is_some_and(|t| t.elapsed() >= SAVE_DELAY);
+        if due {
             self.save();
         }
+        due
     }
 
     pub fn save(&mut self) {

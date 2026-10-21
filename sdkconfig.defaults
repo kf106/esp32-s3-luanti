@@ -38,3 +38,7 @@ CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 # Stop at once, naming the task, if any task overflows its stack (rather than
 # corrupting the memory next to it and crashing later somewhere else).
 CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y
+
+# Guard words round every heap block, so an overrun is caught at the block
+# it damages (checked by the server's periodic heap check, and on free).
+CONFIG_HEAP_POISONING_LIGHT=y
