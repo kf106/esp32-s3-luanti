@@ -1,15 +1,32 @@
 //! Dropped items lying in the world, like builtin's "__builtin:item"
 //! entity: thrown by a player (or knocked off a wall), they fall and come to
 //! rest on the ground, merge with matching items nearby, and are picked up
-//! by punching them. They disappear after 15 minutes, and aren't saved over
-//! a restart.
+//! by punching them. They disappear after 15 minutes.
+//!
+//! They are kept over a restart in `world/items.txt`, as builtin's item
+//! entity keeps its item and age in its static data: one line each,
+//!   <x> <y> <z> <age> <item string>
+//! rewritten a few seconds after they change. After a restart they fall
+//! from where they were, so they settle wherever the ground now is.
 //!
 //! Clients move a falling item themselves (it is a physical object with
 //! gravity); the server moves its own copy the same way so it knows where
 //! the item ends up, and tells clients when it lands.
 
+use std::io;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+use log::{info, warn};
+
 use crate::inventory::Stack;
 use crate::messages::{item_size, GRAVITY};
+use crate::storage;
+
+/// How soon after a change the items are saved: often enough to lose
+/// little when the plug is pulled, seldom enough to spare the SD card
+/// while items are being thrown around.
+const SAVE_DELAY: Duration = Duration::from_secs(10);
 
 /// builtin's default item_entity_ttl, in seconds.
 pub const TIME_TO_LIVE: f32 = 900.0;
@@ -64,11 +81,81 @@ pub enum Change {
 pub struct Items {
     list: Vec<Dropped>,
     next_id: u16,
+    /// Where they are saved (None: not saved).
+    path: Option<PathBuf>,
+    /// When they first changed since the last save.
+    changed: Option<Instant>,
 }
 
 impl Items {
     pub fn new() -> Self {
-        Self { list: Vec::new(), next_id: FIRST_ID }
+        Self { list: Vec::new(), next_id: FIRST_ID, path: None, changed: None }
+    }
+
+    /// The items saved at `path`. They start falling, so call `settle`
+    /// once the world is there to lift any that are now inside a block.
+    pub fn open(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let mut items = Self { path: Some(path.clone()), ..Self::new() };
+        let text = match storage::read(&path) {
+            Ok(text) => String::from_utf8_lossy(&text).into_owned(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return items,
+            Err(e) => {
+                warn!("Reading {}: {e}", path.display());
+                return items;
+            }
+        };
+        for line in text.lines() {
+            match parse(line) {
+                Some((pos, age, stack)) if items.list.len() < MAX_ITEMS => {
+                    let id = items.next_id;
+                    items.next_id += 1;
+                    let (item, count, wear) = (stack.id, stack.count, stack.wear);
+                    items.list.push(Dropped { id, item, count, wear, pos, vel: [0.0; 3], falling: true, age });
+                }
+                Some(_) => {}
+                None => warn!("Skipping item line \"{line}\""),
+            }
+        }
+        if !items.list.is_empty() {
+            info!("{} dropped items", items.list.len());
+        }
+        items
+    }
+
+    /// Lift items out of anything solid they are in (built over while
+    /// the server was off, or a save from before).
+    pub fn settle(&mut self, solid: &dyn Fn(i32, i32, i32) -> bool) {
+        for d in &mut self.list {
+            lift_out(&mut d.pos, item_size(d.count), solid);
+        }
+    }
+
+    /// Save, if the items changed SAVE_DELAY or more ago.
+    pub fn save_if_due(&mut self) {
+        if self.changed.is_some_and(|t| t.elapsed() >= SAVE_DELAY) {
+            self.save();
+        }
+    }
+
+    pub fn save(&mut self) {
+        self.changed = None;
+        let Some(path) = &self.path else {
+            return;
+        };
+        let mut text = String::new();
+        for d in &self.list {
+            let [x, y, z] = d.pos;
+            text.push_str(&format!("{x:.2} {y:.2} {z:.2} {:.0} {}\n", d.age, d.stack().item_string()));
+        }
+        if let Err(e) = storage::write(path, text.as_bytes()) {
+            warn!("Saving {}: {e}", path.display());
+            crate::status::problem();
+        }
+    }
+
+    fn touch(&mut self) {
+        self.changed.get_or_insert_with(Instant::now);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Dropped> {
@@ -95,26 +182,23 @@ impl Items {
         let id = self.next_id;
         self.next_id = if self.next_id == u16::MAX { FIRST_ID } else { self.next_id + 1 };
         let (mut pos, vel) = motion;
-        let half = item_size(stack.count);
-        for _ in 0..3 {
-            if !overlaps(pos, half, solid) {
-                break;
-            }
-            pos[1] = (pos[1] + 0.5).floor() + 0.5 + half + 1e-3;
-        }
+        lift_out(&mut pos, item_size(stack.count), solid);
         let (item, count, wear) = (stack.id, stack.count, stack.wear);
         self.list.push(Dropped { id, item, count, wear, pos, vel, falling: true, age: 0.0 });
+        self.touch();
         (id, evicted)
     }
 
     pub fn remove(&mut self, id: u16) -> Option<Dropped> {
         let i = self.list.iter().position(|d| d.id == id)?;
+        self.touch();
         Some(self.list.remove(i))
     }
 
     pub fn set_count(&mut self, id: u16, count: u16) {
         if let Some(d) = self.get_mut(id) {
             d.count = count;
+            self.touch();
         }
     }
 
@@ -183,6 +267,9 @@ impl Items {
             changes.push(Change::Moved(id));
             changes.extend(self.merge_into(id));
         }
+        if !changes.is_empty() {
+            self.touch();
+        }
         changes
     }
 
@@ -221,6 +308,27 @@ impl Items {
         }
         changes
     }
+}
+
+/// Lift an item of half size `half` out of solid nodes it is in, up to
+/// three nodes.
+fn lift_out(pos: &mut [f32; 3], half: f32, solid: &dyn Fn(i32, i32, i32) -> bool) {
+    for _ in 0..3 {
+        if !overlaps(*pos, half, solid) {
+            break;
+        }
+        pos[1] = (pos[1] + 0.5).floor() + 0.5 + half + 1e-3;
+    }
+}
+
+/// A saved item line: position, age and stack.
+fn parse(line: &str) -> Option<([f32; 3], f32, Stack)> {
+    let mut f = line.splitn(5, ' ');
+    let mut num = || f.next()?.parse::<f32>().ok();
+    let pos = [num()?, num()?, num()?];
+    let age = num()?;
+    let stack = Stack::parse(f.next()?)?;
+    pos.iter().all(|v| v.is_finite()).then_some((pos, age, stack))
 }
 
 /// The range of node coordinates a box from `min` to `max` overlaps. Node
@@ -267,5 +375,47 @@ fn move_axis(pos: &mut [f32; 3], axis: usize, delta: f32, half: f32, solid: &dyn
             pos[axis] = if delta < 0.0 { snap.clamp(new[axis], old) } else { snap.clamp(old, new[axis]) };
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::*;
+
+    #[test]
+    fn saved_over_a_restart() {
+        let dir = std::env::temp_dir().join(format!("esp_items_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("items.txt");
+        let _ = std::fs::remove_file(&path);
+        // The ground is everything below y = 0.5.
+        let ground = |_: i32, y: i32, _: i32| y <= 0;
+        let mut items = Items::open(&path);
+        items.add(Stack::new(CONTENT_COBBLE, 7), ([1.0, 3.0, 2.0], [0.0; 3]), &ground);
+        items.add(Stack { id: TOOL_PICK_STONE, count: 1, wear: 1234 }, ([4.0, 3.0, 2.0], [0.0; 3]), &ground);
+        for _ in 0..50 {
+            items.step(0.1, &ground);
+        }
+        assert!(items.changed.is_some());
+        items.save();
+        assert!(items.changed.is_none());
+        let before: Vec<(u16, u16, u16)> = items.iter().map(|d| (d.item, d.count, d.wear)).collect();
+
+        // Since then a block was built where the cobblestone lies.
+        let built = |x: i32, y: i32, z: i32| y <= 0 || (x, y, z) == (1, 1, 2);
+        let mut again = Items::open(&path);
+        again.settle(&built);
+        let after: Vec<(u16, u16, u16)> = again.iter().map(|d| (d.item, d.count, d.wear)).collect();
+        assert_eq!(before, after);
+        let cobble = again.iter().next().unwrap();
+        assert!(cobble.pos[1] > 1.5 && cobble.falling && (cobble.age - 5.0).abs() < 1.0);
+        // They settle back on the ground (or the new block).
+        for _ in 0..20 {
+            again.step(0.1, &built);
+        }
+        assert!(again.iter().all(|d| !d.falling));
+        assert!(parse("1 2 x 0 esp:cobble").is_none() && parse("1 2 3 0 esp:nothing 4").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

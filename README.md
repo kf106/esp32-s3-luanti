@@ -88,7 +88,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - chosen with a live 3D preview in the inventory window;
   - extra skins can be added on the SD card;
   - 64×64 Minecraft skins are accepted.
-- **Saving:** player positions, health, skins and inventories are saved and restored.
+- **Saving:** player positions, health, skins and inventories are saved and restored. So are dropped items (they fall back to the ground after a restart, keeping how long they have left) and the time of day, so a restart carries on where the game was. The board is usually stopped by pulling the plug, so the time is saved every minute and items 10 seconds after they change: at most that much is lost.
 - **Status light:** the board's RGB LED shows what is happening, whether the screen is on or off. It never goes above 60% of full power.
   - slow green breathing while the server runs, a little quicker with players on;
   - two blue flashes when a player joins, two purple when one leaves, and a white flash for chat;
@@ -103,9 +103,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 - No doors, beds, water or the other Minetest Game blocks yet; no admin commands.
 - No Lua mods: the game content is built in.
-- Dropped items are not saved over a restart.
 - One world per SD card.
-- The time of day restarts at 10:00 when the server starts.
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
 
 ## Building
@@ -148,7 +146,8 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 
 ```
 /sd/auth/       accounts (salt and SRP verifier per player)
-/sd/world/      the world: nodes.log (every change made), furnaces.txt and chests.txt (their contents) and the generator version
+/sd/world/      the world: nodes.log (every change made), furnaces.txt and chests.txt (their contents), items.txt (dropped items),
+                env_meta.txt (the time of day, as Luanti keeps it) and the generator version
 /sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin)
 /sd/media/      optional extra media (see below)
 /sd/motd.txt    optional welcome message (see below)
@@ -204,7 +203,7 @@ To try out crafting and building without gathering everything first, build with 
 TEST=1 WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
 ```
 
-Every player then gets, once, 50 each of cobblestone, stone, sand, sandstone, the three kinds of tree trunk and planks, sticks, coal lumps, iron lumps, steel ingots and apples. Each `TEST=1` build has its own token (recorded in the player's inventory file), so flashing another one hands out a fresh kit. Build without `TEST` for normal play.
+Every player then gets, once, 50 each of cobblestone, stone, sand, sandstone, the three kinds of tree trunk and planks, sticks, coal lumps, iron lumps, steel ingots and apples. The value of `TEST` is the kit's name, recorded in the player's inventory file: rebuilding with `TEST=1` gives nothing more, and `TEST=2` (or any new value) hands out a fresh kit. Build without `TEST` for normal play.
 
 ### Extra media and skins
 
@@ -236,6 +235,7 @@ src/crafting.rs    crafting recipes, the craft grid, and fuel
 src/furnace.rs     furnaces, and moving items between inventories
 src/chest.rs       chests
 src/nature.rs      leaf decay, saplings and apples
+src/clock.rs       the time of day, kept over restarts
 src/stairs.rs      stairs and slabs
 src/player.rs      saved player state
 src/skins.rs       player skins

@@ -8,8 +8,9 @@
 //!
 //! `TEST=1 cargo run --release` builds firmware for testing that gives every
 //! player, once, a test kit: 50 of each crafting material (see
-//! inventory.rs). Each such build has its own token, so flashing another one
-//! hands out a fresh kit. Build normally for play.
+//! inventory.rs). The value is the kit's token: rebuilding with the same one
+//! gives nothing more, and a new value (TEST=2, and so on) hands out a fresh
+//! kit. Build normally for play.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,10 +28,10 @@ fn main() {
     }
 
     println!("cargo:rerun-if-env-changed=TEST");
-    if std::env::var("TEST").is_ok_and(|v| v == "1") {
-        let token = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        println!("cargo:rustc-env=TEST_KIT_TOKEN={token}");
-        println!("cargo:rerun-if-changed=.test-kit-every-build");
-        println!("cargo:warning=This firmware gives every player a test kit of crafting materials");
+    let test = std::env::var("TEST").unwrap_or_default();
+    let test = test.trim();
+    if !test.is_empty() && test != "0" && test.chars().all(|c| c.is_ascii_alphanumeric()) {
+        println!("cargo:rustc-env=TEST_KIT_TOKEN={test}");
+        println!("cargo:warning=This firmware gives every player test kit {test} of crafting materials, once");
     }
 }

@@ -21,6 +21,7 @@ use crate::srp;
 use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
+use crate::clock::{self, Clock};
 use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
 use crate::nature::{self, Job, Rng, Timers};
 use crate::world::{self, BlockPos, NodePos, World};
@@ -78,8 +79,6 @@ const SEND_FAILURE_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const SEND_INTERVAL: f32 = 0.09;
 const MAP_SEED: u64 = 0;
 /// Start the day at 10:00, running at Luanti's default speed.
-const TIME_OF_DAY: u16 = 10000;
-const TIME_SPEED: f32 = 72.0;
 
 /// Horizontal view radius in map blocks (the client may ask for less).
 const MAX_VIEW_RADIUS: i16 = 5;
@@ -349,6 +348,8 @@ pub struct Server {
     items_stepped: Instant,
     /// When the furnaces' timers last ran.
     furnaces_stepped: Instant,
+    /// The time of day, kept over restarts.
+    clock: Clock,
     /// Id for the next sound that may need fading out.
     next_sound_id: i32,
     /// When a player last did something (moved, looked, dug, chatted...)
@@ -382,6 +383,8 @@ pub struct Setup {
     pub players: PlayerStore,
     pub furnaces: Furnaces,
     pub chests: Chests,
+    pub items: Items,
+    pub clock: Clock,
     pub media: Media,
     pub status: SharedStatus,
 }
@@ -562,7 +565,9 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, media, status } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, media, status } = setup;
+        // Items dropped before a restart: out of any block built over them.
+        items.settle(&|x, y, z| content::walkable(world.node((x, y, z))));
         let itemdef = build_itemdef(&content::itemdef_bytes());
         let nodedef = build_nodedef(&content::nodedef_bytes());
         let announce_media = build_announce_media(
@@ -628,7 +633,8 @@ impl Server {
             builder,
             building: HashSet::new(),
             built: Default::default(),
-            items: Items::new(),
+            items,
+            clock,
             items_stepped: Instant::now(),
             furnaces_stepped: Instant::now(),
             next_sound_id: 1,
@@ -1251,7 +1257,7 @@ impl Server {
         self.send_command(from, 0, &build_movement());
         // The time now, so every player's day matches.
         let now = self.time_of_day();
-        self.send_command(from, 0, &build_time_of_day(now, TIME_SPEED));
+        self.send_command(from, 0, &build_time_of_day(now, clock::TIME_SPEED));
         self.send_command(from, 0, &build_csm_restriction_flags());
     }
 
@@ -1999,7 +2005,7 @@ impl Server {
                 self.tell(from, &line);
             }
             "time" => {
-                let line = format!("Current time is {}.", self.clock());
+                let line = format!("Current time is {}.", self.clock.hh_mm());
                 self.tell(from, &line);
             }
             other => self.tell(from, &format!("-!- Invalid command: {other}. Type /help for a list of commands.")),
@@ -2014,24 +2020,16 @@ impl Server {
             "# Server: ESP32-S3 Luanti server, uptime: {}h {:02}m, time of day: {}, players ({}/{MAX_PLAYERS}): {}",
             up / 3600,
             up / 60 % 60,
-            self.clock(),
+            self.clock.hh_mm(),
             players.len(),
             players.join(", ")
         )
     }
 
-    /// The game's time of day in Luanti's units (0..24000, 6000 = 06:00).
-    /// The day starts at TIME_OF_DAY when the server starts and runs
-    /// TIME_SPEED times faster than real time.
+    /// The game's time of day in Luanti's units (0..24000, 6000 = 06:00),
+    /// carried on from before a restart (clock.rs).
     fn time_of_day(&self) -> u16 {
-        let secs = status::lock(&self.status).started.elapsed().as_secs_f64();
-        ((TIME_OF_DAY as f64 + secs * TIME_SPEED as f64 * 24000.0 / 86400.0) % 24000.0) as u16
-    }
-
-    /// The time of day as hh:mm.
-    fn clock(&self) -> String {
-        let minutes = self.time_of_day() as u32 * 1440 / 24000;
-        format!("{}:{:02}", minutes / 60, minutes % 60)
+        self.clock.time_of_day()
     }
 
     /// The welcome message, and who else is here, in the chat area.
@@ -3128,6 +3126,8 @@ impl Server {
             self.items_stepped = now;
             self.step_items(dt);
         }
+        self.items.save_if_due();
+        self.clock.save_if_due();
         self.update_power_saving();
         self.run_timers();
         if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
