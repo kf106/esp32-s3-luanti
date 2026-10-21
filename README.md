@@ -247,7 +247,26 @@ src/zstd.rs        a small zstd compressor for map blocks
 src/lcd.rs, screen.rs, font.rs, status.rs   the status display
 src/storage.rs     safe file writes on FAT
 media/             built-in textures and models
+tools/loadtest.py  bot players for load testing (see below)
 ```
+
+## Load testing
+
+`tools/loadtest.py` starts bot players that log in and walk off in
+different directions, so the server has to generate and send fresh map
+blocks for each, as players exploring would. It needs only Python 3:
+
+```
+python3 tools/loadtest.py 192.168.68.137 --bots 5 --minutes 10
+```
+
+Every 10 seconds it prints each bot's distance walked, map blocks received
+(in total and per second), round trip time, longest silence from the
+server, and packets it had to resend. Watch the board's Device page
+meanwhile for CPU load and memory. The bots are saved like any player, so
+each run carries on in new terrain. Real players count towards the limit
+of six; a bot over the limit is turned away. `--help` lists the other
+options (speed, how far apart they join, view range, names).
 
 ## Notes for hackers
 

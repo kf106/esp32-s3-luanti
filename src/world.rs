@@ -25,7 +25,7 @@
 //! different generator is renamed out of the way and the world starts
 //! fresh.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
 use crate::fasthash::{FastMap, FastSet};
@@ -47,9 +47,23 @@ const NODE_COUNT: usize = 16 * 16 * 16;
 pub const CONTENT_AIR: u16 = 126;
 const LIGHT_SUN: u8 = 15;
 
-/// Cache limits (entries), after which a cache is simply emptied.
-const COLUMN_CACHE_MAX: usize = 1024; // about 2 KB each
-const CAVE_CACHE_MAX: usize = 60_000; // a few dozen bytes each
+/// Terrain cache limits, in entries. Players exploring in different
+/// directions fill them, so together they must fit in PSRAM with room to
+/// spare: once five bots walking outwards ran it out.
+///
+/// Block columns are about 4 KB each (256 columns of 12 bytes, and tree
+/// tops). The block builder makes the terrain, so it keeps more; the
+/// server's own world only looks up nodes near players. When full, the
+/// older half goes.
+const BUILDER_COLUMNS: usize = 384; // about 1.6 MB
+const SERVER_COLUMNS: usize = 128; // about 0.5 MB
+/// Cave noise samples, 20 bytes each. A hash table doubles once it is 7/8
+/// full, so this stays under 7/8 of 32768: the table is 0.7 MB, and never
+/// grows to the next size (2.75 MB, needed in one piece).
+const CAVE_CACHE_MAX: usize = 28_000;
+/// Height ranges of block columns, for deciding which blocks players need
+/// (16 bytes each; under 7/8 of 4096 for the same reason).
+const HEIGHT_CACHE_MAX: usize = 3_500;
 
 /// How far torch light reaches: it starts at TORCH_LIGHT and fades by one
 /// per node, so nodes further than this get none.
@@ -147,7 +161,11 @@ pub struct World {
     /// map blocks.
     log_path: Option<PathBuf>,
     /// Terrain caches (filled on demand; each World is used by one thread).
-    block_columns: RefCell<FastMap<(i16, i16), Arc<BlockColumn>>>,
+    /// Block columns carry the order they were made in, so the oldest can go.
+    block_columns: RefCell<FastMap<(i16, i16), (u32, Arc<BlockColumn>)>>,
+    columns_made: Cell<u32>,
+    column_limit: usize,
+    heights: RefCell<FastMap<(i16, i16), (i32, i32)>>,
     cave_samples: RefCell<FastMap<(i32, i32, i32), (f32, f32)>>,
 }
 
@@ -162,6 +180,9 @@ impl World {
             state: Arc::new(State::default()),
             log_path: Some(log_path.clone()),
             block_columns: RefCell::new(FastMap::default()),
+            columns_made: Cell::new(0),
+            column_limit: SERVER_COLUMNS,
+            heights: RefCell::new(FastMap::default()),
             cave_samples: RefCell::new(FastMap::default()),
         };
 
@@ -202,6 +223,9 @@ impl World {
             state: Arc::new(State::default()),
             log_path: None,
             block_columns: RefCell::new(FastMap::default()),
+            columns_made: Cell::new(0),
+            column_limit: BUILDER_COLUMNS,
+            heights: RefCell::new(FastMap::default()),
             cave_samples: RefCell::new(FastMap::default()),
         }
     }
@@ -310,7 +334,7 @@ impl World {
     // -----------------------------------------------------------------------
 
     fn block_column(&self, bx: i16, bz: i16) -> Arc<BlockColumn> {
-        if let Some(c) = self.block_columns.borrow().get(&(bx, bz)) {
+        if let Some((_, c)) = self.block_columns.borrow().get(&(bx, bz)) {
             return c.clone();
         }
         let mut columns = Vec::with_capacity(256);
@@ -335,10 +359,14 @@ impl World {
         let max_tree_top = tree_top.iter().copied().max().unwrap_or(i32::MIN);
         let bc = Arc::new(BlockColumn { columns, min_height, max_height, trees, tree_top, max_tree_top });
         let mut cache = self.block_columns.borrow_mut();
-        if cache.len() >= COLUMN_CACHE_MAX {
-            cache.clear();
+        let made = self.columns_made.get().wrapping_add(1);
+        self.columns_made.set(made);
+        if cache.len() >= self.column_limit {
+            // Keep the newer half: nearby columns are wanted again soon.
+            let keep = (self.column_limit / 2) as u32;
+            cache.retain(|_, (when, _)| made.wrapping_sub(*when) <= keep);
         }
-        cache.insert((bx, bz), bc.clone());
+        cache.insert((bx, bz), (made, bc.clone()));
         bc
     }
 
@@ -350,8 +378,17 @@ impl World {
     /// Lowest generated surface and highest generated node (surface or
     /// tree) in a block column, for deciding which blocks to send.
     pub fn height_range(&self, bx: i16, bz: i16) -> (i32, i32) {
+        if let Some(&h) = self.heights.borrow().get(&(bx, bz)) {
+            return h;
+        }
         let bc = self.block_column(bx, bz);
-        (bc.min_height, bc.max_height.max(bc.max_tree_top))
+        let h = (bc.min_height, bc.max_height.max(bc.max_tree_top));
+        let mut heights = self.heights.borrow_mut();
+        if heights.len() >= HEIGHT_CACHE_MAX {
+            heights.clear();
+        }
+        heights.insert((bx, bz), h);
+        h
     }
 
     fn generated(&self, x: i32, y: i32, z: i32, col: &Column) -> u16 {
