@@ -18,6 +18,7 @@ use crate::items::{Change, Items};
 use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
+use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
 use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
@@ -1671,6 +1672,25 @@ impl Server {
                 let target = self.world.node(node_pos(above));
                 let free = target == world::CONTENT_AIR || content::is_mark(target);
                 let support = self.world.node(node_pos(under));
+                // A slab on the open face of the same kind of slab makes a
+                // full block where that slab was. The client predicted a
+                // slab in the node beyond, so put that back too.
+                if let Some(block) = stairs::merged(id, under, above, support, self.world.param2(node_pos(under))) {
+                    if !in_reach(under) {
+                        self.resend_node(from, above);
+                        return;
+                    }
+                    info!("{name} made a double slab of {} at {under:?}", content::name_of(id));
+                    self.edit_event(&name, "placed", block);
+                    if let Some(peer) = self.peers.get_mut(&from) {
+                        peer.inventory.take_one(slot);
+                    }
+                    self.inventory_changed(from);
+                    self.world.set_node(node_pos(under), block, 0);
+                    self.broadcast_node(under, &build_addnode(under, block, 0));
+                    self.resend_node(from, above);
+                    return;
+                }
                 // A torch hangs on something solid (the client checks the
                 // same); anything else just needs something to build on.
                 let torch = content::is_torch(id);
@@ -1690,6 +1710,16 @@ impl Server {
                     content::wallmounted_param2(under, above)
                 } else if content::is_furnace(id) || content::is_chest(id) {
                     content::facedir_param2(above, body)
+                } else if stairs::shape_of(id).is_some() {
+                    // Stairs and slabs: the way the player looks decides
+                    // which way up they go (the stairs mod's on_place).
+                    let (pitch, yaw) = match (&msg.pos, self.peers.get(&from)) {
+                        (Some(pp), _) => (pp.pitch, pp.yaw),
+                        (None, Some(p)) => (p.pitch, p.yaw),
+                        (None, None) => (0.0, 0.0),
+                    };
+                    let placer = stairs::Placer { feet: [body[0], body[1] - 1.0, body[2]], pitch, yaw };
+                    stairs::place_param2(id, under, above, support, self.world.param2(node_pos(under)), &placer)
                 } else if content::is_leaves(id) || content::is_apple(id) {
                     // Placed leaves never decay (minetest_game's
                     // after_place_leaves), and placed apples don't regrow.

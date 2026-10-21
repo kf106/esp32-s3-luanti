@@ -12,6 +12,7 @@ use log::{info, warn};
 
 use crate::messages::Writer;
 use crate::sha1::sha1;
+use crate::stairs;
 
 // ---------------------------------------------------------------------------
 // Definitions
@@ -66,6 +67,9 @@ pub enum Kind {
     /// A ladder: a flat picture against a wall (signlike, wallmounted),
     /// walked through and climbed.
     Ladder,
+    /// A stair or slab (stairs.rs): boxes (nodebox) turned by facedir, with
+    /// light passing into it as minetest_game's paramtype "light" lets it.
+    Shaped,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -139,7 +143,24 @@ pub const TOOL_SWORD_STEEL: u16 = 0x200B;
 /// slightly gentler and keeps the lit area, and the work, smaller).
 pub const TORCH_LIGHT: u8 = 12;
 
+/// A stair or slab: it drops itself.
+macro_rules! shaped {
+    ($id:expr, $name:literal, $description:literal, $tile:literal, $groups:expr) => {
+        Node {
+            id: $id,
+            name: concat!("esp:", $name),
+            description: $description,
+            tiles: [$tile; 6],
+            groups: $groups,
+            drop: $id,
+            drop_count: 1,
+            kind: Kind::Shaped,
+        }
+    };
+}
+
 /// Content IDs 125, 126 and 127 are reserved for unknown, air and ignore.
+/// Listed in id order, without gaps, so that an id finds its node at once.
 pub const NODES: &[Node] = &[
     Node {
         id: CONTENT_STONE,
@@ -628,6 +649,49 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Ladder,
     },
+    // Stairs, slabs and corner stairs (stairs.rs), in its MATERIALS order: minetest_game's
+    // groups for each, without "wood" or "stone" (so they don't craft as
+    // planks or stone), and the block's own picture on every side.
+    shaped!(stairs::FIRST_STAIR + 0, "stair_birch_wood", "Birch Wood Stair", "esp_birch_wood.png", &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 1, "stair_fir_wood", "Fir Wood Stair", "esp_fir_wood.png", &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 2, "stair_apple_wood", "Apple Wood Stair", "esp_apple_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 3, "stair_stone", "Stone Stair", "esp_stone.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 4, "stair_cobble", "Cobblestone Stair", "esp_cobble.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 5, "stair_stonebrick", "Stone Brick Stair", "esp_stone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 6, "stair_stone_block", "Stone Block Stair", "esp_stone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 7, "stair_sandstone", "Sandstone Stair", "esp_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 8, "stair_sandstonebrick", "Sandstone Brick Stair", "esp_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_STAIR + 9, "stair_sandstone_block", "Sandstone Block Stair", "esp_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_SLAB + 0, "slab_birch_wood", "Birch Wood Slab", "esp_birch_wood.png", &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 1, "slab_fir_wood", "Fir Wood Slab", "esp_fir_wood.png", &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 2, "slab_apple_wood", "Apple Wood Slab", "esp_apple_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 3, "slab_stone", "Stone Slab", "esp_stone.png", &[("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 4, "slab_cobble", "Cobblestone Slab", "esp_cobble.png", &[("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 5, "slab_stonebrick", "Stone Brick Slab", "esp_stone_brick.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 6, "slab_stone_block", "Stone Block Slab", "esp_stone_block.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 7, "slab_sandstone", "Sandstone Slab", "esp_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 8, "slab_sandstonebrick", "Sandstone Brick Slab", "esp_sandstone_brick.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::FIRST_SLAB + 9, "slab_sandstone_block", "Sandstone Block Slab", "esp_sandstone_block.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::FIRST_INNER + 0, "stair_inner_birch_wood", "Inner Birch Wood Stair", "esp_birch_wood.png", &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 1, "stair_inner_fir_wood", "Inner Fir Wood Stair", "esp_fir_wood.png", &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 2, "stair_inner_apple_wood", "Inner Apple Wood Stair", "esp_apple_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 3, "stair_inner_stone", "Inner Stone Stair", "esp_stone.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 4, "stair_inner_cobble", "Inner Cobblestone Stair", "esp_cobble.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 5, "stair_inner_stonebrick", "Inner Stone Brick Stair", "esp_stone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 6, "stair_inner_stone_block", "Inner Stone Block Stair", "esp_stone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 7, "stair_inner_sandstone", "Inner Sandstone Stair", "esp_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 8, "stair_inner_sandstonebrick", "Inner Sandstone Brick Stair", "esp_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_INNER + 9, "stair_inner_sandstone_block", "Inner Sandstone Block Stair", "esp_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 0, "stair_outer_birch_wood", "Outer Birch Wood Stair", "esp_birch_wood.png", &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 1, "stair_outer_fir_wood", "Outer Fir Wood Stair", "esp_fir_wood.png", &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 2, "stair_outer_apple_wood", "Outer Apple Wood Stair", "esp_apple_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 3, "stair_outer_stone", "Outer Stone Stair", "esp_stone.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 4, "stair_outer_cobble", "Outer Cobblestone Stair", "esp_cobble.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 5, "stair_outer_stonebrick", "Outer Stone Brick Stair", "esp_stone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 6, "stair_outer_stone_block", "Outer Stone Block Stair", "esp_stone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 7, "stair_outer_sandstone", "Outer Sandstone Stair", "esp_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 8, "stair_outer_sandstonebrick", "Outer Sandstone Brick Stair", "esp_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::FIRST_OUTER + 9, "stair_outer_sandstone_block", "Outer Sandstone Block Stair", "esp_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
 ];
 
 // Saplings, from leaves (one time in SAPLING_RARITY), as minetest_game's
@@ -1056,7 +1120,7 @@ pub fn torch_variant(id: u16, param2: u8) -> u16 {
 }
 
 fn def(id: u16) -> Option<&'static Node> {
-    NODES.iter().find(|n| n.id == id)
+    NODES.get(id as usize).filter(|n| n.id == id).or_else(|| NODES.iter().find(|n| n.id == id))
 }
 
 /// Light a node gives off (0 for most).
@@ -1070,7 +1134,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped))
 }
 
 /// Whether direct sunlight carries on down through a node at full
@@ -1081,7 +1145,7 @@ pub fn passes_sunlight(id: u16) -> bool {
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -1484,6 +1548,10 @@ struct Sounds {
 const GROUP_DIG: Sound = ("__group", 1.0);
 
 fn sounds_of(id: u16) -> Sounds {
+    // Stairs and slabs sound like their block.
+    if let Some((_, m)) = stairs::shape_of(id) {
+        return sounds_of(m.base);
+    }
     let stone = Sounds {
         footstep: ("default_hard_footstep", 0.2),
         dig: GROUP_DIG,
@@ -1680,6 +1748,9 @@ const NDT_AIRLIKE: u8 = 1;
 const NDT_SIGNLIKE: u8 = 8;
 const NDT_GLASSLIKE_FRAMED_OPTIONAL: u8 = 15;
 const NODEBOX_FIXED: u8 = 1;
+const NDT_NODEBOX: u8 = 12;
+const TILE_FLAG_HAS_ALIGN_STYLE: u16 = 1 << 5;
+const ALIGN_STYLE_WORLD: u8 = 1;
 const TILE_FLAG_TILEABLE_HORIZONTAL: u16 = 1 << 1;
 const TILE_FLAG_TILEABLE_VERTICAL: u16 = 1 << 2;
 const TAT_VERTICAL_FRAMES: u8 = 1;
@@ -1779,6 +1850,16 @@ fn regular_nodebox(w: &mut Writer) {
     w.u8(6).u8(NODEBOX_REGULAR);
 }
 
+/// A fixed node box made of `boxes` (in nodes), in BS units.
+fn fixed_nodebox(w: &mut Writer, boxes: &[[f32; 6]]) {
+    w.u8(6).u8(NODEBOX_FIXED).u16(boxes.len() as u16);
+    for b in boxes {
+        for v in b {
+            w.f32(v * 10.0);
+        }
+    }
+}
+
 fn serialize_node(n: &Node) -> Vec<u8> {
     let mut w = Writer::plain();
     w.u8(CONTENTFEATURES_VERSION).string16(n.name);
@@ -1794,6 +1875,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let chest = matches!(n.kind, Kind::Chest | Kind::ChestOpen);
     let glass = n.kind == Kind::Glass;
     let ladder = n.kind == Kind::Ladder;
+    let shaped = stairs::shape_of(n.id);
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -1809,6 +1891,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else if sapling || mark {
         w.u8(CPT_LIGHT).u8(0);
+    } else if shaped.is_some() {
+        w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else {
         w.u8(0) // param_type: none
             .u8(0); // param_type_2: none
@@ -1824,6 +1908,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Ladder => (NDT_SIGNLIKE, ""),
         Kind::Sapling | Kind::Apple => (NDT_PLANTLIKE, ""),
         Kind::Mark => (NDT_AIRLIKE, ""),
+        Kind::Shaped => (NDT_NODEBOX, ""),
     };
     w.u8(drawtype).string16(mesh).f32(1.0); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
@@ -1841,6 +1926,11 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     for t in n.tiles {
         match animation_length(t) {
             Some(length) => animated_tile(&mut w, t, flags, length),
+            // Stairs of stone and the like continue their block's texture
+            // across the world (minetest_game's worldaligntex).
+            None if shaped.is_some_and(|(_, m)| m.world_aligned) => {
+                w.u8(6).string16(t).u8(0).u16(flags | TILE_FLAG_HAS_ALIGN_STYLE).u8(ALIGN_STYLE_WORLD);
+            }
             None => tile(&mut w, t, flags),
         }
     }
@@ -1863,7 +1953,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0); // leveled
 
     // lighting
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some()) as u8) // light_propagates
         .u8((torch || sapling || mark || glass || ladder) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
@@ -1889,8 +1979,16 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(0) // drowning
         .u8(0); // floodable
 
-    regular_nodebox(&mut w); // node_box (unused by meshes)
-    if torch {
+    match shaped {
+        Some((shape, _)) => fixed_nodebox(&mut w, shape.boxes()), // node_box
+        None => regular_nodebox(&mut w), // node_box (unused by meshes)
+    }
+    if let Some((shape, _)) = shaped {
+        // builtin's register_node: a nodebox's selection box is its node
+        // box. Its collision box is left empty, so the client uses the
+        // node box for that too.
+        fixed_nodebox(&mut w, shape.boxes());
+    } else if torch {
         torch_selection_box(&mut w);
     } else if n.kind == Kind::Apple {
         apple_selection_box(&mut w);

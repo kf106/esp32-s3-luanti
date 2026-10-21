@@ -125,7 +125,7 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_CHEST | CONTENT_CHEST_LOCKED => 30.0,
         CONTENT_COAL_BLOCK => 370.0,
         CONTENT_LADDER_WOOD => 7.0,
-        _ => 0.0,
+        id => crate::stairs::burn_time(id, burn_time),
     }
 }
 
@@ -214,22 +214,39 @@ fn matches(cell: Option<Stack>, want: Ingredient) -> bool {
 
 impl Recipe {
     fn fits(&self, grid: &[Option<Stack>; GRID_SIZE]) -> bool {
-        let Some((gx, gy, gw, gh)) = bounds(grid.iter().map(Option::is_some), GRID_WIDTH) else {
-            return false;
-        };
-        let Some((rx, ry, rw, rh)) = bounds(self.pattern.iter().map(|c| !matches!(c, E)), self.width) else {
-            return false;
-        };
-        if (gw, gh) != (rw, rh) {
-            return false;
-        }
-        (0..gh).all(|y| {
-            (0..gw).all(|x| {
-                let cell = grid[(gy + y) * GRID_WIDTH + gx + x];
-                matches(cell, self.pattern[(ry + y) * self.width + rx + x])
-            })
-        })
+        fits(grid, self.width, self.pattern)
     }
+}
+
+/// Whether the grid holds `pattern` (rows of `width` cells), anywhere in it.
+fn fits(grid: &[Option<Stack>; GRID_SIZE], width: usize, pattern: &[Ingredient]) -> bool {
+    let Some((gx, gy, gw, gh)) = bounds(grid.iter().map(Option::is_some), GRID_WIDTH) else {
+        return false;
+    };
+    let Some((rx, ry, rw, rh)) = bounds(pattern.iter().map(|c| !matches!(c, E)), width) else {
+        return false;
+    };
+    if (gw, gh) != (rw, rh) {
+        return false;
+    }
+    (0..gh).all(|y| {
+        (0..gw).all(|x| {
+            let cell = grid[(gy + y) * GRID_WIDTH + gx + x];
+            matches(cell, pattern[(ry + y) * width + rx + x])
+        })
+    })
+}
+
+/// The stairs mod's recipes (see stairs::recipes).
+fn stair_result(grid: &[Option<Stack>; GRID_SIZE]) -> Option<(u16, u16)> {
+    crate::stairs::recipes()
+        .find(|(width, cells, item, _, _)| {
+            let pattern = cells.map(|c| if c == 0 { E } else { I(*item) });
+            // Empty cells after the pattern change nothing: only the box
+            // round the filled ones counts.
+            fits(grid, *width, &pattern)
+        })
+        .map(|(_, _, _, output, count)| (output, count))
 }
 
 /// What the grid would make: (item, count).
@@ -239,6 +256,7 @@ pub fn result(grid: &[Option<Stack>; GRID_SIZE]) -> Option<(u16, u16)> {
         .find(|r| r.fits(grid))
         .map(|r| (r.output, r.count))
         .or_else(|| SHAPELESS.iter().find(|r| r.fits(grid)).map(|r| (r.output, r.count)))
+        .or_else(|| stair_result(grid))
 }
 
 /// Craft once: use one item from each filled cell and give the result.
@@ -318,6 +336,35 @@ mod tests {
         let mut full = ring.clone();
         full.push((4, c, 1));
         assert_eq!(result(&grid(&full)), None);
+    }
+
+    #[test]
+    fn stairs_and_slabs() {
+        use crate::stairs::{shaped, Shape};
+        let c = CONTENT_COBBLE;
+        let stair = shaped(Shape::Stair, c).unwrap();
+        let slab = shaped(Shape::Slab, c).unwrap();
+        let steps: Vec<(usize, u16, u16)> = [2, 4, 5, 6, 7, 8].iter().map(|&i| (i, c, 1)).collect();
+        assert_eq!(result(&grid(&steps)), Some((stair, 8)));
+        // Mirrored: no stairs.
+        let mirrored: Vec<(usize, u16, u16)> = [0, 3, 4, 6, 7, 8].iter().map(|&i| (i, c, 1)).collect();
+        assert_eq!(result(&grid(&mirrored)), None);
+        assert_eq!(result(&grid(&[(3, c, 1), (4, c, 1), (5, c, 1)])), Some((slab, 6)));
+        let four: Vec<(usize, u16, u16)> = [1, 2, 4, 5].iter().map(|&i| (i, stair, 1)).collect();
+        assert_eq!(result(&grid(&four)), Some((c, 3)));
+        assert_eq!(result(&grid(&[(2, slab, 1), (5, slab, 1)])), Some((c, 1)));
+        // Side by side, two slabs are nothing.
+        assert_eq!(result(&grid(&[(4, slab, 1), (5, slab, 1)])), None);
+        // Wooden ones are fuel, for their share of the planks' time.
+        assert_eq!(burn_time(shaped(Shape::Stair, CONTENT_APPLE_WOOD).unwrap()), 5.0);
+        assert_eq!(burn_time(stair), 0.0);
+        // Corner stairs: 7 inner, 6 outer.
+        let inner: Vec<(usize, u16, u16)> = [1, 3, 5, 6, 7, 8].iter().map(|&i| (i, c, 1)).collect();
+        assert_eq!(result(&grid(&inner)), Some((shaped(Shape::Inner, c).unwrap(), 7)));
+        let outer: Vec<(usize, u16, u16)> = [4, 6, 7, 8].iter().map(|&i| (i, c, 1)).collect();
+        assert_eq!(result(&grid(&outer)), Some((shaped(Shape::Outer, c).unwrap(), 6)));
+        // Two stone in a row are still nothing, three a slab.
+        assert_eq!(result(&grid(&[(0, CONTENT_STONE, 1), (1, CONTENT_STONE, 1)])), None);
     }
 
     #[test]

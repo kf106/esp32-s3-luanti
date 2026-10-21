@@ -19,6 +19,7 @@ mod sha1;
 mod sha256;
 mod skins;
 mod srp;
+mod stairs;
 mod status;
 mod storage;
 mod terrain;

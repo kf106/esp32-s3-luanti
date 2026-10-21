@@ -58,6 +58,11 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - a chest from 8 planks in a ring; a locked chest with a steel ingot in the middle, or from a chest and a steel ingot;
   - building blocks: 4 stone make 4 stone bricks and 9 make 9 stone blocks, and the same for sandstone; 9 coal lumps or steel ingots make a coal or steel block, and back;
   - ladders: an H of sticks makes 5 wooden ladders, of steel ingots 15 steel ones.
+- **Stairs, slabs and corner stairs:** Minetest Game's, of each kind of planks, stone, cobblestone, sandstone, and stone and sandstone bricks and blocks.
+  - 6 blocks in a staircase (rising to the right) make 8 stairs, and 3 in a row make 6 slabs. 4 stairs in a square give 3 blocks back, and 2 slabs one above the other give 1.
+  - Corner stairs: 6 blocks in a staircase shape with the middle left empty (one on top in the middle, one either side below, a full row underneath) make 7 inner corners; 4 as an upside-down T make 6 outer corners. They place like stairs, so which way a corner turns depends on where you stand.
+  - Stairs face away from you. Placed against the underside of a block, or the upper half of its side, they go upside down. A slab placed on top of the same kind of slab joins it into a full block (or under it, if it is upside down), as in older Minetest Game; on a different slab it takes that slab's way up.
+  - Light gets in, so a slab roof doesn't make a dark room. Wooden ones burn, for three quarters (stairs) or half (slabs) the time of the planks.
 - **Glass:** smelt sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
   - steel pickaxes, shovels, axes and swords from steel ingots.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
@@ -231,6 +236,7 @@ src/crafting.rs    crafting recipes, the craft grid, and fuel
 src/furnace.rs     furnaces, and moving items between inventories
 src/chest.rs       chests
 src/nature.rs      leaf decay, saplings and apples
+src/stairs.rs      stairs and slabs
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto
