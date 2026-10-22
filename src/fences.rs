@@ -10,6 +10,9 @@
 //! gates, planks and trunks, as minetest_game's group:fence, group:wood and
 //! group:tree. The server only sends the definitions.
 //!
+//! A fence rail is a fence without its posts: two bars, joining fences
+//! and other rails (but not planks or trunks).
+//!
 //! A gate is a model, turned by facedir like a door, joining fences on
 //! its left and right (connect_sides), and opened and closed with a
 //! right-click.
@@ -20,9 +23,11 @@ pub struct Wood {
     pub fence: u16,
     /// The closed gate, which is also the item; the open one is next.
     pub gate: u16,
+    pub rail: u16,
     /// Seconds a fence or gate of this wood burns (minetest_game's fuel
-    /// recipes: as its planks).
+    /// recipes: as its planks), and a rail (two less).
     pub burn: f32,
+    pub rail_burn: f32,
 }
 
 pub const FIRST_FENCE: u16 = CONTENT_OBSIDIAN + 1;
@@ -32,15 +37,31 @@ pub const FENCE_BIRCH: u16 = FIRST_FENCE + 2;
 pub const GATE_APPLE: u16 = FIRST_FENCE + 3;
 pub const GATE_FIR: u16 = FIRST_FENCE + 5;
 pub const GATE_BIRCH: u16 = FIRST_FENCE + 7;
+pub const RAIL_APPLE: u16 = FIRST_FENCE + 9;
+pub const RAIL_FIR: u16 = FIRST_FENCE + 10;
+pub const RAIL_BIRCH: u16 = FIRST_FENCE + 11;
 
 pub const WOODS: [Wood; 3] = [
-    Wood { fence: FENCE_APPLE, gate: GATE_APPLE, burn: 7.0 },
-    Wood { fence: FENCE_FIR, gate: GATE_FIR, burn: 6.0 },
-    Wood { fence: FENCE_BIRCH, gate: GATE_BIRCH, burn: 5.0 },
+    Wood { fence: FENCE_APPLE, gate: GATE_APPLE, rail: RAIL_APPLE, burn: 7.0, rail_burn: 5.0 },
+    Wood { fence: FENCE_FIR, gate: GATE_FIR, rail: RAIL_FIR, burn: 6.0, rail_burn: 4.0 },
+    Wood { fence: FENCE_BIRCH, gate: GATE_BIRCH, rail: RAIL_BIRCH, burn: 5.0, rail_burn: 3.0 },
 ];
 
-pub fn is_fence(id: u16) -> bool {
-    WOODS.iter().any(|w| w.fence == id)
+pub fn is_rail(id: u16) -> bool {
+    WOODS.iter().any(|w| w.rail == id)
+}
+
+/// How long a fence, rail or gate burns (0 for anything else, and an open
+/// gate, which is never in an inventory).
+pub fn burn_time(id: u16) -> f32 {
+    WOODS
+        .iter()
+        .find_map(|w| match id {
+            _ if id == w.fence || id == w.gate => Some(w.burn),
+            _ if id == w.rail => Some(w.rail_burn),
+            _ => None,
+        })
+        .unwrap_or(0.0)
 }
 
 /// The wood a gate node is made of, and whether it is the open one.
@@ -94,7 +115,17 @@ pub const FENCE_BOX: Connected = Connected {
     right: &[[2.0 * S, 3.0 * S, -S, 0.5, 5.0 * S, S], [2.0 * S, -5.0 * S, -S, 0.5, -3.0 * S, S]],
 };
 
-/// What a player bumps into: the post and, to each side it joins, a wall
+/// A rail: the two bars, short in the middle, out to each side it joins
+/// (minetest_game's fixed boxes, with the lower one's y the right way up).
+pub const RAIL_BOX: Connected = Connected {
+    fixed: &[[-S, 3.0 * S, -S, S, 5.0 * S, S], [-S, -5.0 * S, -S, S, -3.0 * S, S]],
+    front: &[[-S, 3.0 * S, -0.5, S, 5.0 * S, -S], [-S, -5.0 * S, -0.5, S, -3.0 * S, -S]],
+    left: &[[-0.5, 3.0 * S, -S, -S, 5.0 * S, S], [-0.5, -5.0 * S, -S, -S, -3.0 * S, S]],
+    back: &[[-S, 3.0 * S, S, S, 5.0 * S, 0.5], [-S, -5.0 * S, S, S, -3.0 * S, 0.5]],
+    right: &[[S, 3.0 * S, -S, 0.5, 5.0 * S, S], [S, -5.0 * S, -S, 0.5, -3.0 * S, S]],
+};
+
+/// What a player bumps into (rails too: as tall as a fence): the post and, to each side it joins, a wall
 /// as tall as the post (minetest_game without enable_fence_tall).
 pub const FENCE_COLLISION: Connected = Connected {
     fixed: &[[-2.0 * S, -0.5, -2.0 * S, 2.0 * S, 0.5, 2.0 * S]],
@@ -122,6 +153,8 @@ pub fn gate_collision(open: bool) -> &'static [[f32; 6]] {
 
 /// The groups whose nodes a fence joins (its connects_to).
 pub const JOINS: [&str; 5] = ["fence", "wood", "tree", "wall", "fence_connected"];
+/// And a rail.
+pub const RAIL_JOINS: [&str; 2] = ["fence", "wall"];
 
 #[cfg(test)]
 mod tests {
@@ -132,7 +165,9 @@ mod tests {
         assert_eq!(gate_toggle(GATE_FIR), Some((GATE_FIR + 1, true)));
         assert_eq!(gate_toggle(GATE_FIR + 1), Some((GATE_FIR, false)));
         assert_eq!(gate_toggle(FENCE_FIR), None);
-        assert!(is_gate(GATE_BIRCH + 1) && !is_gate(GATE_BIRCH + 2) && is_fence(FENCE_BIRCH) && !is_fence(GATE_APPLE));
+        assert!(is_gate(GATE_BIRCH + 1) && !is_gate(GATE_BIRCH + 2));
         assert_eq!(gate_mesh(GATE_APPLE + 1), "doors_fencegate_open.obj");
+        assert!(is_rail(RAIL_FIR) && !is_rail(FENCE_FIR));
+        assert_eq!((burn_time(RAIL_APPLE), burn_time(FENCE_FIR), burn_time(GATE_BIRCH), burn_time(GATE_BIRCH + 1)), (5.0, 6.0, 5.0, 0.0));
     }
 }

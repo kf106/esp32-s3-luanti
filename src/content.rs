@@ -96,8 +96,9 @@ pub enum Kind {
     Bed,
     /// A bed's top half: it drops nothing, and goes with the bottom.
     BedTop,
-    /// A fence (fences.rs): a post, joined by rails to its neighbours
-    /// (a "connected" nodebox the client joins up).
+    /// A fence or fence rail (fences.rs): a post, joined by rails to its
+    /// neighbours, or just the rails (a "connected" nodebox the client
+    /// joins up).
     Fence,
     /// A fence gate, closed or open: a model turned by facedir, opened and
     /// closed with a right-click.
@@ -1163,6 +1164,36 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Gate,
     },
+    Node {
+        id: fences::RAIL_APPLE,
+        name: "esp:fence_rail_apple_wood",
+        description: "Apple Wood Fence Rail",
+        tiles: ["esp_apple_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::RAIL_APPLE,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    Node {
+        id: fences::RAIL_FIR,
+        name: "esp:fence_rail_fir_wood",
+        description: "Fir Wood Fence Rail",
+        tiles: ["esp_fir_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("fence", 1)],
+        drop: fences::RAIL_FIR,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    Node {
+        id: fences::RAIL_BIRCH,
+        name: "esp:fence_rail_birch_wood",
+        description: "Birch Wood Fence Rail",
+        tiles: ["esp_birch_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("fence", 1)],
+        drop: fences::RAIL_BIRCH,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
 ];
 
 /// minetest_game's tall grass groups.
@@ -2162,6 +2193,7 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("doors_fencegate_closed.obj", include_bytes!("../media/doors_fencegate_closed.obj")),
     ("doors_fencegate_open.obj", include_bytes!("../media/doors_fencegate_open.obj")),
     ("default_fence_overlay.png", include_bytes!("../media/default_fence_overlay.png")),
+    ("default_fence_rail_overlay.png", include_bytes!("../media/default_fence_rail_overlay.png")),
     ("doors_door_close.ogg", include_bytes!("../media/doors_door_close.ogg")),
     ("doors_steel_door_open.ogg", include_bytes!("../media/doors_steel_door_open.ogg")),
     ("doors_steel_door_close.ogg", include_bytes!("../media/doors_steel_door_close.ogg")),
@@ -2410,7 +2442,7 @@ fn sounds_of(id: u16) -> Sounds {
         },
         id if is_torch(id) => wood,
         id if beds::is_bed(id) => wood,
-        id if fences::is_fence(id) || fences::is_gate(id) => wood,
+        id if fences::burn_time(id) > 0.0 || fences::is_gate(id) => wood,
         // stone, sandstone, ores
         _ => stone,
     }
@@ -2424,10 +2456,14 @@ fn trapdoor_image(id: u16) -> &'static str {
     }
 }
 
-/// A fence item's picture (default.register_fence's inventory_image: the
-/// planks cut out by the overlay's pink).
+/// A fence or rail item's picture (default.register_fence's and
+/// register_fence_rail's inventory_image: the planks cut out by the
+/// overlay's pink).
 fn fence_image(id: u16) -> &'static str {
     match id {
+        fences::RAIL_APPLE => "default_fence_rail_overlay.png^esp_apple_wood.png^default_fence_rail_overlay.png^[makealpha:255,126,126",
+        fences::RAIL_FIR => "default_fence_rail_overlay.png^esp_fir_wood.png^default_fence_rail_overlay.png^[makealpha:255,126,126",
+        fences::RAIL_BIRCH => "default_fence_rail_overlay.png^esp_birch_wood.png^default_fence_rail_overlay.png^[makealpha:255,126,126",
         fences::FENCE_FIR => "default_fence_overlay.png^esp_fir_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
         fences::FENCE_BIRCH => "default_fence_overlay.png^esp_birch_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
         _ => "default_fence_overlay.png^esp_apple_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
@@ -2764,10 +2800,10 @@ fn connected_nodebox(w: &mut Writer, c: &fences::Connected) {
     }
 }
 
-/// The nodes a fence joins (its connects_to, as content ids, sorted):
-/// those in the groups fences::JOINS.
-fn fence_joins() -> Vec<u16> {
-    NODES.iter().filter(|n| fences::JOINS.iter().any(|g| n.groups.iter().any(|(ng, _)| ng == g))).map(|n| n.id).collect()
+/// The nodes a fence or rail joins (its connects_to, as content ids,
+/// sorted): those in `groups`.
+fn fence_joins(groups: &[&str]) -> Vec<u16> {
+    NODES.iter().filter(|n| groups.iter().any(|g| n.groups.iter().any(|(ng, _)| ng == g))).map(|n| n.id).collect()
 }
 
 fn serialize_node(n: &Node) -> Vec<u8> {
@@ -2799,6 +2835,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let bed = beds::is_bed(n.id);
     let fence = n.kind == Kind::Fence;
     let gate = fences::gate_of(n.id);
+    let fence_box = if fences::is_rail(n.id) { &fences::RAIL_BOX } else { &fences::FENCE_BOX };
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -2908,7 +2945,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(if liquid && !lava { 3 } else if plant { 1 } else { 0 }) // waving: water ripples, plants sway
         .u8(if gate.is_some() { fences::GATE_SIDES } else { 0 }); // connect_sides
     // connects_to: what a fence joins.
-    let joins = if fence { fence_joins() } else { Vec::new() };
+    let joins = if fence { fence_joins(if fences::is_rail(n.id) { &fences::RAIL_JOINS } else { &fences::JOINS }) } else { Vec::new() };
     w.u16(joins.len() as u16);
     for id in joins {
         w.u16(id);
@@ -2964,7 +3001,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         (Some((shape, _)), _) => fixed_nodebox(&mut w, shape.boxes()), // node_box
         (_, Some((_, open))) => fixed_nodebox(&mut w, &[doors::trapdoor_box(open)]),
         _ if bed => fixed_nodebox(&mut w, beds::boxes(n.id)),
-        _ if fence => connected_nodebox(&mut w, &fences::FENCE_BOX),
+        _ if fence => connected_nodebox(&mut w, fence_box),
         _ => regular_nodebox(&mut w), // node_box (unused by meshes)
     }
     if let Some((_, open)) = trapdoor {
@@ -2994,7 +3031,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         fixed_nodebox(&mut w, &[beds::selection_box(n.id)]);
     } else if fence {
         // builtin's register_node: a nodebox's selection box is its node box.
-        connected_nodebox(&mut w, &fences::FENCE_BOX);
+        connected_nodebox(&mut w, fence_box);
     } else if gate.is_some() {
         fixed_nodebox(&mut w, &[fences::GATE_SELECTION]);
     } else {

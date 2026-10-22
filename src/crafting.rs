@@ -129,6 +129,11 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 3, pattern: &fence(CONTENT_APPLE_WOOD), output: fences::FENCE_APPLE, count: 4 },
     Recipe { width: 3, pattern: &fence(CONTENT_FIR_WOOD), output: fences::FENCE_FIR, count: 4 },
     Recipe { width: 3, pattern: &fence(CONTENT_BIRCH_WOOD), output: fences::FENCE_BIRCH, count: 4 },
+    // Rails: two planks above two more, a row apart, make 16
+    // (default.register_fence_rail).
+    Recipe { width: 2, pattern: &rail(CONTENT_APPLE_WOOD), output: fences::RAIL_APPLE, count: 16 },
+    Recipe { width: 2, pattern: &rail(CONTENT_FIR_WOOD), output: fences::RAIL_FIR, count: 16 },
+    Recipe { width: 2, pattern: &rail(CONTENT_BIRCH_WOOD), output: fences::RAIL_BIRCH, count: 16 },
     Recipe { width: 3, pattern: &gate(CONTENT_APPLE_WOOD), output: fences::GATE_APPLE, count: 1 },
     Recipe { width: 3, pattern: &gate(CONTENT_FIR_WOOD), output: fences::GATE_FIR, count: 1 },
     Recipe { width: 3, pattern: &gate(CONTENT_BIRCH_WOOD), output: fences::GATE_BIRCH, count: 1 },
@@ -198,9 +203,7 @@ pub fn burn_time(id: u16) -> f32 {
         ITEM_BUCKET_LAVA => 60.0,
         crate::beds::BED_BOTTOM => 12.0,
         crate::beds::FANCY_BOTTOM => 13.0,
-        id if fences::is_fence(id) || fences::is_gate(id) => {
-            fences::WOODS.iter().find(|w| w.fence == id || w.gate == id).map_or(0.0, |w| w.burn)
-        }
+        id if fences::burn_time(id) > 0.0 => fences::burn_time(id),
         id => crate::stairs::burn_time(id, burn_time),
     }
 }
@@ -208,6 +211,11 @@ pub fn burn_time(id: u16) -> f32 {
 /// A fence: two rows of planks, stick, planks.
 const fn fence(planks: u16) -> [Ingredient; 6] {
     [I(planks), G("stick"), I(planks), I(planks), G("stick"), I(planks)]
+}
+
+/// A rail: two planks, an empty row, two planks.
+const fn rail(planks: u16) -> [Ingredient; 6] {
+    [I(planks), I(planks), E, E, I(planks), I(planks)]
 }
 
 /// A gate: two rows of stick, planks, stick.
@@ -500,6 +508,9 @@ mod tests {
         assert_eq!(burn_time(fences::FENCE_BIRCH), 5.0);
         assert_eq!(burn_time(fences::GATE_APPLE), 7.0);
         assert_eq!(burn_time(fences::GATE_APPLE + 1), 0.0);
+        let rail = [(0, a, 1), (1, a, 1), (6, a, 1), (7, a, 1)];
+        assert_eq!(result(&grid(&rail)), Some((fences::RAIL_APPLE, 16)));
+        assert_eq!(burn_time(fences::RAIL_BIRCH), 3.0);
     }
 
     #[test]

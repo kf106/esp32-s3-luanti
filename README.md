@@ -70,7 +70,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - Stairs face away from you. Placed against the underside of a block, or the upper half of its side, they go upside down. A slab placed on top of the same kind of slab joins it into a full block (or under it, if it is upside down), as in older Minetest Game; on a different slab it takes that slab's way up.
   - Light gets in, so a slab roof doesn't make a dark room. Wooden ones burn, for three quarters (stairs) or half (slabs) the time of the planks.
 - **Doors:** Minetest Game's wooden, glass and steel doors: two columns of three planks, glass or steel ingots make one. A door faces the way you look as you place it, and one placed beside another hinges on the other side, so the pair opens outwards. Right-click opens and shuts it, with its sound; with sneak held, right-click builds against it instead. A steel door belongs to whoever placed it: only they can open or dig it (with a steel pickaxe). Owners are kept in `world/doors.txt`.
-- **Fences and fence gates:** Minetest Game's, in apple, fir and birch wood. Two rows of planks, stick, planks make 4 fences; two rows of stick, planks, stick a gate. Fences join up with each other, with gates and with planks and trunks next to them (the client draws the joins, from the node definitions). A gate is placed facing away from you, joins fences on its left and right, and opens and closes with a right-click and a creak. Fences and gates burn for 5 to 7 s, as their planks.
+- **Fences, fence rails and fence gates:** Minetest Game's, in apple, fir and birch wood. Two rows of planks, stick, planks make 4 fences; two planks above two more, with an empty row between, 16 rails (a fence without its posts); two rows of stick, planks, stick a gate. Fences join up with each other, with gates and with planks and trunks next to them (the client draws the joins, from the node definitions). A gate is placed facing away from you, joins fences on its left and right, and opens and closes with a right-click and a creak. Rails join only fences, gates and other rails, and stop you like a fence does. Fences and gates burn for 5 to 7 s, as their planks, rails for 3 to 5 s.
 - **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
 - **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. Water flows as in Luanti: dig beside or under a lake and it runs in, up to 8 nodes across flat ground, getting shallower as it goes, and falls down any hole; take the source away and the flow drains. Two sources with a gap between make a third, so a lake never runs dry. Water washes torches out. It spreads a node a second; the server looks at up to 1,000 places a second, so a flood into a big cave takes a while. Where more than 8 nodes in a map block change at once, the block is sent again whole rather than node by node, to spare the radio; while water is moving the log says how much every 10 s ("Liquids: ...").
 - **Drowning:** as in Luanti, with your head in water (or lava) you lose a breath every 2 s, and with all 10 gone 1 HP every 2 s. Out of it, a breath comes back every half second. Luanti's bubbles show above the hotbar while your breath isn't full.
@@ -86,7 +86,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - steel pickaxes, shovels, axes and swords from steel ingots.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
   - It smelts iron lumps into steel ingots, cobblestone into stone and sand into glass, 3 seconds each, and bakes flour into bread in 15.
-  - Fuel: lava buckets burn for 60 s, coal lumps 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, beds 12 to 13 s, wooden trapdoors, fences and gates 5 to 7 s, straw 3 s, planks 5 to 7 s, leaves, grass, torches and wooden tools a few seconds, sticks, wheat, cotton and string 1 s. A piece of fuel that is alight burns to the end.
+  - Fuel: lava buckets burn for 60 s, coal lumps 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, beds 12 to 13 s, wooden trapdoors, fences and gates 5 to 7 s, fence rails 3 to 5 s, straw 3 s, planks 5 to 7 s, leaves, grass, torches and wooden tools a few seconds, sticks, wheat, cotton and string 1 s. A piece of fuel that is alight burns to the end.
   - It burns whether or not anyone has it open. While lit, its front shows the fire, it glows, the window's flame and arrow fill up, and you hear it.
   - Only fuel goes in the fuel slot, and nothing into the output. Empty it before digging it (with a stone pickaxe). Its contents are kept on the SD card in `world/furnaces.txt`.
 - **Chests:** Minetest Game's, 32 slots, placed facing you. Right-click opens one: the lid lifts with a creak while anyone has it open (unless a block sits on it) and closes with a thud. A locked chest opens only for whoever placed it. Empty a chest before digging it. Contents are kept in `world/chests.txt`.
@@ -121,7 +121,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- No dyes, signs or fence rails yet; no admin commands.
+- No dyes or signs yet; no admin commands.
 - No Lua mods: the game content is built in.
 - One world per SD card.
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
@@ -276,7 +276,7 @@ src/stairs.rs      stairs and slabs
 src/doors.rs       doors and trapdoors
 src/farming.rs     farming: soil, seeds, crops, hoes
 src/beds.rs        beds, sleeping and respawn points
-src/fences.rs      fences and fence gates
+src/fences.rs      fences, fence rails and fence gates
 src/liquids.rs     flowing water and lava
 src/player.rs      saved player state
 src/skins.rs       player skins
@@ -333,7 +333,7 @@ place, before and after a change.
 The code is released under the [MIT licence](LICENSE).
 
 The media in `media/` have their own licences:
-- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Also the doors, gate, farming and bed media (`doors_*`, `door_*.b3d`, `default_fence_overlay.png`, `farming_*`, `default_grass_*.png`, `wool_white.png`, `beds_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt`, `media/LICENSE-items.txt`, `media/LICENSE-doors.txt`, `media/LICENSE-farming.txt` and `media/LICENSE-beds.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
+- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Also the doors, gate, farming and bed media (`doors_*`, `door_*.b3d`, `default_fence_overlay.png`, `default_fence_rail_overlay.png`, `farming_*`, `default_grass_*.png`, `wool_white.png`, `beds_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt`, `media/LICENSE-items.txt`, `media/LICENSE-doors.txt`, `media/LICENSE-farming.txt` and `media/LICENSE-beds.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
 - **Sounds from Minetest Game** (`default_*.ogg`, `player_damage.ogg`): CC BY-SA 3.0, CC BY 3.0 or CC0, with credits in `media/LICENSE-sounds.txt`.
 - **The skins `esp_skin_wizard.png`, `esp_skin_elf.png`, `esp_skin_borgo.png` and `esp_skin_strider.png`:** made by Keir Finlow-Bates, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 - **The other `esp_*.png` textures:** made for this project and covered by the MIT licence.
