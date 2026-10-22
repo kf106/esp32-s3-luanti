@@ -60,6 +60,11 @@ const NODE_UPDATES_PER_BLOCK: usize = 8;
 /// board's own view of its memory and Wi-Fi (the client gives up at 30 s;
 /// an idle client still pings every 5 s or so).
 const LINK_QUIET: Duration = Duration::from_secs(8);
+/// Underwater, a breath is lost every DROWN_INTERVAL; out of breath, the
+/// node's drowning damage is taken as often. In the air a breath comes
+/// back every BREATHE_INTERVAL (PlayerSAO::step).
+const DROWN_INTERVAL: Duration = Duration::from_secs(2);
+const BREATHE_INTERVAL: Duration = Duration::from_millis(500);
 /// A changed inventory is written to the SD card at most this long after
 /// the change (and when the player leaves), not after every dig.
 const INVENTORY_SAVE: Duration = Duration::from_secs(5);
@@ -282,6 +287,11 @@ struct Peer {
     /// when it first changed since it was last saved (see INVENTORY_SAVE).
     inventory_unsent: bool,
     inventory_unsaved: Option<Instant>,
+    /// Breath (0 to PLAYER_MAX_BREATH), whether the breath bar is shown,
+    /// and since when it has been full again (it goes a second later).
+    breath: u16,
+    breath_bar: bool,
+    breath_full_since: Option<Instant>,
     /// Average round-trip time (seconds) from ACKs, and the resend timeout
     /// it gives (Luanti's UDPPeer::reportRTT).
     avg_rtt: Option<f32>,
@@ -327,6 +337,9 @@ impl Peer {
             unacked_reported: false,
             inventory_unsent: false,
             inventory_unsaved: None,
+            breath: PLAYER_MAX_BREATH,
+            breath_bar: false,
+            breath_full_since: None,
             avg_rtt: None,
             resend_timeout: RESEND_INTERVAL,
         }
@@ -440,6 +453,9 @@ pub struct Server {
     liquids_flowed: Instant,
     /// When lava touching water was last looked at.
     lava_cooled: Instant,
+    /// When breath was last lost underwater, and last regained.
+    drowned_at: Instant,
+    breathed_at: Instant,
     /// Liquid activity since it was last reported: nodes changed, blocks
     /// sent again, and when.
     liquid_changes: u32,
@@ -757,6 +773,8 @@ impl Server {
             fields_checked: Instant::now(),
             liquids_flowed: Instant::now(),
             lava_cooled: Instant::now(),
+            drowned_at: Instant::now(),
+            breathed_at: Instant::now(),
             liquid_changes: 0,
             liquid_blocks_resent: 0,
             liquids_reported: Instant::now(),
@@ -1529,6 +1547,7 @@ impl Server {
         self.add_player_object(from);
         self.send_command(from, 0, &build_health_bar(hp));
         self.send_command(from, 0, &build_hp(hp, false));
+        self.send_command(from, 0, &build_breath(PLAYER_MAX_BREATH));
         if hp == 0 {
             // Left while dead: back to the death screen, as Luanti does.
             self.send_command(from, 0, &build_deathscreen());
@@ -2456,6 +2475,86 @@ impl Server {
         }
     }
 
+    /// Breath, as PlayerSAO::step: with their eyes in water (or lava) a
+    /// player loses a breath every 2 s, and with none left 1 HP every 2 s;
+    /// in the air they get a breath back every half second. The breath
+    /// bar shows while breath isn't full (builtin's hud.lua).
+    fn step_breath(&mut self, now: Instant) {
+        let drown = now.duration_since(self.drowned_at) >= DROWN_INTERVAL;
+        let breathe = now.duration_since(self.breathed_at) >= BREATHE_INTERVAL;
+        if drown {
+            self.drowned_at = now;
+        }
+        if breathe {
+            self.breathed_at = now;
+        }
+        let mut changed = Vec::new();
+        let mut removed = Vec::new();
+        let mut hurt = Vec::new();
+        for (addr, p) in self.peers.iter_mut() {
+            if !p.ready || p.hp == 0 {
+                continue;
+            }
+            // The eyes: player_api's eye height, lower lying in bed.
+            let eye = if p.in_bed.is_some() { 0.3 } else { 1.47 };
+            let at = (
+                (p.pos_bs[0] / 10.0).round() as i32,
+                (p.pos_bs[1] / 10.0 + eye).round() as i32,
+                (p.pos_bs[2] / 10.0).round() as i32,
+            );
+            let drowning = content::drowning(self.world.node(at));
+            let before = p.breath;
+            if drown && drowning > 0 {
+                p.breath = p.breath.saturating_sub(1);
+                if p.breath == 0 {
+                    hurt.push((*addr, drowning));
+                }
+            } else if breathe && drowning == 0 && p.breath < PLAYER_MAX_BREATH {
+                p.breath += 1;
+            }
+            if p.breath != before {
+                changed.push(*addr);
+            }
+            // A second after breath is full again, the bar goes.
+            if p.breath_bar && p.breath_full_since.is_some_and(|t| t.elapsed() >= Duration::from_secs(1)) {
+                p.breath_bar = false;
+                p.breath_full_since = None;
+                removed.push(*addr);
+            }
+        }
+        for addr in changed {
+            self.send_breath(addr);
+        }
+        for addr in removed {
+            self.send_command(addr, 0, &build_hud_remove(HUD_BREATH));
+        }
+        for (addr, damage) in hurt {
+            self.hurt(addr, damage, "drowned");
+        }
+    }
+
+    /// Tell a player their breath, and show, update or remove the bar.
+    fn send_breath(&mut self, addr: SocketAddr) {
+        let Some(p) = self.peers.get_mut(&addr) else {
+            return;
+        };
+        let breath = p.breath;
+        let mut packets = vec![build_breath(breath)];
+        if breath < PLAYER_MAX_BREATH {
+            p.breath_full_since = None;
+            packets.push(if p.breath_bar { build_breath_bar_change(breath) } else { build_breath_bar(breath) });
+            p.breath_bar = true;
+        } else if p.breath_bar && p.breath_full_since.is_none() {
+            // Full again: show it full, and remove it a second later
+            // (step_breath).
+            p.breath_full_since = Some(Instant::now());
+            packets.push(build_breath_bar_change(breath));
+        }
+        for packet in packets {
+            self.send_command(addr, 0, &packet);
+        }
+    }
+
     /// minetest_game's cool_lava: lava touching water turns, half the time
     /// it is looked at, into obsidian (a source) or stone (flowing lava),
     /// with a hiss.
@@ -3299,12 +3398,14 @@ impl Server {
         let spawn_bs = spawn.map(|v| v * 10.0);
         if let Some(peer) = self.peers.get_mut(&from) {
             peer.hp = PLAYER_MAX_HP;
+            peer.breath = PLAYER_MAX_BREATH;
             peer.pos_bs = spawn_bs;
             peer.save(&self.players);
         }
         info!("{name} respawns at ({:.1}, {:.1}, {:.1})", spawn[0], spawn[1], spawn[2]);
         self.send_command(from, 0, &build_hp(PLAYER_MAX_HP, false));
         self.send_command(from, 0, &build_health_bar_change(PLAYER_MAX_HP));
+        self.send_breath(from);
         self.send_command(from, 0, &build_move_player(spawn_bs, 0.0, 0.0));
         self.plan_blocks(from, spawn, MAX_VIEW_RADIUS);
     }
@@ -4199,6 +4300,7 @@ impl Server {
         self.update_power_saving();
         self.run_timers();
         self.tend_beds();
+        self.step_breath(now);
         self.watch_links();
         self.flush_inventories();
         if now.duration_since(self.liquids_flowed) >= LIQUID_UPDATE {

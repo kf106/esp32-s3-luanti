@@ -43,6 +43,8 @@ pub const TOCLIENT_CHAT_MESSAGE: u16 = 0x2F;
 pub const TOCLIENT_DEATHSCREEN_LEGACY: u16 = 0x37;
 pub const TOCLIENT_HUDADD: u16 = 0x49;
 pub const TOCLIENT_HUDCHANGE: u16 = 0x4b;
+pub const TOCLIENT_HUDRM: u16 = 0x4a;
+pub const TOCLIENT_BREATH: u16 = 0x4e;
 pub const TOCLIENT_LOCAL_PLAYER_ANIMATIONS: u16 = 0x51;
 pub const TOCLIENT_MEDIA: u16 = 0x38;
 pub const TOCLIENT_NODEDEF: u16 = 0x3a;
@@ -1307,6 +1309,9 @@ pub fn build_deathscreen() -> Vec<u8> {
 
 /// The health bar's HUD id. Ours is the only HUD element.
 pub const HUD_HEALTH: u32 = 0;
+pub const HUD_BREATH: u32 = 1;
+/// A player's breath when full (Luanti's PLAYER_MAX_BREATH_DEFAULT).
+pub const PLAYER_MAX_BREATH: u16 = 10;
 const HUD_ELEM_STATBAR: u8 = 2;
 const HUD_STAT_NUMBER: u8 = 4;
 
@@ -1342,6 +1347,61 @@ pub fn build_health_bar(hp: u16) -> Vec<u8> {
 }
 
 /// TOCLIENT_HUDCHANGE: a new HP figure for the health bar.
+/// builtin's breath bar (hud.lua): bubbles to the right of the hearts,
+/// two units a bubble, shown only while breath isn't full.
+pub fn build_breath_bar(breath: u16) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_HUDADD);
+    w.u32(HUD_BREATH)
+        .u8(HUD_ELEM_STATBAR)
+        .f32(0.5)
+        .f32(1.0) // position: bottom centre of the screen
+        .string16("breath")
+        .f32(0.0)
+        .f32(0.0) // scale
+        .string16("bubble.png") // built into the client
+        .u32(breath_units(breath)) // number
+        .u32(breath_units(PLAYER_MAX_BREATH)) // item: when full
+        .u32(0) // direction: left to right
+        .f32(0.0)
+        .f32(0.0) // align
+        .f32(25.0)
+        .f32(-(48.0 + 24.0 + 16.0)) // offset
+        .f32(0.0)
+        .f32(0.0)
+        .f32(0.0) // world position
+        .f32(24.0)
+        .f32(24.0) // size
+        .i16(0) // z index
+        .string16("bubble_gone.png") // text2
+        .u32(0) // style
+        .u8(1); // flags: hideable
+    w.into_inner()
+}
+
+/// Half-bubbles: breath scaled to the bar's 20 (builtin's scale_to_hud_max).
+fn breath_units(breath: u16) -> u32 {
+    breath as u32 * 2
+}
+
+pub fn build_breath_bar_change(breath: u16) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_HUDCHANGE);
+    w.u32(HUD_BREATH).u8(HUD_STAT_NUMBER).u32(breath_units(breath));
+    w.into_inner()
+}
+
+pub fn build_hud_remove(id: u32) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_HUDRM);
+    w.u32(id);
+    w.into_inner()
+}
+
+/// TOCLIENT_BREATH: the player's breath, for the client's own use.
+pub fn build_breath(breath: u16) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_BREATH);
+    w.u16(breath);
+    w.into_inner()
+}
+
 pub fn build_health_bar_change(hp: u16) -> Vec<u8> {
     let mut w = Writer::new(TOCLIENT_HUDCHANGE);
     w.u32(HUD_HEALTH).u8(HUD_STAT_NUMBER).u32(hp as u32);

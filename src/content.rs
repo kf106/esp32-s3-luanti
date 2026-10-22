@@ -1686,6 +1686,12 @@ pub fn glow(id: u16) -> u8 {
     if is_lava(id) { LAVA_GLOW } else { light_source(id) }
 }
 
+/// Breath a node takes from a player whose head is in it, every 2 s once
+/// their breath is gone in HP (minetest_game's water and lava: 1).
+pub fn drowning(id: u16) -> u16 {
+    is_liquid(id) as u16
+}
+
 /// Damage a node does each second to a player in it.
 pub fn damage_per_second(id: u16) -> u16 {
     if is_lava(id) { LAVA_DAMAGE } else { 0 }
@@ -1966,6 +1972,8 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     // Extra skins to choose from in the inventory (see skins.rs).
     ("esp_skin_wizard.png", include_bytes!("../media/esp_skin_wizard.png")),
     ("esp_skin_elf.png", include_bytes!("../media/esp_skin_elf.png")),
+    ("esp_skin_borgo.png", include_bytes!("../media/esp_skin_borgo.png")),
+    ("esp_skin_strider.png", include_bytes!("../media/esp_skin_strider.png")),
     ("esp_birch_wood.png", include_bytes!("../media/esp_birch_wood.png")),
     ("esp_fir_wood.png", include_bytes!("../media/esp_fir_wood.png")),
     ("esp_cobble.png", include_bytes!("../media/esp_cobble.png")),

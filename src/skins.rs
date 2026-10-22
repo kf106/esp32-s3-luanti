@@ -20,6 +20,8 @@ const BUILT_IN: &[(&str, &str, &str)] = &[
     (DEFAULT_SKIN, "Default", "character.png"),
     ("wizard", "Wizard", "esp_skin_wizard.png"),
     ("elf", "Elf", "esp_skin_elf.png"),
+    ("borgo", "Borgo", "esp_skin_borgo.png"),
+    ("strider", "Strider", "esp_skin_strider.png"),
 ];
 
 pub struct Skin {
