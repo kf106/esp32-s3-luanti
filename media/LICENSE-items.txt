@@ -5,8 +5,10 @@ default_furnace_*.png, default_apple.png and the saplings default_aspen_sapling.
 default_pine_sapling.png and default_sapling.png, the chest textures default_chest_*.png and
 the open chest model chest_open.obj, default_glass.png, default_glass_detail.png,
 default_coal_block.png, default_steel_block.png, default_ladder_wood.png,
-default_ladder_steel.png and the water textures default_water.png,
-default_water_source_animated.png and default_water_flowing_animated.png are from the
+default_ladder_steel.png, the water textures default_water.png,
+default_water_source_animated.png and default_water_flowing_animated.png, the lava textures
+default_lava.png, default_lava_source_animated.png and default_lava_flowing_animated.png,
+and default_obsidian.png are from the
 default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
 mods/default/textures), unmodified and under their original names. Their licence and
 credits, from that mod's license.txt:
@@ -156,7 +158,7 @@ https://creativecommons.org/publicdomain/zero/1.0/
 
 -----------------------
 
-bucket.png and bucket_water.png are from Minetest Game's bucket mod
+bucket.png, bucket_water.png and bucket_lava.png are from Minetest Game's bucket mod
 (mods/bucket/textures), unmodified. Credits, from its README.md:
 
 ## Authors of media (textures)

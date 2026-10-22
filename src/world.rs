@@ -190,7 +190,15 @@ pub struct World {
     cave_samples: RefCell<FastMap<(i32, i32, i32), (f32, f32)>>,
     /// Places where liquid may flow (liquids.rs).
     liquid_queue: liquids::Queue,
+    /// Lava that touches water, and may cool (see lava_touching_water).
+    cooling: FastSet<NodePos>,
+    /// Change records not yet appended to the log (see flush_log).
+    pending_log: Vec<u8>,
 }
+
+/// Change records are appended to the log when this much is waiting, or
+/// when the server calls flush_log (once a second).
+const LOG_FLUSH_BYTES: usize = 8192;
 
 /// The most queued places the liquids look at each second (Luanti's
 /// liquid_loop_max, which is far higher on a PC).
@@ -212,6 +220,8 @@ impl World {
             heights: RefCell::new(FastMap::default()),
             cave_samples: RefCell::new(FastMap::default()),
             liquid_queue: liquids::Queue::default(),
+            cooling: FastSet::default(),
+            pending_log: Vec::new(),
         };
 
         let data = match storage::read(&log_path) {
@@ -256,6 +266,8 @@ impl World {
             heights: RefCell::new(FastMap::default()),
             cave_samples: RefCell::new(FastMap::default()),
             liquid_queue: liquids::Queue::default(),
+            cooling: FastSet::default(),
+            pending_log: Vec::new(),
         }
     }
 
@@ -491,6 +503,37 @@ impl World {
         let mut queue = std::mem::take(&mut self.liquid_queue);
         liquids::after_change(pos, |p| self.node(p), &mut queue);
         self.liquid_queue = queue;
+        self.watch_cooling(pos);
+    }
+
+    /// After a change at `pos`: lava there or beside it that now touches
+    /// water is noted, to cool (minetest_game's lava cooling ABM, which
+    /// looks for lava with water next to it).
+    fn watch_cooling(&mut self, pos: NodePos) {
+        for d in [(0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
+            let p = (pos.0 + d.0, pos.1 + d.1, pos.2 + d.2);
+            if content::is_lava(self.node(p)) && self.touches_water(p) {
+                self.cooling.insert(p);
+            }
+        }
+    }
+
+    fn touches_water(&self, p: NodePos) -> bool {
+        [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+            .iter()
+            .any(|d| farming::is_water(self.node((p.0 + d.0, p.1 + d.1, p.2 + d.2))))
+    }
+
+    /// Lava that touched water when it was noted and still does. The
+    /// rest is forgotten.
+    pub fn lava_touching_water(&mut self) -> Vec<NodePos> {
+        let noted: Vec<NodePos> = self.cooling.iter().copied().collect();
+        for p in noted {
+            if !(content::is_lava(self.node(p)) && self.touches_water(p)) {
+                self.cooling.remove(&p);
+            }
+        }
+        self.cooling.iter().copied().collect()
     }
 
     /// Change a node in memory: light, and the version clients' blocks are
@@ -508,18 +551,34 @@ impl World {
         }
     }
 
-    fn append_log(&self, records: &[u8]) {
-        if records.is_empty() {
+    /// Keep change records to be appended to the log. Opening and
+    /// appending to a file on the SD card takes long enough that doing it
+    /// for every dig held the server up; now it is done at most once a
+    /// second (or a power cut loses at most the last second of changes).
+    fn append_log(&mut self, records: &[u8]) {
+        if self.log_path.is_none() {
             return;
         }
+        self.pending_log.extend_from_slice(records);
+        if self.pending_log.len() >= LOG_FLUSH_BYTES {
+            self.flush_log();
+        }
+    }
+
+    /// Append the waiting change records to the log on the SD card.
+    pub fn flush_log(&mut self) {
+        if self.pending_log.is_empty() {
+            return;
+        }
+        let records = std::mem::take(&mut self.pending_log);
         if let Some(log_path) = &self.log_path {
             let result = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(log_path)
-                .and_then(|mut f: File| f.write_all(records));
+                .and_then(|mut f: File| f.write_all(&records));
             if let Err(e) = result {
-                warn!("Saving node change to {}: {e}", log_path.display());
+                warn!("Saving node changes to {}: {e}", log_path.display());
                 crate::status::problem();
             }
         }
@@ -538,6 +597,9 @@ impl World {
         let mut log = Vec::new();
         for c in &changes {
             log.extend_from_slice(&record(c.pos, c.id, c.param2));
+            if [c.id, c.was].iter().any(|&id| content::is_lava(id) || farming::is_water(id)) {
+                self.watch_cooling(c.pos);
+            }
         }
         self.append_log(&log);
         changes
@@ -802,6 +864,13 @@ impl World {
         w.raw(&compressed);
         w.u8(2);
         w.into_inner()
+    }
+}
+
+/// Nothing waiting is lost when a world is closed.
+impl Drop for World {
+    fn drop(&mut self) {
+        self.flush_log();
     }
 }
 

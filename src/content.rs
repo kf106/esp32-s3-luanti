@@ -142,6 +142,15 @@ pub const CONTENT_LADDER_STEEL: u16 = 40;
 /// stairs, doors and trapdoors.
 pub const CONTENT_WATER: u16 = 98;
 pub const CONTENT_WATER_FLOWING: u16 = 99;
+/// minetest_game's lava, and the obsidian it cools into, after the beds.
+pub const CONTENT_LAVA: u16 = 135;
+pub const CONTENT_LAVA_FLOWING: u16 = 136;
+pub const CONTENT_OBSIDIAN: u16 = 137;
+/// Light lava glows with (minetest_game's LIGHT_MAX - 1). Only the client
+/// uses it, to draw lava bright: the server spreads no light from lava.
+const LAVA_GLOW: u8 = 13;
+/// Damage per second in lava (minetest_game's 4 * 2).
+pub const LAVA_DAMAGE: u16 = 8;
 /// Health an apple gives (minetest_game's item_eat(2)).
 pub const APPLE_HP: u16 = 2;
 /// Leaves give a sapling one time in this many (minetest_game's rarity).
@@ -169,6 +178,7 @@ pub const ITEM_FLOUR: u16 = 0x100A;
 pub const ITEM_BREAD: u16 = 0x100B;
 pub const ITEM_COTTON: u16 = 0x100C;
 pub const ITEM_STRING: u16 = 0x100D;
+pub const ITEM_BUCKET_LAVA: u16 = 0x100E;
 /// Health bread gives (minetest_game's item_eat(5)).
 pub const BREAD_HP: u16 = 5;
 /// Tools have ids from 0x2000 up.
@@ -1023,6 +1033,38 @@ pub const NODES: &[Node] = &[
         drop_count: 0,
         kind: Kind::BedTop,
     },
+    // minetest_game's lava and obsidian (CC BY-SA 3.0, see
+    // media/LICENSE-items.txt).
+    Node {
+        id: CONTENT_LAVA,
+        name: "esp:lava_source",
+        description: "Lava Source",
+        tiles: [LAVA_SOURCE_TILE; 6],
+        groups: &[("lava", 3), ("liquid", 2), ("igniter", 1)],
+        drop: CONTENT_LAVA,
+        drop_count: 0,
+        kind: Kind::Liquid,
+    },
+    Node {
+        id: CONTENT_LAVA_FLOWING,
+        name: "esp:lava_flowing",
+        description: "Flowing Lava",
+        tiles: ["default_lava.png"; 6],
+        groups: &[("lava", 3), ("liquid", 2), ("igniter", 1), ("not_in_creative_inventory", 1)],
+        drop: CONTENT_LAVA_FLOWING,
+        drop_count: 0,
+        kind: Kind::Liquid,
+    },
+    Node {
+        id: CONTENT_OBSIDIAN,
+        name: "esp:obsidian",
+        description: "Obsidian",
+        tiles: ["default_obsidian.png"; 6],
+        groups: &[("cracky", 1), ("level", 2)],
+        drop: CONTENT_OBSIDIAN,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
 ];
 
 /// minetest_game's tall grass groups.
@@ -1031,6 +1073,8 @@ const GRASS_GROUPS: &[(&str, i16)] = &[("snappy", 3), ("flora", 1), ("attached_n
 /// minetest_game's water textures: 16 frames one above another.
 const WATER_SOURCE_TILE: &str = "default_water_source_animated.png";
 const WATER_FLOWING_TILE: &str = "default_water_flowing_animated.png";
+const LAVA_SOURCE_TILE: &str = "default_lava_source_animated.png";
+const LAVA_FLOWING_TILE: &str = "default_lava_flowing_animated.png";
 
 // Saplings, from leaves (one time in SAPLING_RARITY), as minetest_game's
 // aspen and pine saplings, with their pictures (CC BY-SA 3.0, see
@@ -1212,6 +1256,13 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Water Bucket",
         image: "bucket_water.png",
         groups: &[("tool", 1), ("water_bucket", 1)],
+    },
+    CraftItem {
+        id: ITEM_BUCKET_LAVA,
+        name: "esp:bucket_lava",
+        description: "Lava Bucket",
+        image: "bucket_lava.png",
+        groups: &[("tool", 1)],
     },
     // farming's (see media/LICENSE-farming.txt).
     CraftItem {
@@ -1619,9 +1670,25 @@ pub fn passes_light(id: u16) -> bool {
     id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop))
 }
 
-/// Whether a node is water.
+/// Whether a node is a liquid (water or lava).
 pub fn is_liquid(id: u16) -> bool {
     def(id).is_some_and(|n| n.kind == Kind::Liquid)
+}
+
+pub fn is_lava(id: u16) -> bool {
+    matches!(id, CONTENT_LAVA | CONTENT_LAVA_FLOWING)
+}
+
+/// The light a node is drawn with, whatever light reaches it: torches and
+/// a burning furnace (which also light their surroundings), and lava
+/// (which doesn't, as far as the server is concerned).
+pub fn glow(id: u16) -> u8 {
+    if is_lava(id) { LAVA_GLOW } else { light_source(id) }
+}
+
+/// Damage a node does each second to a player in it.
+pub fn damage_per_second(id: u16) -> u16 {
+    if is_lava(id) { LAVA_DAMAGE } else { 0 }
 }
 
 /// Whether water washes a node away (minetest_game's floodable): torches.
@@ -1795,13 +1862,13 @@ pub fn is_item(id: u16) -> bool {
 pub fn stack_max(id: u16) -> u16 {
     // A full bucket doesn't stack (minetest_game's stack_max = 1).
     // So doesn't a bed.
-    if is_tool(id) || id == ITEM_BUCKET_WATER || beds::is_bed(id) { 1 } else { 99 }
+    if is_tool(id) || matches!(id, ITEM_BUCKET_WATER | ITEM_BUCKET_LAVA) || beds::is_bed(id) { 1 } else { 99 }
 }
 
 /// Whether an item points at liquids, as buckets do: then the client
 /// points at water rather than through it.
 fn liquids_pointable(id: u16) -> bool {
-    matches!(id, ITEM_BUCKET_EMPTY | ITEM_BUCKET_WATER)
+    matches!(id, ITEM_BUCKET_EMPTY | ITEM_BUCKET_WATER | ITEM_BUCKET_LAVA)
 }
 
 /// Whether an item can be placed as a node.
@@ -2040,6 +2107,11 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_grass_4.png", include_bytes!("../media/default_grass_4.png")),
     ("default_grass_5.png", include_bytes!("../media/default_grass_5.png")),
     ("wool_white.png", include_bytes!("../media/wool_white.png")),
+    ("default_lava.png", include_bytes!("../media/default_lava.png")),
+    ("default_lava_source_animated.png", include_bytes!("../media/default_lava_source_animated.png")),
+    ("default_lava_flowing_animated.png", include_bytes!("../media/default_lava_flowing_animated.png")),
+    ("default_obsidian.png", include_bytes!("../media/default_obsidian.png")),
+    ("bucket_lava.png", include_bytes!("../media/bucket_lava.png")),
     ("beds_bed.png", include_bytes!("../media/beds_bed.png")),
     ("beds_bed_fancy.png", include_bytes!("../media/beds_bed_fancy.png")),
     ("beds_bed_foot.png", include_bytes!("../media/beds_bed_foot.png")),
@@ -2206,6 +2278,13 @@ fn sounds_of(id: u16) -> Sounds {
         id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_GLASS) => sounds_of(CONTENT_GLASS),
         id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_STEEL) => sounds_of(CONTENT_STEEL_BLOCK),
         // minetest_game's node_sound_water_defaults.
+        // Lava: no sounds of its own in minetest_game.
+        CONTENT_LAVA | CONTENT_LAVA_FLOWING => Sounds {
+            footstep: ("", 1.0),
+            dig: ("", 1.0),
+            dug: ("", 1.0),
+            place: ("default_place_node", 1.0),
+        },
         CONTENT_WATER | CONTENT_WATER_FLOWING => Sounds {
             footstep: ("default_water_footstep", 0.2),
             dig: ("default_dig_dig_immediate", 0.5),
@@ -2408,6 +2487,8 @@ const LIQUID_FLOWING: u8 = 1;
 const LIQUID_SOURCE: u8 = 2;
 /// minetest_game's water colour under the surface: ARGB.
 const WATER_POST_EFFECT: u32 = 0x671E_3C5A;
+/// And inside lava: {a = 191, r = 255, g = 64, b = 0}.
+const LAVA_POST_EFFECT: u32 = 0xBFFF_4000;
 const TILE_FLAG_HAS_ALIGN_STYLE: u16 = 1 << 5;
 const ALIGN_STYLE_WORLD: u8 = 1;
 const TILE_FLAG_TILEABLE_HORIZONTAL: u16 = 1 << 1;
@@ -2433,6 +2514,8 @@ fn animation_length(tile: &str) -> Option<f32> {
         FURNACE_ACTIVE_TILE => Some(1.5),
         WATER_SOURCE_TILE => Some(2.0),
         WATER_FLOWING_TILE => Some(0.5),
+        LAVA_SOURCE_TILE => Some(3.0),
+        LAVA_FLOWING_TILE => Some(3.3),
         _ => None,
     }
 }
@@ -2558,7 +2641,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let hidden = n.kind == Kind::DoorHidden;
     let trapdoor = doors::trapdoor_of(n.id);
     let liquid = n.kind == Kind::Liquid;
-    let flowing = n.id == CONTENT_WATER_FLOWING;
+    let flowing = matches!(n.id, CONTENT_WATER_FLOWING | CONTENT_LAVA_FLOWING);
+    let lava = is_lava(n.id);
     let plant = n.kind == Kind::Plant;
     let seed = n.kind == Kind::Seed;
     // Wheat grows as a "#" of pictures (meshoptions; param2 says which shape).
@@ -2652,6 +2736,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         // Flowing water's two surfaces (top, then sides), which the client
         // draws flowing liquids with.
         match i {
+            0 if flowing && lava => animated_tile(&mut w, LAVA_FLOWING_TILE, 0, 3.3),
+            1 if flowing && lava => animated_tile(&mut w, LAVA_FLOWING_TILE, TILE_FLAG_BACKFACE_CULLING, 3.3),
             0 if flowing => animated_tile(&mut w, WATER_FLOWING_TILE, 0, 0.5),
             1 if flowing => animated_tile(&mut w, WATER_FLOWING_TILE, TILE_FLAG_BACKFACE_CULLING, 0.5),
             _ => tile(&mut w, "", flags), // special tiles
@@ -2662,17 +2748,17 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(255)
         .u8(255) // colour
         .string16("") // palette
-        .u8(if liquid { 3 } else if plant { 1 } else { 0 }) // waving: liquids ripple, plants sway
+        .u8(if liquid && !lava { 3 } else if plant { 1 } else { 0 }) // waving: water ripples, plants sway
         .u8(0) // connect_sides
         .u16(0) // connects_to
-        .u32(if liquid { WATER_POST_EFFECT } else { 0 }) // post_effect_color (ARGB)
+        .u32(if lava { LAVA_POST_EFFECT } else if liquid { WATER_POST_EFFECT } else { 0 }) // post_effect_color (ARGB)
         .u8(0); // leveled
 
     // lighting
     let doorway = door.is_some() || hidden;
     w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed) as u8) // light_propagates
         .u8((torch || sapling || mark || glass || ladder || doorway || plant || seed) as u8) // sunlight_propagates
-        .u8(light_source(n.id));
+        .u8(glow(n.id));
 
     let tree = n.groups.iter().any(|(g, _)| *g == "tree");
     w.u8((n.kind == Kind::Solid && !tree) as u8); // is_ground_content
@@ -2686,15 +2772,17 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(ladder as u8) // climbable
         .u8((mark || liquid || plant) as u8) // buildable_to
         .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed) as u8) // rightclickable
-        .u32(0); // damage_per_second
+        .u32(damage_per_second(n.id) as u32); // damage_per_second
 
     // liquid
     if liquid {
+        let (flowing_name, source_name, viscosity) =
+            if lava { ("esp:lava_flowing", "esp:lava_source", 7) } else { ("esp:water_flowing", "esp:water_source", 1) };
         w.u8(if flowing { LIQUID_FLOWING } else { LIQUID_SOURCE })
-            .string16("esp:water_flowing")
-            .string16("esp:water_source")
-            .u8(1) // viscosity
-            .u8(1) // renewable
+            .string16(flowing_name)
+            .string16(source_name)
+            .u8(viscosity) // viscosity
+            .u8(!lava as u8) // renewable
             .u8(8) // range
             .u8(1) // drowning
             .u8(0); // floodable
@@ -2767,7 +2855,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // that it went (minetest_game's node_dig_prediction = "").
     w.string16(if doors::is_locked(n.id) { "" } else { "air" }) // node_dig_prediction
         .u8(LEVELED_MAX)
-        .u8(if liquid {
+        .u8(if lava {
+            ALPHAMODE_OPAQUE
+        } else if liquid {
             ALPHAMODE_BLEND
         } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed {
             ALPHAMODE_CLIP
@@ -2775,7 +2865,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
             ALPHAMODE_OPAQUE
         })
         // Swimming: water slows you as its viscosity says.
-        .u8(liquid as u8) // move_resistance
+        .u8(if lava { 7 } else { liquid as u8 }) // move_resistance: the viscosity
         .u8(liquid as u8) // liquid_move_physics
         .u8(0); // post_effect_color_shaded
     w.into_inner()

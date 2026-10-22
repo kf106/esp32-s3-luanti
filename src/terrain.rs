@@ -12,7 +12,7 @@ use crate::farming;
 use crate::content::{
     CONTENT_APPLE, CONTENT_APPLE_LEAVES, CONTENT_APPLE_TREE, CONTENT_BIRCH_LEAVES, CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_FIR_NEEDLES,
     CONTENT_FIR_TREE, CONTENT_GRASS, CONTENT_IRON, CONTENT_SAND, CONTENT_SANDSTONE, CONTENT_SNOW,
-    CONTENT_STONE,
+    CONTENT_LAVA, CONTENT_STONE,
 };
 use crate::world::CONTENT_AIR;
 
@@ -31,6 +31,17 @@ const SEED_TREES: u32 = 0xA7B8_C9DA;
 const SEED_FOREST: u32 = 0xEB0C_1D2E;
 const SEED_GRASS: u32 = 0x2F40_5162;
 const SEED_COTTON: u32 = 0x7384_95A6;
+const SEED_LAVA: u32 = 0xB7C8_D9EA;
+
+/// Deep caves are flooded with lava up to this height, in about half the
+/// land (where the "lava" noise is positive). Between flooded and dry
+/// caves a band of solid stone (where the noise is near zero) seals the
+/// lava in, so no wall of lava stands open beside a dry tunnel.
+///
+/// Added without bumping GENERATOR_VERSION: only caves this deep change,
+/// so existing worlds keep their changes.
+pub const LAVA_LEVEL: i32 = -64;
+const LAVA_DAM: f32 = 0.04;
 
 /// Caves are sampled every CAVE_GRID nodes and interpolated in between.
 const CAVE_GRID: i32 = 4;
@@ -55,6 +66,17 @@ pub struct Column {
     /// Caves reach no higher than this: a few nodes under the surface,
     /// except at the occasional cave entrance.
     pub cave_top: i32,
+    /// What deep caves (at or below LAVA_LEVEL) hold here.
+    pub deep: Deep,
+}
+
+/// What fills caves at or below LAVA_LEVEL.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Deep {
+    Air,
+    Lava,
+    /// No cave: the stone between lava and air.
+    Stone,
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +213,15 @@ pub fn column(x: i32, z: i32) -> Column {
     // No cave mouths under water.
     let entrance = height > WATER_LEVEL && noise2(fx / 90.0, fz / 90.0, SEED_ENTRANCE) > 0.55;
     let cave_top = if entrance { height } else { height - 4 };
-    Column { height, biome, cave_top }
+    let lava = noise2(fx / 200.0, fz / 200.0, SEED_LAVA);
+    let deep = if lava > LAVA_DAM {
+        Deep::Lava
+    } else if lava > -LAVA_DAM {
+        Deep::Stone
+    } else {
+        Deep::Air
+    };
+    Column { height, biome, cave_top, deep }
 }
 
 /// Lakes and ponds fill low ground with still water up to this height
@@ -337,7 +367,12 @@ pub fn finish(x: i32, y: i32, z: i32, col: &Column, is_cave: impl FnOnce() -> bo
         return CONTENT_AIR;
     }
     if y <= col.cave_top && is_cave() {
-        return CONTENT_AIR;
+        match col.deep {
+            _ if y > LAVA_LEVEL => return CONTENT_AIR,
+            Deep::Air => return CONTENT_AIR,
+            Deep::Lava => return CONTENT_LAVA,
+            Deep::Stone => {}
+        }
     }
     if base == CONTENT_STONE {
         if let Some(ore) = ore_at(x, y, z) {

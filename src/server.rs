@@ -56,6 +56,17 @@ const LIQUID_UPDATE: Duration = Duration::from_secs(1);
 /// Liquid changes in a block sent node by node; more, and the whole block
 /// is sent again.
 const NODE_UPDATES_PER_BLOCK: usize = 8;
+/// A player link silent this long, either way, is reported with the
+/// board's own view of its memory and Wi-Fi (the client gives up at 30 s;
+/// an idle client still pings every 5 s or so).
+const LINK_QUIET: Duration = Duration::from_secs(8);
+/// A changed inventory is written to the SD card at most this long after
+/// the change (and when the player leaves), not after every dig.
+const INVENTORY_SAVE: Duration = Duration::from_secs(5);
+/// How often lava touching water may cool, and the chance each time
+/// (minetest_game's lava cooling ABM: interval 2, chance 2).
+const LAVA_COOLING: Duration = Duration::from_secs(2);
+const LAVA_COOLING_CHANCE: u32 = 2;
 /// Wi-Fi power saving goes on after this long with nobody doing anything
 /// (no one connected, or every player standing still).
 const IDLE_POWER_SAVE: Duration = Duration::from_secs(30);
@@ -263,6 +274,14 @@ struct Peer {
     chest: Option<NodePos>,
     /// The bed they lie in, if any.
     in_bed: Option<InBed>,
+    /// Already reported: nothing heard from them for LINK_QUIET, and none
+    /// of our packets acknowledged for LINK_QUIET (see watch_links).
+    quiet_reported: bool,
+    unacked_reported: bool,
+    /// The inventory changed and the client hasn't been sent it yet; and
+    /// when it first changed since it was last saved (see INVENTORY_SAVE).
+    inventory_unsent: bool,
+    inventory_unsaved: Option<Instant>,
     /// Average round-trip time (seconds) from ACKs, and the resend timeout
     /// it gives (Luanti's UDPPeer::reportRTT).
     avg_rtt: Option<f32>,
@@ -304,6 +323,10 @@ impl Peer {
             keys: 0,
             chest: None,
             in_bed: None,
+            quiet_reported: false,
+            unacked_reported: false,
+            inventory_unsent: false,
+            inventory_unsaved: None,
             avg_rtt: None,
             resend_timeout: RESEND_INTERVAL,
         }
@@ -318,6 +341,13 @@ impl Peer {
         };
         self.avg_rtt = Some(avg);
         self.resend_timeout = Duration::from_secs_f32((avg * 2.0).clamp(0.1, 2.0));
+    }
+
+    /// Write the inventory to the SD card, if it changed since last time.
+    fn save_inventory(&mut self, store: &InventoryStore) {
+        if self.inventory_unsaved.take().is_some() {
+            store.save(self.display_name(), &self.inventory);
+        }
     }
 
     fn display_name(&self) -> &str {
@@ -408,6 +438,8 @@ pub struct Server {
     fields_checked: Instant,
     /// When the liquids last flowed.
     liquids_flowed: Instant,
+    /// When lava touching water was last looked at.
+    lava_cooled: Instant,
     /// Liquid activity since it was last reported: nodes changed, blocks
     /// sent again, and when.
     liquid_changes: u32,
@@ -724,6 +756,7 @@ impl Server {
             fields,
             fields_checked: Instant::now(),
             liquids_flowed: Instant::now(),
+            lava_cooled: Instant::now(),
             liquid_changes: 0,
             liquid_blocks_resent: 0,
             liquids_reported: Instant::now(),
@@ -846,6 +879,12 @@ impl Server {
             Some(_) => {}
         }
         if let Some(peer) = self.peers.get_mut(&from) {
+            if peer.quiet_reported {
+                peer.quiet_reported = false;
+                let gap = peer.last_seen.elapsed().as_secs_f32();
+                let name = peer.display_name().to_string();
+                info!("Link: heard from {name} again after {gap:.1} s; {}", link_state());
+            }
             peer.last_seen = Instant::now();
         }
 
@@ -947,6 +986,7 @@ impl Server {
             Packet::Control(Control::Disco) => {
                 if let Some(mut peer) = self.peers.remove(&from) {
                     peer.save(&self.players);
+                    peer.save_inventory(&self.inventories);
                     info!("Peer {} ({}) disconnected", peer.id, peer.display_name());
                     if peer.ready {
                         self.remove_player_object(peer.id);
@@ -1053,6 +1093,9 @@ impl Server {
             TOSERVER_DELETEDBLOCKS => self.on_deleted_blocks(from, payload),
             // The client confirms blocks it has meshed; we don't need that yet.
             TOSERVER_GOTBLOCKS => {}
+            // The hotbar slot in hand. Digging and placing say which slot
+            // they use, so the server needn't keep it.
+            TOSERVER_PLAYERITEM => {}
             TOSERVER_INVENTORY_FIELDS => self.on_inventory_fields(from, payload),
             TOSERVER_CHAT_MESSAGE => self.on_chat(from, payload),
             // Window size and similar client details: nothing to do.
@@ -1217,6 +1260,7 @@ impl Server {
             self.deny(addr, AccessDenied::AlreadyConnected, "");
             if let Some(mut old) = self.peers.remove(&addr) {
                 old.save(&self.players);
+                old.save_inventory(&self.inventories);
                 info!("{} logged in again; dropped the old connection from {addr}", old.display_name());
                 if old.ready {
                     self.remove_player_object(old.id);
@@ -1887,7 +1931,7 @@ impl Server {
                 let slot = msg.item as usize;
                 let wielded = self.peers.get(&from).and_then(|p| p.inventory.get(slot));
                 // A water bucket pours out a water source.
-                if wielded.is_some_and(|s| slot < HOTBAR_SIZE && s.id == content::ITEM_BUCKET_WATER) {
+                if wielded.is_some_and(|s| slot < HOTBAR_SIZE && matches!(s.id, content::ITEM_BUCKET_WATER | content::ITEM_BUCKET_LAVA)) {
                     if in_reach(above) {
                         self.pour_water(from, BucketUse { slot, under, above, body });
                     }
@@ -1999,6 +2043,11 @@ impl Server {
                 self.inventory_changed(from);
                 self.world.set_node(node_pos(above), node, param2);
                 self.broadcast_node(above, &build_addnode(above, node, param2));
+                // Built into lava: the client lit the block up as the lava
+                // went; send it again with the server's light.
+                if content::is_lava(target) {
+                    self.send_block_again(world::block_of_node(node_pos(above)));
+                }
                 if content::is_sapling(node) {
                     let after = nature::grow_delay(&mut self.rng);
                     self.timers.start(node_pos(above), Job::Grow, after);
@@ -2324,9 +2373,13 @@ impl Server {
         // players need, as Luanti does with every liquid change. One
         // packet per node would swamp the radio when water pours into a
         // cave.
+        // Lava always goes as whole blocks: a single lava node would make
+        // the client light up what is round it, which the server doesn't
+        // (lava only glows itself; see content::glow).
         let mut per_block: HashMap<BlockPos, usize> = HashMap::new();
         for c in &changes {
-            *per_block.entry(world::block_of_node(c.pos)).or_default() += 1;
+            let extra = if content::is_lava(c.id) || content::is_lava(c.was) { NODE_UPDATES_PER_BLOCK + 1 } else { 1 };
+            *per_block.entry(world::block_of_node(c.pos)).or_default() += extra;
         }
         for (&block, &n) in &per_block {
             if n > NODE_UPDATES_PER_BLOCK {
@@ -2346,10 +2399,125 @@ impl Server {
             if content::is_torch(c.was) {
                 let at = p16.map(|v| v as f32);
                 self.spawn_item(Stack::new(content::CONTENT_TORCH, 1), (at, [0.0; 3]));
-                self.play_sound_near(-1, "default_cool_lava", 0.07, at.map(|v| v * 10.0), 16.0);
+                // The hiss of a torch going out, unless lava took it.
+                if !content::is_lava(c.id) {
+                    self.play_sound_near(-1, "default_cool_lava", 0.07, at.map(|v| v * 10.0), 16.0);
+                }
             }
             // Items lying where it went may now float off or fall.
             self.wake_items(c.pos);
+        }
+    }
+
+    /// Report a player link going quiet, before the 30 s timeout drops it:
+    /// nothing arriving from them, or nothing of ours acknowledged (our
+    /// packets not reaching them, or their ACKs not reaching us). With the
+    /// board's memory and Wi-Fi state, so that a disconnect shows whose
+    /// side failed.
+    fn watch_links(&mut self) {
+        let mut reports = Vec::new();
+        for peer in self.peers.values_mut().filter(|p| p.ready) {
+            let name = peer.display_name().to_string();
+            let heard = peer.last_seen.elapsed();
+            if heard >= LINK_QUIET && !peer.quiet_reported {
+                peer.quiet_reported = true;
+                reports.push(format!("nothing from {name} for {:.1} s", heard.as_secs_f32()));
+            }
+            // The longest an unacknowledged packet of ours has been out.
+            let waiting: usize = peer.channels.iter().map(|c| c.unacked.len()).sum();
+            let oldest = peer.channels.iter().flat_map(|c| c.unacked.iter()).filter_map(|u| u.first_sent).min();
+            let resent = peer.channels.iter().flat_map(|c| c.unacked.iter()).map(|u| u.resends).max().unwrap_or(0);
+            match oldest {
+                Some(t) if t.elapsed() >= LINK_QUIET => {
+                    if !peer.unacked_reported {
+                        peer.unacked_reported = true;
+                        reports.push(format!(
+                            "no ACKs from {name} for {:.1} s ({waiting} packets waiting, resent up to {resent} times)",
+                            t.elapsed().as_secs_f32()
+                        ));
+                    }
+                }
+                _ => {
+                    if peer.unacked_reported {
+                        peer.unacked_reported = false;
+                        reports.push(format!("ACKs from {name} again"));
+                    }
+                }
+            }
+        }
+        if reports.is_empty() {
+            return;
+        }
+        let st = status::lock(&self.status);
+        let counts = format!("{} packets in, {} out, {} send failures since boot", st.packets_in, st.packets_out, st.send_failures);
+        drop(st);
+        for r in reports {
+            warn!("Link: {r}; {}; {counts}", link_state());
+        }
+    }
+
+    /// minetest_game's cool_lava: lava touching water turns, half the time
+    /// it is looked at, into obsidian (a source) or stone (flowing lava),
+    /// with a hiss.
+    fn cool_lava(&mut self) {
+        for pos in self.world.lava_touching_water() {
+            if !self.rng.one_in(LAVA_COOLING_CHANCE) {
+                continue;
+            }
+            let was = self.world.node(pos);
+            let to = if was == content::CONTENT_LAVA { content::CONTENT_OBSIDIAN } else { content::CONTENT_STONE };
+            self.world.set_node(pos, to, 0);
+            self.send_block_again(world::block_of_node(pos));
+            let at = [pos.0 as f32 * 10.0, pos.1 as f32 * 10.0, pos.2 as f32 * 10.0];
+            self.play_sound_near(-1, "default_cool_lava", 0.2, at, 16.0);
+        }
+    }
+
+    /// Damage from the nodes a player is in, once a second (PlayerSAO's
+    /// node damage): the worst of the points 0.1 above the feet, every
+    /// node up from there, and 0.1 under the top of the player's box.
+    fn burn_players(&mut self) {
+        let mut hurt = Vec::new();
+        for (addr, p) in &self.peers {
+            if !p.ready || p.hp == 0 {
+                continue;
+            }
+            let top = if p.in_bed.is_some() { 0.3 } else { 1.7 } - 0.1;
+            let feet = p.pos_bs.map(|v| v / 10.0);
+            let mut heights = Vec::new();
+            let mut h = 0.1;
+            while h < top {
+                heights.push(h);
+                h += 1.0;
+            }
+            heights.push(top);
+            let damage = heights
+                .iter()
+                .map(|h| {
+                    let n = (feet[0].round() as i32, (feet[1] + h).round() as i32, feet[2].round() as i32);
+                    content::damage_per_second(self.world.node(n))
+                })
+                .max()
+                .unwrap_or(0);
+            if damage > 0 {
+                hurt.push((*addr, damage));
+            }
+        }
+        for (addr, damage) in hurt {
+            self.hurt(addr, damage, "burned in lava");
+        }
+    }
+
+    /// Tell everyone who has it that a node changed from `was` to `id`:
+    /// node by node, except for lava, whose block is sent again whole (see
+    /// flow_liquids).
+    fn show_node(&mut self, pos: [i16; 3], was: u16, id: u16, param2: u8) {
+        if content::is_lava(was) || content::is_lava(id) {
+            self.send_block_again(world::block_of_node((pos[0] as i32, pos[1] as i32, pos[2] as i32)));
+        } else if id == world::CONTENT_AIR {
+            self.broadcast_node(pos, &build_removenode(pos));
+        } else {
+            self.broadcast_node(pos, &build_addnode(pos, id, param2));
         }
     }
 
@@ -2590,13 +2758,26 @@ impl Server {
         let name = peer.display_name().to_string();
         let pos = (under[0] as i32, under[1] as i32, under[2] as i32);
         let near = (0..3).map(|i| (under[i] as f32 - body[i]).powi(2)).sum::<f32>().sqrt() <= MAX_INTERACT_DISTANCE;
-        if self.world.node(pos) != content::CONTENT_WATER || !near {
+        // A water or lava source (the bucket mod registers both).
+        let full = match self.world.node(pos) {
+            content::CONTENT_WATER => content::ITEM_BUCKET_WATER,
+            content::CONTENT_LAVA => content::ITEM_BUCKET_LAVA,
+            other => {
+                // Say why, as the client shows nothing: a bucket fills only
+                // from a source, never from flowing water or lava.
+                info!("{name}: can't fill a bucket from {} at {under:?}", content::name_of(other));
+                return true;
+            }
+        };
+        if !near {
+            info!("{name}: {under:?} is too far away to fill a bucket from");
             return true;
         }
-        info!("{name} scooped up water at {under:?}");
+        info!("{name} scooped up {} at {under:?}", content::name_of(self.world.node(pos)));
+        let was = self.world.node(pos);
         self.world.set_node(pos, world::CONTENT_AIR, 0);
-        self.broadcast_node(under, &build_removenode(under));
-        let full = Stack::new(content::ITEM_BUCKET_WATER, 1);
+        self.show_node(under, was, world::CONTENT_AIR, 0);
+        let full = Stack::new(full, 1);
         let mut dropped = false;
         if let Some(peer) = self.peers.get_mut(&addr) {
             if bucket.count == 1 {
@@ -2620,6 +2801,13 @@ impl Server {
     /// left empty.
     fn pour_water(&mut self, addr: SocketAddr, at: BucketUse) {
         let BucketUse { slot, under, above, .. } = at;
+        let Some(source) = self.peers.get(&addr).and_then(|p| p.inventory.get(slot)).and_then(|s| match s.id {
+            content::ITEM_BUCKET_WATER => Some(content::CONTENT_WATER),
+            content::ITEM_BUCKET_LAVA => Some(content::CONTENT_LAVA),
+            _ => None,
+        }) else {
+            return;
+        };
         let node_pos = |p: [i16; 3]| (p[0] as i32, p[1] as i32, p[2] as i32);
         let pos = if content::buildable_to(self.world.node(node_pos(under))) { under } else { above };
         if !content::buildable_to(self.world.node(node_pos(pos))) {
@@ -2627,10 +2815,11 @@ impl Server {
             return;
         }
         let name = self.peers.get(&addr).map(|p| p.display_name().to_string()).unwrap_or_default();
-        info!("{name} poured water at {pos:?}");
-        self.edit_event(&name, "placed", content::CONTENT_WATER);
-        self.world.set_node(node_pos(pos), content::CONTENT_WATER, 0);
-        self.broadcast_node(pos, &build_addnode(pos, content::CONTENT_WATER, 0));
+        info!("{name} poured {} at {pos:?}", content::name_of(source));
+        self.edit_event(&name, "placed", source);
+        let was = self.world.node(node_pos(pos));
+        self.world.set_node(node_pos(pos), source, 0);
+        self.show_node(pos, was, source, 0);
         if let Some(peer) = self.peers.get_mut(&addr) {
             peer.inventory.set(slot, Some(Stack::new(content::ITEM_BUCKET_EMPTY, 1)));
         }
@@ -3036,9 +3225,14 @@ impl Server {
     }
 
     /// A saved position, moved up onto the ground if it is now inside solid
-    /// nodes (the world may have changed since).
+    /// nodes (the world may have changed since). The feet of a player
+    /// standing on a node are exactly on its top face, half a node above
+    /// its centre, so the node checked is the one just above that point:
+    /// rounding the feet themselves would pick the floor below ground
+    /// level (-9.5 rounds to -10), and send anyone underground back to the
+    /// surface.
     fn safe_position(&self, pos: [f32; 3]) -> [f32; 3] {
-        let (x, y, z) = (pos[0].round() as i32, pos[1].round() as i32, pos[2].round() as i32);
+        let (x, y, z) = (pos[0].round() as i32, (pos[1] + 0.1).round() as i32, pos[2].round() as i32);
         let free = |y: i32| !content::walkable(self.world.node((x, y, z)));
         if free(y) && free(y + 1) {
             pos
@@ -3058,16 +3252,28 @@ impl Server {
         if !peer.ready || peer.hp == 0 || damage == 0 {
             return;
         }
+        self.hurt(from, damage, "fell to their death");
+    }
+
+    /// A player loses `damage` HP; at 0 they die, and the event says how
+    /// (`death`, after their name).
+    fn hurt(&mut self, from: SocketAddr, damage: u16, death: &str) {
+        let Some(peer) = self.peers.get_mut(&from) else {
+            return;
+        };
+        if peer.hp == 0 {
+            return;
+        }
         peer.hp = peer.hp.saturating_sub(damage);
         let (hp, name) = (peer.hp, peer.display_name().to_string());
-        info!("{name} took {damage} fall damage, {hp} HP left");
+        info!("{name} took {damage} damage, {hp} HP left");
         self.send_command(from, 0, &build_hp(hp, true));
         self.send_command(from, 0, &build_health_bar_change(hp));
         if hp == 0 {
             info!("{name} died");
             // Dead, they get up where they lie (beds' on_dieplayer).
             self.get_up(from, false);
-            self.event(format!("{name} fell to their death"));
+            self.event(format!("{name} {death}"));
             self.send_command(from, 0, &build_deathscreen());
             if let Some(peer) = self.peers.get_mut(&from) {
                 peer.save(&self.players);
@@ -3446,11 +3652,33 @@ impl Server {
     }
 
     /// Save a player's inventory and send it to them.
+    /// The inventory changed: it goes to the client once this turn of the
+    /// loop is over, and to the SD card within INVENTORY_SAVE (as Luanti
+    /// sends an inventory once per server step, however often it
+    /// changed). A dig used to send and save it twice (tool wear, then the
+    /// drop), each save a full rewrite of the file on the card.
     fn inventory_changed(&mut self, addr: SocketAddr) {
-        if let Some(peer) = self.peers.get(&addr) {
-            self.inventories.save(peer.display_name(), &peer.inventory);
+        if let Some(peer) = self.peers.get_mut(&addr) {
+            peer.inventory_unsent = true;
+            peer.inventory_unsaved.get_or_insert_with(Instant::now);
         }
-        self.send_inventory(addr);
+    }
+
+    /// Send changed inventories, and save those changed a while ago.
+    fn flush_inventories(&mut self) {
+        let unsent: Vec<SocketAddr> = self.peers.iter().filter(|(_, p)| p.inventory_unsent).map(|(a, _)| *a).collect();
+        for addr in unsent {
+            if let Some(peer) = self.peers.get_mut(&addr) {
+                peer.inventory_unsent = false;
+            }
+            self.send_inventory(addr);
+        }
+        let store = &self.inventories;
+        for peer in self.peers.values_mut() {
+            if peer.inventory_unsaved.is_some_and(|t| t.elapsed() >= INVENTORY_SAVE) {
+                peer.save_inventory(store);
+            }
+        }
     }
 
     fn send_inventory(&mut self, addr: SocketAddr) {
@@ -3971,9 +4199,19 @@ impl Server {
         self.update_power_saving();
         self.run_timers();
         self.tend_beds();
+        self.watch_links();
+        self.flush_inventories();
         if now.duration_since(self.liquids_flowed) >= LIQUID_UPDATE {
             self.liquids_flowed = now;
             self.flow_liquids();
+            // Lava burns once a second too (PlayerSAO's node damage).
+            self.burn_players();
+            // Node changes go to the SD card once a second.
+            self.world.flush_log();
+        }
+        if now.duration_since(self.lava_cooled) >= LAVA_COOLING {
+            self.lava_cooled = now;
+            self.cool_lava();
         }
         if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
             let dt = now.duration_since(self.furnaces_stepped).as_secs_f32();
@@ -3985,11 +4223,13 @@ impl Server {
         let mut saved = Vec::new();
         let before = self.peers.len();
         let players = &self.players;
+        let inventories = &self.inventories;
         self.peers.retain(|addr, peer| {
             let alive = now.duration_since(peer.last_seen) < PEER_TIMEOUT;
             if !alive {
                 info!("Peer {} ({}) at {addr} timed out", peer.id, peer.display_name());
                 peer.save(players);
+                peer.save_inventory(inventories);
                 saved.push(peer.id);
                 if peer.ready {
                     gone.push((peer.id, peer.display_name().to_string()));
@@ -4206,6 +4446,27 @@ fn set_wifi_power_save(on: bool) {
 
 #[cfg(not(target_os = "espidf"))]
 fn set_wifi_power_save(_on: bool) {}
+
+/// The board's side of a link: internal RAM (free, and the largest piece,
+/// which the Wi-Fi driver needs for each frame) and the Wi-Fi connection.
+#[cfg(target_os = "espidf")]
+fn link_state() -> String {
+    use esp_idf_svc::sys::*;
+    let caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    let (free, largest) = unsafe { (heap_caps_get_free_size(caps) / 1024, heap_caps_get_largest_free_block(caps) / 1024) };
+    let mut ap: wifi_ap_record_t = Default::default();
+    let wifi = if unsafe { esp_wifi_sta_get_ap_info(&mut ap) } == 0 {
+        format!("Wi-Fi connected, {} dBm, channel {}", ap.rssi, ap.primary)
+    } else {
+        "Wi-Fi NOT connected".to_string()
+    };
+    format!("internal RAM {free} KB free, largest block {largest} KB; {wifi}")
+}
+
+#[cfg(not(target_os = "espidf"))]
+fn link_state() -> String {
+    "(no board state on the PC)".to_string()
+}
 
 /// Whether ESP-IDF's heaps are intact (heap_caps_check_integrity_all,
 /// which prints what it finds wrong).

@@ -1,4 +1,4 @@
-//! Flowing liquids, as the Luanti engine does them
+//! Flowing liquids (water and lava), as the Luanti engine does them
 //! (ServerMap::transformLiquidsLocal in src/servermap.cpp).
 //!
 //! Places where liquid may have to change wait in a queue: the
@@ -18,7 +18,7 @@
 
 use std::collections::VecDeque;
 
-use crate::content::{self, CONTENT_WATER, CONTENT_WATER_FLOWING};
+use crate::content::{self, CONTENT_LAVA, CONTENT_LAVA_FLOWING, CONTENT_WATER, CONTENT_WATER_FLOWING};
 use crate::fasthash::FastSet;
 use crate::world::{NodePos, CONTENT_AIR};
 
@@ -44,7 +44,11 @@ pub struct Liquid {
 /// minetest_game's water: viscosity 1, renewable, range 8.
 pub const WATER: Liquid = Liquid { source: CONTENT_WATER, flowing: CONTENT_WATER_FLOWING, viscosity: 1, renewable: true, range: 8 };
 
-pub const LIQUIDS: [&Liquid; 1] = [&WATER];
+/// minetest_game's lava: viscosity 7 (it creeps, a level at a time), not
+/// renewable, the default range of 8.
+pub const LAVA: Liquid = Liquid { source: CONTENT_LAVA, flowing: CONTENT_LAVA_FLOWING, viscosity: 7, renewable: false, range: 8 };
+
+pub const LIQUIDS: [&Liquid; 2] = [&WATER, &LAVA];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Type {
@@ -135,7 +139,6 @@ enum Side {
 
 #[derive(Clone, Copy)]
 struct Neighbour {
-    id: u16,
     param2: u8,
     side: Side,
     pos: NodePos,
@@ -213,7 +216,7 @@ pub fn transform(map: &mut impl Nodes, queue: &mut Queue, max: usize) -> Vec<Cha
             };
             let pos = (p0.0 + d.0, p0.1 + d.1, p0.2 + d.2);
             let (id, param2) = map.get(pos);
-            let nb = Neighbour { id, param2, side, pos };
+            let nb = Neighbour { param2, side, pos };
             match liquid_of(id) {
                 None => {
                     if floodable(id) {
@@ -392,6 +395,40 @@ mod tests {
         after_change((0, 0, 0), |p| map.get(p).0, &mut q);
         settle(&mut map, &mut q);
         assert!(map.0.values().all(|&(id, _)| id == CONTENT_AIR || id == content::CONTENT_STONE), "water left behind");
+    }
+
+    #[test]
+    fn lava_creeps_and_stays() {
+        // Lava spreads like water, but its levels change one step at a
+        // time, and two lava sources make no third.
+        let mut map = Map(HashMap::new());
+        let mut q = Queue::default();
+        map.set((0, 0, 0), CONTENT_LAVA, 0);
+        map.set((2, 0, 0), CONTENT_LAVA, 0);
+        after_change((0, 0, 0), |p| map.get(p).0, &mut q);
+        after_change((2, 0, 0), |p| map.get(p).0, &mut q);
+        let n = q.len();
+        transform(&mut map, &mut q, n);
+        let n = q.len();
+        transform(&mut map, &mut q, n);
+        // Beside the sources: flowing at 7 straight away (a source's
+        // neighbour), but not a source.
+        assert_eq!(map.get((1, 0, 0)), (CONTENT_LAVA_FLOWING, 7));
+        settle(&mut map, &mut q);
+        assert_eq!(map.get((1, 0, 0)).0, CONTENT_LAVA_FLOWING);
+        assert_eq!(map.get((5, 0, 0)), (CONTENT_LAVA_FLOWING, 5));
+        // Water and lava don't mix: each is a wall to the other.
+        let mut map = Map(HashMap::new());
+        let mut q = Queue::default();
+        map.set((0, 0, 0), CONTENT_LAVA, 0);
+        map.set((2, 0, 0), CONTENT_WATER, 0);
+        after_change((0, 0, 0), |p| map.get(p).0, &mut q);
+        after_change((2, 0, 0), |p| map.get(p).0, &mut q);
+        settle(&mut map, &mut q);
+        let between = map.get((1, 0, 0)).0;
+        assert!(between == CONTENT_LAVA_FLOWING || between == CONTENT_WATER_FLOWING);
+        assert_eq!(map.get((0, 0, 0)).0, CONTENT_LAVA);
+        assert_eq!(map.get((2, 0, 0)).0, CONTENT_WATER);
     }
 
     #[test]

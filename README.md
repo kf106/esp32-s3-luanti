@@ -46,13 +46,13 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **World generation:**
   - rolling hills and mountains;
   - grassland, desert and snow biomes;
-  - caves with entrances;
+  - caves with entrances; below height -64, in about half the land, they are flooded with lava, sealed off from the dry ones by solid stone;
   - coal and iron ore;
   - birch woods with apple trees in the lowlands and fir forests in the hills and snow, with clearings and the odd lone tree; leaves cast shade.
 - **Trees, as in Minetest Game:** chop a tree's trunk away and its leaves fall within a few seconds (leaves you placed yourself never do). Leaves give a sapling one time in 20, dug or fallen. Plant a sapling on dirt or grass in the open and it grows into a birch, fir or apple tree after 5 to 25 minutes, in daylight.
 - **Apples and health:** apple trees carry apples. Pick one (punch it) and eat it (left-click with it) for 2 HP; health only comes back by eating, as in Minetest Game. A picked apple grows again in the same place after 5 to 25 minutes while the tree's leaves are there; apples fall with the leaves when the tree is chopped.
 - **World edge:** the world ends about 31,000 nodes from the centre in every direction, at an invisible wall, as in Luanti.
-- **World storage:** the world is generated on demand from a fixed seed. Only the changes players make are stored, as an append-only log on the SD card.
+- **World storage:** the world is generated on demand from a fixed seed. Only the changes players make are stored, as an append-only log on the SD card. Writing to the card is slow, so changes are appended once a second, and an inventory is saved within 5 s of changing (and when its player leaves): a power cut loses at most that much. Saving after every dig once held the server up so much that a player digging fast was disconnected.
 - **Digging and building:** changes appear for every player at once.
 - **Survival inventory:** 32 slots, with stacks you can rearrange in the inventory window. New players start with 20 torches.
 - **Crafting:** Minetest Game's 3×3 crafting grid in the inventory window, with its recipes and rules. Stone gives cobblestone, and ores give coal and iron lumps.
@@ -72,18 +72,19 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **Doors:** Minetest Game's wooden, glass and steel doors: two columns of three planks, glass or steel ingots make one. A door faces the way you look as you place it, and one placed beside another hinges on the other side, so the pair opens outwards. Right-click opens and shuts it, with its sound; with sneak held, right-click builds against it instead. A steel door belongs to whoever placed it: only they can open or dig it (with a steel pickaxe). Owners are kept in `world/doors.txt`.
 - **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
 - **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. Water flows as in Luanti: dig beside or under a lake and it runs in, up to 8 nodes across flat ground, getting shallower as it goes, and falls down any hole; take the source away and the flow drains. Two sources with a gap between make a third, so a lake never runs dry. Water washes torches out. It spreads a node a second; the server looks at up to 1,000 places a second, so a flood into a big cave takes a while. Where more than 8 nodes in a map block change at once, the block is sent again whole rather than node by node, to spare the radio; while water is moving the log says how much every 10 s ("Liquids: ..."). Nobody drowns yet.
+- **Lava:** Minetest Game's lava, in deep caves (see above) or poured from a bucket. It flows like water, but creeps (its depth changes a level at a time), never makes new sources, and burns 8 HP a second while you stand in it. Lava touching water cools: a lava source into obsidian (a steel pickaxe digs it), flowing lava into stone, with a hiss. It glows in the dark but lights nothing around it: the client draws lava bright by itself, and the server spends no time spreading its light. So that what players see stays the same, a change to lava is always sent as its whole map block, never node by node.
 - **Farming:** Minetest Game's wheat and cotton.
   - Tall grass grows on grassland; digging it gives a wheat seed one time in five. Wild cotton grows in patches here and there and gives cotton seeds.
   - A hoe (two planks, stones or steel ingots over two sticks, like Minetest Game's) turns dirt or grass into soil with a left-click. Soil within 3 nodes of water turns wet; without water it dries, and bare dry soil turns back into dirt.
   - Plant seeds on soil. They sprout, then grow through 8 stages, a stage every 3 to 5 minutes, but only on wet soil in daylight. Dig a crop when ripe for one or two of the harvest and of seeds; earlier gives less.
   - 4 wheat make flour, which bakes into bread in the furnace (15 s); bread heals 5. 9 wheat make 3 straw blocks, and back. 4 cotton make white wool, 2 make 2 string.
 - **Beds:** Minetest Game's simple bed (three white wool over three planks) and fancy bed (the same with a stick at the top right). A bed is two nodes long and points the way you look as you place it. Right-click it at night to lie down; a window shows how many players are in bed, and when everyone online is, the night is skipped to the morning (05:31). Once more than half are in bed, anyone lying down can force the night skip. Leave Bed (or Escape) gets you up again. Using a bed, by day or night, makes it where you respawn after dying; respawn points are kept in `world/beds_spawns`. A bed can't be dug while someone lies in it.
-- **Buckets:** three steel ingots in a V make an empty bucket. Left-click water with it to fill it; right-click to pour the water out again, wherever you like.
+- **Buckets:** three steel ingots in a V make an empty bucket. Left-click water or lava with it to fill it; right-click to pour it out again, wherever you like. A lava bucket burns in a furnace for 60 s and leaves the empty bucket in the output.
 - **Glass:** smelt sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
   - steel pickaxes, shovels, axes and swords from steel ingots.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
   - It smelts iron lumps into steel ingots, cobblestone into stone and sand into glass, 3 seconds each, and bakes flour into bread in 15.
-  - Fuel: coal lumps burn for 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, beds 12 to 13 s, wooden trapdoors 7 s, straw 3 s, planks 5 to 7 s, leaves, grass, torches and wooden tools a few seconds, sticks, wheat, cotton and string 1 s. A piece of fuel that is alight burns to the end.
+  - Fuel: lava buckets burn for 60 s, coal lumps 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, beds 12 to 13 s, wooden trapdoors 7 s, straw 3 s, planks 5 to 7 s, leaves, grass, torches and wooden tools a few seconds, sticks, wheat, cotton and string 1 s. A piece of fuel that is alight burns to the end.
   - It burns whether or not anyone has it open. While lit, its front shows the fire, it glows, the window's flame and arrow fill up, and you hear it.
   - Only fuel goes in the fuel slot, and nothing into the output. Empty it before digging it (with a stone pickaxe). Its contents are kept on the SD card in `world/furnaces.txt`.
 - **Chests:** Minetest Game's, 32 slots, placed facing you. Right-click opens one: the lid lifts with a creak while anyone has it open (unless a block sits on it) and closes with a thud. A locked chest opens only for whoever placed it. Empty a chest before digging it. Contents are kept in `world/chests.txt`.
@@ -152,9 +153,9 @@ You need the Rust toolchain for Xtensa, plus `git` and Python 3 with the `venv` 
 The ESP-IDF settings that matter, in `sdkconfig.defaults`:
 - **Flash and PSRAM:** 16 MB flash and 8 MB octal PSRAM at 80 MHz, with PSRAM available to `malloc`.
 - **Main task stack:** 32 KB.
-- **Wi-Fi throughput:** settings from ESP-IDF's iperf example for the ESP32-S3: the Wi-Fi and network buffers stay in internal RAM (copying every packet through PSRAM held sending back), with 64 transmit and receive buffers, larger aggregation windows (32), and the Wi-Fi and lwIP fast paths in IRAM. This takes some 50 to 80 KB of internal RAM under load; every minute the log reports how much is left (`Internal RAM: ... KB free, lowest so far ... KB`), and warns below 16 KB.
+- **Wi-Fi and network buffers in PSRAM:** `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP` lets them live there where possible. (ESP-IDF's iperf settings, with the buffers in internal RAM, were tried: no faster here, and internal RAM ran out under load.) Every minute the log reports the internal RAM left (`Internal RAM: ... KB free, lowest so far ... KB`) and warns below 16 KB.
 - **CPU statistics:** `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` lets the status screen show the load on each core.
-- **UDP receive queue:** `CONFIG_LWIP_UDP_RECVMBOX_SIZE=64` lengthens it, so bursts of client packets aren't dropped while the server is busy.
+- **UDP receive queue:** `CONFIG_LWIP_UDP_RECVMBOX_SIZE=32` lengthens it, so bursts of client packets aren't dropped while the server is busy.
 
 ## The SD card
 
@@ -257,7 +258,7 @@ src/stairs.rs      stairs and slabs
 src/doors.rs       doors and trapdoors
 src/farming.rs     farming: soil, seeds, crops, hoes
 src/beds.rs        beds, sleeping and respawn points
-src/liquids.rs     flowing water
+src/liquids.rs     flowing water and lava
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto

@@ -23,6 +23,7 @@ pub const TOSERVER_RESPAWN_LEGACY: u16 = 0x38;
 pub const TOSERVER_INVENTORY_ACTION: u16 = 0x31;
 pub const TOSERVER_INVENTORY_FIELDS: u16 = 0x3c;
 pub const TOSERVER_CHAT_MESSAGE: u16 = 0x32;
+pub const TOSERVER_PLAYERITEM: u16 = 0x37;
 
 // Server to client
 pub const TOCLIENT_HELLO: u16 = 0x02;

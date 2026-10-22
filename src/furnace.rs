@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use log::warn;
 
 use crate::chest::Chests;
+use crate::content;
 use crate::crafting;
 use crate::inventory::{self, Inventory, List, Stack};
 use crate::storage;
@@ -168,7 +169,20 @@ impl Furnace {
                         self.fuel_totaltime = 0.0;
                         self.src_time = 0.0;
                     } else {
+                        let used = self.fuel[0].map(|f| f.id);
                         take_one(&mut self.fuel[0]);
+                        // A lava bucket leaves its empty bucket (the fuel
+                        // recipe's replacement): in the output if there is
+                        // room, otherwise back in the fuel slot it came from
+                        // (minetest_game drops it beside the furnace).
+                        if used == Some(content::ITEM_BUCKET_LAVA) {
+                            let empty = Stack::new(content::ITEM_BUCKET_EMPTY, 1);
+                            if room_for(&self.dst, empty) {
+                                inventory::add_to(&mut self.dst, empty);
+                            } else if self.fuel[0].is_none() {
+                                self.fuel[0] = Some(empty);
+                            }
+                        }
                         out.changed = true;
                         update = true;
                         self.fuel_totaltime = burn + (self.fuel_totaltime - self.fuel_time);
@@ -504,6 +518,17 @@ mod tests {
         assert!(rest[29].active && !rest[30].active, "{:?}", rest.iter().map(|s| s.active).collect::<Vec<_>>());
         assert!(!f.running && f.display.is_none());
         assert_eq!(f.fuel_totaltime, 0.0);
+    }
+
+    #[test]
+    fn lava_bucket_leaves_its_bucket() {
+        let mut f = Furnace { running: true, ..Default::default() };
+        f.src[0] = Some(Stack::new(CONTENT_COBBLE, 1));
+        f.fuel[0] = Some(Stack::new(ITEM_BUCKET_LAVA, 1));
+        run(&mut f, 2);
+        assert_eq!(f.fuel[0], None);
+        assert!(f.dst.contains(&Some(Stack::new(ITEM_BUCKET_EMPTY, 1))), "{:?}", f.dst);
+        assert_eq!(crafting::burn_time(ITEM_BUCKET_LAVA), 60.0);
     }
 
     #[test]

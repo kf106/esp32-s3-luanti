@@ -183,6 +183,9 @@ pub fn burn_time(id: u16) -> f32 {
         farming::STRAW => 3.0,
         id if id == farming::GRASS[0] => 2.0,
         crate::doors::FIRST_TRAPDOOR => 7.0,
+        // A lava bucket burns for a minute (the bucket mod), leaving the
+        // empty bucket (see furnace.rs).
+        ITEM_BUCKET_LAVA => 60.0,
         crate::beds::BED_BOTTOM => 12.0,
         crate::beds::FANCY_BOTTOM => 13.0,
         id => crate::stairs::burn_time(id, burn_time),
