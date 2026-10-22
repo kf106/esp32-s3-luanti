@@ -28,6 +28,8 @@ esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf.git" }
 log = "0.4"
 esp-idf-svc = "0.53"
 anyhow = "1"
+# The Join page's Wi-Fi QR code (pure Rust, no dependencies).
+qrcodegen = "1.8"
 
 [build-dependencies]
 embuild = "0.33.5"

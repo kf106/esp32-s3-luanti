@@ -44,7 +44,7 @@ use esp_idf_svc::hal::sd::mmc::{SdMmcHostConfiguration, SdMmcHostDriver};
 use esp_idf_svc::hal::sd::{SdCardConfiguration, SdCardDriver};
 use esp_idf_svc::io::vfs::MountedFatfs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi};
+use esp_idf_svc::wifi::{AccessPointConfiguration, BlockingWifi, ClientConfiguration, Configuration, EspWifi, WifiDriver};
 use log::info;
 
 const MOUNT: &str = "/sd";
@@ -57,6 +57,18 @@ const WIFI_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
 /// How often to check that the Wi-Fi connection is still there.
 const WIFI_CHECK: std::time::Duration = std::time::Duration::from_secs(2);
 const PORT: u16 = 30000;
+/// The BOOT button: GPIO 0, pulled up, low while pressed.
+const PIN_BOOT: i32 = 0;
+/// How long after start-up the BOOT button is watched, and how long it
+/// must be held, to run the board's own hotspot. (Holding it while the
+/// board powers up doesn't work: the chip then waits to be flashed.)
+const HOTSPOT_WINDOW: std::time::Duration = std::time::Duration::from_secs(3);
+const HOTSPOT_HOLD: std::time::Duration = std::time::Duration::from_secs(1);
+/// The hotspot's address (the gateway of its own 192.168.4.x network) and
+/// radio channel, and how many devices may join it.
+const HOTSPOT_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(192, 168, 4, 1);
+const HOTSPOT_CHANNEL: u8 = 1;
+const HOTSPOT_MAX_DEVICES: u16 = 8;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -93,50 +105,63 @@ fn main() -> anyhow::Result<()> {
     lcd::start(status.clone(), p.spi2, pins.gpio40, pins.gpio45);
 
     // Wi-Fi: the networks in wifi.txt, plus one given when building
-    // (WIFI_SSID, WIFI_PASS), which is written into wifi.txt.
+    // (WIFI_SSID, WIFI_PASS), which is written into wifi.txt; or, if BOOT
+    // is held just after start-up, the hotspot in wifi.txt.
     let built_in = option_env!("WIFI_SSID").filter(|s| !s.is_empty()).map(|ssid| wifi_config::Network {
         ssid: ssid.to_string(),
         password: option_env!("WIFI_PASS").unwrap_or("").to_string(),
     });
-    let networks = wifi_config::load(&wifi_config::Files { networks: WIFI_FILE, written: WIFI_WRITTEN }, built_in);
+    let config = wifi_config::load(&wifi_config::Files { networks: WIFI_FILE, written: WIFI_WRITTEN }, built_in);
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
-    let mut wifi = BlockingWifi::wrap(
-        EspWifi::new(p.modem, sysloop.clone(), Some(nvs))?,
-        sysloop,
-    )?;
-    // No network yet, just scanning. (The default asks for WPA2 with an
-    // empty password, which the driver warns about.)
-    wifi.set_configuration(&Configuration::Client(ClientConfiguration {
-        auth_method: esp_idf_svc::wifi::AuthMethod::None,
-        ..Default::default()
-    }))?;
-    wifi.start()?;
-    let joined = join_wifi(&mut wifi, &networks, &status);
-    let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
-    info!("Connected to {joined}, IP address {ip}");
-    {
-        let mut st = status::lock(&status);
-        st.address = format!("{ip}:{PORT}");
-        st.event(format!("Joined Wi-Fi {joined}"));
-    }
-    // Power saving makes the radio doze between beacons, which delays and
-    // drops outgoing packets. A server should stay awake.
-    esp_idf_svc::sys::esp!(unsafe {
-        esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE)
-    })?;
-    log_heap("after Wi-Fi");
-    // ESP-IDF doesn't rejoin a network on its own: a thread watches the
-    // connection and rejoins if it drops (the router restarts, or the board
-    // loses signal). The server carries on meanwhile, and players whose
-    // clients don't time out (30 s) carry on playing.
-    std::thread::Builder::new()
-        .name("wifi".into())
-        .stack_size(8 * 1024)
-        .spawn({
-            let status = status.clone();
-            move || watch_wifi(wifi, &networks, &status, joined)
+    // Kept until the server stops: dropping it would switch the hotspot off.
+    let mut _hotspot_wifi = None;
+    let ip = if hotspot_asked(&status) {
+        let driver = WifiDriver::new(p.modem, sysloop.clone(), Some(nvs))?;
+        let wifi = start_hotspot(driver, sysloop, &config.hotspot, &status)?;
+        let ip = wifi.wifi().ap_netif().get_ip_info()?.ip;
+        _hotspot_wifi = Some(wifi);
+        ip
+    } else {
+        let mut wifi = BlockingWifi::wrap(
+            EspWifi::new(p.modem, sysloop.clone(), Some(nvs))?,
+            sysloop,
+        )?;
+        // No network yet, just scanning. (The default asks for WPA2 with an
+        // empty password, which the driver warns about.)
+        wifi.set_configuration(&Configuration::Client(ClientConfiguration {
+            auth_method: esp_idf_svc::wifi::AuthMethod::None,
+            ..Default::default()
+        }))?;
+        wifi.start()?;
+        let networks = config.networks;
+        let joined = join_wifi(&mut wifi, &networks, &status);
+        let ip = wifi.wifi().sta_netif().get_ip_info()?.ip;
+        info!("Connected to {joined}, IP address {ip}");
+        {
+            let mut st = status::lock(&status);
+            st.address = format!("{ip}:{PORT}");
+            st.event(format!("Joined Wi-Fi {joined}"));
+        }
+        // Power saving makes the radio doze between beacons, which delays and
+        // drops outgoing packets. A server should stay awake.
+        esp_idf_svc::sys::esp!(unsafe {
+            esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE)
         })?;
+        // ESP-IDF doesn't rejoin a network on its own: a thread watches the
+        // connection and rejoins if it drops (the router restarts, or the board
+        // loses signal). The server carries on meanwhile, and players whose
+        // clients don't time out (30 s) carry on playing.
+        std::thread::Builder::new()
+            .name("wifi".into())
+            .stack_size(8 * 1024)
+            .spawn({
+                let status = status.clone();
+                move || watch_wifi(wifi, &networks, &status, joined)
+            })?;
+        ip
+    };
+    log_heap("after Wi-Fi");
 
     // Luanti server
     let auth = auth::AuthStore::open(format!("{MOUNT}/auth"))?;
@@ -222,6 +247,89 @@ unsafe impl GlobalAlloc for PreferPsram {
 
 #[global_allocator]
 static ALLOCATOR: PreferPsram = PreferPsram;
+
+/// Whether to run the board's own hotspot: the BOOT button held for
+/// HOTSPOT_HOLD within HOTSPOT_WINDOW of start-up (or a hold that began in
+/// the window). The screen asks meanwhile.
+fn hotspot_asked(status: &status::SharedStatus) -> bool {
+    use esp_idf_svc::sys::*;
+    use std::time::{Duration, Instant};
+    unsafe {
+        gpio_set_direction(PIN_BOOT as _, gpio_mode_t_GPIO_MODE_INPUT);
+        gpio_set_pull_mode(PIN_BOOT as _, gpio_pull_mode_t_GPIO_PULLUP_ONLY);
+    }
+    status::lock(status).event("Hold BOOT now for a hotspot".to_string());
+    info!("Hold BOOT for {}s now to run a hotspot", HOTSPOT_HOLD.as_secs());
+    let start = Instant::now();
+    let mut held_since: Option<Instant> = None;
+    while start.elapsed() < HOTSPOT_WINDOW || held_since.is_some() {
+        let down = unsafe { gpio_get_level(PIN_BOOT as _) } == 0;
+        match (down, held_since) {
+            (true, None) => held_since = Some(Instant::now()),
+            (false, _) => held_since = None,
+            _ => {}
+        }
+        if held_since.is_some_and(|t| t.elapsed() >= HOTSPOT_HOLD) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
+/// Run the board's own hotspot, `net`, at HOTSPOT_IP, handing out
+/// addresses on its network to whoever joins, and tell the screen.
+fn start_hotspot(
+    driver: WifiDriver<'static>,
+    sysloop: EspSystemEventLoop,
+    net: &wifi_config::Network,
+    status: &status::SharedStatus,
+) -> anyhow::Result<BlockingWifi<EspWifi<'static>>> {
+    use esp_idf_svc::ipv4::{self, Mask, RouterConfiguration, Subnet};
+    use esp_idf_svc::netif::{EspNetif, NetifConfiguration, NetifStack};
+    use esp_idf_svc::wifi::AuthMethod;
+    // esp-idf-svc's own default is 192.168.71.1, so the address is set here.
+    let ap_netif = EspNetif::new_with_conf(&NetifConfiguration {
+        ip_configuration: Some(ipv4::Configuration::Router(RouterConfiguration {
+            subnet: Subnet { gateway: HOTSPOT_IP, mask: Mask(24) },
+            dhcp_enabled: true,
+            // No DNS: there is no internet here, and nothing to look up.
+            dns: None,
+            secondary_dns: None,
+        })),
+        ..NetifConfiguration::wifi_default_router()
+    })?;
+    let mut wifi = BlockingWifi::wrap(EspWifi::wrap_all(driver, EspNetif::new(NetifStack::Sta)?, ap_netif)?, sysloop)?;
+    let (Ok(ssid), Ok(password)) = (net.ssid.as_str().try_into(), net.password.as_str().try_into()) else {
+        anyhow::bail!("hotspot name or password too long");
+    };
+    wifi.set_configuration(&Configuration::AccessPoint(AccessPointConfiguration {
+        ssid,
+        password,
+        auth_method: if net.password.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal },
+        channel: HOTSPOT_CHANNEL,
+        max_connections: HOTSPOT_MAX_DEVICES,
+        ..Default::default()
+    }))?;
+    wifi.start()?;
+    wifi.wait_netif_up()?;
+    let ip = wifi.wifi().ap_netif().get_ip_info()?.ip;
+    info!("Hotspot \"{}\" up, server at {ip}:{PORT}", net.ssid);
+    let qr = wifi_config::join_qr(net);
+    if qr.is_none() {
+        log::warn!("The hotspot's details don't fit in a QR code");
+    }
+    let mut st = status::lock(status);
+    st.address = format!("{ip}:{PORT}");
+    st.event(format!("Hotspot {} up", net.ssid));
+    st.hotspot = Some(std::sync::Arc::new(status::Hotspot {
+        ssid: net.ssid.clone(),
+        password: net.password.clone(),
+        ip: ip.to_string(),
+        qr,
+    }));
+    Ok(wifi)
+}
 
 /// Join one of `networks`, trying those in range in the file's order, and
 /// keep trying until one works. Returns its name.

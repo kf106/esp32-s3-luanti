@@ -472,6 +472,8 @@ pub struct Server {
     /// or a client was logging in, and whether Wi-Fi power saving is on.
     last_activity: Instant,
     power_saving: bool,
+    /// Running its own hotspot (so no power saving: that is for a client).
+    hotspot: bool,
     /// Leaf decay and sapling timers.
     timers: Timers,
     rng: Rng,
@@ -704,6 +706,8 @@ impl Server {
         let srp_jobs = start_srp_thread(srp_sender);
         let port = socket.local_addr().map(|a| a.port()).unwrap_or(0);
         let builder = start_block_builder(status.clone(), port);
+        // On its own hotspot the board is the access point, which never dozes.
+        let hotspot = status::lock(&status).hotspot.is_some();
         // Saplings planted before a restart: timers again, as when planted
         // (minetest_game's node timers survive a restart; ours don't).
         let mut timers = Timers::new();
@@ -787,6 +791,7 @@ impl Server {
             next_sound_id: 1,
             last_activity: Instant::now(),
             power_saving: false,
+            hotspot,
             timers,
             rng,
             skins,
@@ -4256,7 +4261,7 @@ impl Server {
     /// by up to a few hundred milliseconds, which only the first move after
     /// a pause will notice.
     fn update_power_saving(&mut self) {
-        if self.power_saving || self.last_activity.elapsed() < IDLE_POWER_SAVE {
+        if self.hotspot || self.power_saving || self.last_activity.elapsed() < IDLE_POWER_SAVE {
             return;
         }
         // Not while a player is still being sent their map: it would load

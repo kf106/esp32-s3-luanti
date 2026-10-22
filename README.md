@@ -112,9 +112,10 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - two blue flashes when a player joins, two purple when one leaves, and a white flash for chat;
   - three red flashes when something goes wrong, such as failing to save to the SD card;
   - amber blinking while looking for Wi-Fi.
-- **Status screens:** the LCD has three pages, switched with the board's BOOT button. The screen switches off after a minute without a press, to keep the board cooler; the next press wakes it on the same page.
+- **Status screens:** the LCD has three pages, switched with the board's BOOT button, plus a fourth when the board runs its own hotspot. The screen switches off after a minute without a press, to keep the board cooler; the next press wakes it on the same page.
+  - **Join** (hotspot only, first): a QR code that a phone camera offers to join, with the hotspot's name, password and address written beside it.
   - **Overview:** players online, packet and block counts, memory, and recent events.
-  - **Device:** load on each CPU core, how busy the server is, time per map block, memory (free, lowest, largest piece), Wi-Fi signal and channel, failed sends, SD card space, and the chip's temperature.
+  - **Device:** load on each CPU core, how busy the server is, time per map block, memory (free, lowest, largest piece), Wi-Fi signal and channel (on the hotspot: its channel and how many devices are on it), failed sends, SD card space, and the chip's temperature.
   - **Chat:** the latest public chat, newest at the bottom. The screen font covers Latin-1 and Latin Extended-A, so Finnish, Swedish and most European letters show properly.
 
 ## What doesn't (yet)
@@ -170,7 +171,7 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 /sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin)
 /sd/media/      optional extra media (see below)
 /sd/motd.txt    optional welcome message (see below)
-/sd/wifi.txt    the Wi-Fi networks to join (see below)
+/sd/wifi.txt    the Wi-Fi networks to join, and the hotspot (see below)
 ```
 
 All of these are plain text or simple binary files, so you can inspect or edit them on a PC. If a future version changes the terrain generator, the old change log is kept as `nodes-v<n>.log` and the world starts afresh.
@@ -195,6 +196,21 @@ How the server chooses a network:
 - **Power saving:** after 30 seconds with nobody doing anything (no one connected, or every player standing still with their map loaded), the radio dozes between the router's beacons, which saves power and keeps the board's 3.3 V regulator cooler. The first move afterwards may arrive up to a few hundred milliseconds late; then the radio stays fully awake again. The Device page shows "doze" in place of the channel while it saves.
 - **Building with Wi-Fi details:** if you build with `WIFI_SSID` and `WIFI_PASS`, that network is written to the top of `wifi.txt` the first time the new firmware starts, or its password is updated if it is already listed. After that the file is yours: later edits are kept, even through reflashing the same firmware. It is only rewritten if you build with a different network or password.
 - **Building without them:** plain `cargo run --release` uses whatever `wifi.txt` holds.
+
+### Its own hotspot
+
+Where there is no Wi-Fi to join, the board can make its own network. Switch it on, and when the screen says "Hold BOOT now for a hotspot", hold the BOOT button for a second (it waits three seconds for this). Don't hold BOOT while plugging the board in: the chip then waits to be flashed instead of starting.
+
+The hotspot is set in `wifi.txt` with a `hotspot` line, and the `password` line after it:
+
+```
+hotspot Luanti
+password LuantiLuanti
+```
+
+If the file has no `hotspot` entry, this default is added to the end of it at start-up (the rest of the file is left as it was). WPA2 needs a password of 8 to 63 characters; leave the `password` line out for an open hotspot. If the entry can't be used (a password too short, say), the server warns and runs the default instead.
+
+On the hotspot, the server is at **192.168.4.1** (port 30000, Luanti's default), and hands out addresses to up to 8 devices. The screen opens on the Join page: point a phone's camera at the QR code to join, or type the name and password on a laptop, then connect Luanti to 192.168.4.1. There is no internet on the hotspot, so a phone may complain or drift back to mobile data; tell it to stay connected. The power saving described above is off on the hotspot, since the board is the access point.
 
 The passwords are stored on the card in plain text, so treat the card accordingly.
 

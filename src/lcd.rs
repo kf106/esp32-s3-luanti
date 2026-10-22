@@ -203,6 +203,9 @@ fn run(lcd: Lcd, status: SharedStatus) {
         let st = status::lock(&status);
         (st.joins, st.leaves, st.chats, status::problems())
     };
+    // Whether the board runs its own hotspot. Decided at start-up, after
+    // this thread starts; when it is, the Join page (its QR code) is shown.
+    let mut hotspot = false;
     loop {
         if stacks_reported.map_or(true, |t| t.elapsed() >= STACK_REPORT) {
             report_stacks();
@@ -210,15 +213,27 @@ fn run(lcd: Lcd, status: SharedStatus) {
         }
         // The LED, whether the screen is on or off: breathing and flashing
         // (see indicator.rs).
-        let (state, counts) = {
+        let (state, counts, hotspot_now) = {
             let st = status::lock(&status);
             let state = if st.address.starts_with("Wi-Fi") {
                 State::NoWifi
             } else {
                 State::Running { players: st.players.len() }
             };
-            (state, (st.joins, st.leaves, st.chats, status::problems()))
+            (state, (st.joins, st.leaves, st.chats, status::problems()), st.hotspot.is_some())
         };
+        if hotspot_now && !hotspot {
+            hotspot = true;
+            page = Page::Join;
+            drawn = None;
+            last_press = Instant::now();
+            if !screen_on {
+                screen_on = true;
+                if let Err(e) = lcd.set_on(true) {
+                    warn!("LCD on: {e}");
+                }
+            }
+        }
         let news = [
             (counts.0 > seen.0, Event::Join),
             (counts.1 > seen.1, Event::Leave),
@@ -246,7 +261,7 @@ fn run(lcd: Lcd, status: SharedStatus) {
         if pressed {
             last_press = Instant::now();
             if screen_on {
-                page = page.next();
+                page = page.next(hotspot);
             } else {
                 // The first press only wakes the screen, on the page it showed.
                 screen_on = true;
@@ -291,7 +306,7 @@ fn run(lcd: Lcd, status: SharedStatus) {
         if page == Page::Device && sd.0.map_or(true, |t| t.elapsed() >= SD_INTERVAL) {
             sd = (Some(Instant::now()), sd_space());
         }
-        let (rssi, channel) = wifi();
+        let (rssi, channel, hotspot_clients) = wifi(hotspot);
         let sys = unsafe {
             System {
                 internal_free_kb: heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) as u32 / 1024,
@@ -301,6 +316,7 @@ fn run(lcd: Lcd, status: SharedStatus) {
                 psram_min_kb: heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) as u32 / 1024,
                 rssi,
                 channel,
+                hotspot_clients,
                 packets_in_per_s: (snapshot.packets_in - last.1) as f32 / dt,
                 packets_out_per_s: (snapshot.packets_out - last.2) as f32 / dt,
                 cpu: cpu.sample(),
@@ -554,11 +570,20 @@ fn sd_space() -> Option<(u64, u64)> {
     (unsafe { esp_vfs_fat_info(path.as_ptr(), &mut total, &mut free) } == 0).then_some((total, free))
 }
 
-fn wifi() -> (Option<i8>, Option<u8>) {
+/// Signal strength and channel when joined to a network; on the board's
+/// own hotspot, its channel and how many devices are on it.
+fn wifi(hotspot: bool) -> (Option<i8>, Option<u8>, Option<u8>) {
+    if hotspot {
+        let mut list: wifi_sta_list_t = Default::default();
+        let clients = (unsafe { esp_wifi_ap_get_sta_list(&mut list) } == 0).then_some(list.num as u8);
+        let (mut primary, mut second) = (0u8, 0 as wifi_second_chan_t);
+        let channel = (unsafe { esp_wifi_get_channel(&mut primary, &mut second) } == 0).then_some(primary);
+        return (None, channel, clients);
+    }
     let mut ap: wifi_ap_record_t = Default::default();
     if unsafe { esp_wifi_sta_get_ap_info(&mut ap) } == 0 {
-        (Some(ap.rssi), Some(ap.primary))
+        (Some(ap.rssi), Some(ap.primary), None)
     } else {
-        (None, None)
+        (None, None, None)
     }
 }

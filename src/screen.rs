@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use crate::font::{Font, BIG, SMALL};
-use crate::status::Status;
+use crate::status::{Hotspot, Status};
 
 /// Landscape: the panel is 172x320, used sideways.
 pub const WIDTH: usize = 320;
@@ -37,6 +37,8 @@ pub struct System {
     /// Wi-Fi signal strength and channel, if connected.
     pub rssi: Option<i8>,
     pub channel: Option<u8>,
+    /// Devices on the board's own hotspot, when it runs one.
+    pub hotspot_clients: Option<u8>,
     pub packets_in_per_s: f32,
     pub packets_out_per_s: f32,
     /// Load on each CPU core over the last second, 0..=100, if known.
@@ -52,31 +54,31 @@ pub struct System {
     pub chip_temp: Option<f32>,
 }
 
-/// The status screens, paged through with the BOOT button.
+/// The status screens, paged through with the BOOT button. Join, the
+/// hotspot's QR code, comes before the rest and is only there when the
+/// board runs its own hotspot.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Page {
+    Join,
     Overview,
     Device,
     Chat,
 }
 
 impl Page {
-    pub const COUNT: usize = 3;
-
-    pub fn next(self) -> Self {
-        match self {
-            Page::Overview => Page::Device,
-            Page::Device => Page::Chat,
-            Page::Chat => Page::Overview,
+    /// The pages in order, with or without the hotspot's Join page.
+    fn all(hotspot: bool) -> &'static [Page] {
+        if hotspot {
+            &[Page::Join, Page::Overview, Page::Device, Page::Chat]
+        } else {
+            &[Page::Overview, Page::Device, Page::Chat]
         }
     }
 
-    fn number(self) -> usize {
-        match self {
-            Page::Overview => 1,
-            Page::Device => 2,
-            Page::Chat => 3,
-        }
+    pub fn next(self, hotspot: bool) -> Self {
+        let pages = Self::all(hotspot);
+        let i = pages.iter().position(|&p| p == self).unwrap_or(0);
+        pages[(i + 1) % pages.len()]
     }
 }
 
@@ -203,17 +205,19 @@ pub struct View<'a> {
 
 /// Draw the whole screen.
 pub fn render(f: &mut Frame, view: &View) {
-    match view.page {
-        Page::Overview => render_overview(f, view.status, view.system),
-        Page::Device => render_device(f, view.status, view.system),
-        Page::Chat => render_chat(f, view.status),
+    match (view.page, &view.status.hotspot) {
+        (Page::Join, Some(hotspot)) => render_join(f, view.status, hotspot),
+        (Page::Overview | Page::Join, _) => render_overview(f, view.status, view.system),
+        (Page::Device, _) => render_device(f, view.status, view.system),
+        (Page::Chat, _) => render_chat(f, view.status),
     }
     // Which page this is, as dots along the bottom edge, kept clear of the
     // panel's rounded corner.
+    let pages = Page::all(view.status.hotspot.is_some());
     let (dot, gap) = (4, 6);
-    let x0 = WIDTH - 11 - Page::COUNT * (dot + gap) + gap;
-    for i in 0..Page::COUNT {
-        let colour = if i + 1 == view.page.number() { TEXT } else { RULE };
+    let x0 = WIDTH - 11 - pages.len() * (dot + gap) + gap;
+    for (i, &p) in pages.iter().enumerate() {
+        let colour = if p == view.page { TEXT } else { RULE };
         f.fill(x0 + i * (dot + gap), HEIGHT - dot - 3, dot, dot, colour);
     }
 }
@@ -284,6 +288,11 @@ fn render_device(f: &mut Frame, st: &Status, sys: &System) {
     // Network
     // "doze": power saving, nobody doing anything (see server.rs).
     let wifi = match (sys.rssi, sys.channel) {
+        _ if st.hotspot.is_some() => match (sys.hotspot_clients, sys.channel) {
+            (Some(n), Some(c)) => format!("AP ch{c}, {n} on"),
+            (Some(n), None) => format!("AP, {n} on"),
+            _ => "AP".to_string(),
+        },
         (Some(r), _) if st.wifi_dozing => format!("{r} dBm doze"),
         (Some(r), Some(c)) => format!("{r} dBm ch {c}"),
         (Some(r), None) => format!("{r} dBm"),
@@ -404,6 +413,80 @@ fn render_chat(f: &mut Frame, st: &Status) {
     }
 }
 
+/// Text cut into pieces of at most `width` characters, for names and
+/// passwords too long for one line (they have no spaces to break at).
+fn chunks(text: &str, width: usize) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    chars.chunks(width.max(1)).map(|c| c.iter().collect()).collect()
+}
+
+/// The hotspot page: a QR code that a phone camera offers to join, and the
+/// same details written out for a laptop.
+fn render_join(f: &mut Frame, st: &Status, hotspot: &Hotspot) {
+    let margin = 6;
+    let right = WIDTH - margin;
+    f.fill(0, 0, WIDTH, HEIGHT, BACKGROUND);
+    let header_h = BIG.h + 4;
+    f.fill(0, 0, WIDTH, header_h, HEADER);
+    f.text(&Pen::new(&BIG, TEXT, HEADER, WIDTH), margin, 2, "Join");
+    let up = uptime(st.started.elapsed());
+    f.text_right(&Pen::new(&SMALL, TEXT, HEADER, WIDTH), right, 2 + (BIG.h - SMALL.h) / 2 + 1, &up);
+
+    // The code, dark on white with a quiet border two modules wide (the
+    // standard asks for four, but phones read two happily, and the bigger
+    // modules matter more on a small screen).
+    let top = header_h + 4;
+    let room = HEIGHT - top - 4;
+    let mut text_x = margin;
+    if let Some(qr) = &hotspot.qr {
+        let quiet = 2;
+        let span = qr.size + 2 * quiet;
+        let scale = (room / span).max(1);
+        let side = span * scale;
+        let (x0, y0) = (margin, top + (room - side.min(room)) / 2);
+        f.fill(x0, y0, side, side, rgb(255, 255, 255));
+        for my in 0..qr.size {
+            for mx in 0..qr.size {
+                if qr.dark(mx, my) {
+                    f.fill(x0 + (quiet + mx) * scale, y0 + (quiet + my) * scale, scale, scale, rgb(0, 0, 0));
+                }
+            }
+        }
+        text_x = x0 + side + 8;
+    }
+
+    // The details beside it.
+    let width = (right - text_x) / SMALL.w;
+    let line = SMALL.h + 1;
+    let label = Pen::new(&SMALL, LABEL, BACKGROUND, right);
+    let value = Pen::new(&SMALL, TEXT, BACKGROUND, right);
+    let mut y = top;
+    f.text(&label, text_x, y, "Wi-Fi");
+    y += line;
+    for part in chunks(&hotspot.ssid, width).iter().take(2) {
+        f.text(&value, text_x, y, part);
+        y += line;
+    }
+    f.text(&label, text_x, y, "Password");
+    y += line;
+    if hotspot.password.is_empty() {
+        f.text(&value, text_x, y, "none (open)");
+        y += line;
+    } else {
+        for part in chunks(&hotspot.password, width).iter().take(2) {
+            f.text(&value, text_x, y, part);
+            y += line;
+        }
+    }
+    // The address, with its label if both fit above the page dots.
+    if y + 3 + 2 * line <= HEIGHT - 6 {
+        y += 3;
+        f.text(&label, text_x, y, "Then in Luanti");
+        y += line;
+    }
+    f.text(&Pen::new(&SMALL, GOOD, BACKGROUND, right), text_x, y, &hotspot.ip);
+}
+
 /// The first page: who is playing and what is happening.
 fn render_overview(f: &mut Frame, st: &Status, sys: &System) {
     let margin = 6;
@@ -436,7 +519,11 @@ fn render_overview(f: &mut Frame, st: &Status, sys: &System) {
         count.push_str(&format!(" (+{} joining)", st.joining));
     }
     f.text(&Pen::new(&SMALL, TEXT, BACKGROUND, WIDTH), x, y, &count);
-    if let Some(rssi) = sys.rssi {
+    if st.hotspot.is_some() {
+        let n = sys.hotspot_clients.unwrap_or(0);
+        let devices = if n == 1 { "device" } else { "devices" };
+        f.text_right(&Pen::new(&SMALL, GOOD, BACKGROUND, WIDTH), right, y, &format!("Hotspot, {n} {devices}"));
+    } else if let Some(rssi) = sys.rssi {
         let colour = if rssi >= -67 { GOOD } else if rssi >= -80 { EVENT } else { rgb(239, 83, 80) };
         f.text_right(&Pen::new(&SMALL, colour, BACKGROUND, WIDTH), right, y, &format!("Wi-Fi {rssi} dBm"));
     }

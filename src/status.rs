@@ -19,6 +19,30 @@ pub struct ChatLine {
     pub action: bool,
 }
 
+/// A QR code, as rows of modules (true for dark), `size` on a side.
+pub struct Qr {
+    pub size: usize,
+    pub dark: Vec<bool>,
+}
+
+impl Qr {
+    pub fn dark(&self, x: usize, y: usize) -> bool {
+        x < self.size && y < self.size && self.dark[y * self.size + x]
+    }
+}
+
+/// The board's own hotspot, when it runs one: what players need to join
+/// it, for the Join page.
+pub struct Hotspot {
+    pub ssid: String,
+    /// Empty for an open hotspot.
+    pub password: String,
+    /// The server's address on the hotspot.
+    pub ip: String,
+    /// The phone camera's Wi-Fi join code, if it could be made.
+    pub qr: Option<Qr>,
+}
+
 #[derive(Clone)]
 pub struct Status {
     pub started: Instant,
@@ -54,6 +78,8 @@ pub struct Status {
     pub chats: u64,
     /// Recent public chat, oldest first.
     pub chat: VecDeque<ChatLine>,
+    /// Set when the board runs its own hotspot rather than joining Wi-Fi.
+    pub hotspot: Option<Arc<Hotspot>>,
 }
 
 /// Problems (such as failing to save to the SD card), counted from
@@ -93,6 +119,7 @@ impl Status {
             leaves: 0,
             chats: 0,
             chat: VecDeque::new(),
+            hotspot: None,
         }))
     }
 
