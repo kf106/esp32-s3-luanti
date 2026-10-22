@@ -14,7 +14,7 @@ It covers roughly half of Minetest Game so far: see [What works](#what-works) an
   <img src="assets/server-003.jpg" width="32%" alt="The chat page: the latest public chat">
 </p>
 
-*The server running on a Waveshare ESP32-S3-LCD-1.47. Its built-in screen has three pages, switched with the BOOT button: overview, device and chat.*
+*The server running on a Waveshare ESP32-S3-LCD-1.47. Its built-in screen has three pages, switched with the BOOT button: overview, device and chat (and a fourth, Join, with a QR code for phones, when it runs as its own hotspot).*
 
 ## What it looks like
 
