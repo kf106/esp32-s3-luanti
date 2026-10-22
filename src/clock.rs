@@ -74,6 +74,15 @@ impl Clock {
         format!("{}:{:02}", minutes / 60, minutes % 60)
     }
 
+    /// Set the time of day (as minetest.set_timeofday: a skipped night),
+    /// keeping the world's age, and save it.
+    pub fn set_time_of_day(&mut self, time: u16) {
+        self.start_game_time = self.game_time();
+        self.start_time = time % 24000;
+        self.started = Instant::now();
+        self.save();
+    }
+
     /// Save, if SAVE_INTERVAL has passed since the last time. Returns
     /// whether it saved.
     pub fn save_if_due(&mut self) -> bool {

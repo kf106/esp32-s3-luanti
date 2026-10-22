@@ -4,7 +4,7 @@ A minimal [Luanti](https://www.luanti.org/) (formerly Minetest) server that runs
 
 A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. You can create an account, log in, explore a generated world with hills, forests, caves, biomes and ores, dig and build, craft, place torches, drop and pick up items, choose a skin, and see the other players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
 
-The server does not run Lua. A normal Luanti server runs a game (such as Minetest Game) written in Lua mods. This one implements the engine's network protocol directly and builds a small built-in game on top of it, in about 7,000 lines of Rust.
+The server does not run Lua. A normal Luanti server runs a game (such as Minetest Game) written in Lua mods. This one speaks Luanti's network protocol directly and builds in much of Minetest Game, in about 13,000 lines of Rust.
 
 <p align="center">
   <img src="assets/server-001.jpg" width="32%" alt="The server running on a Waveshare ESP32-S3-LCD-1.47, showing its overview page: players online, packets, memory and recent events">
@@ -77,12 +77,13 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - A hoe (two planks, stones or steel ingots over two sticks, like Minetest Game's) turns dirt or grass into soil with a left-click. Soil within 3 nodes of water turns wet; without water it dries, and bare dry soil turns back into dirt.
   - Plant seeds on soil. They sprout, then grow through 8 stages, a stage every 3 to 5 minutes, but only on wet soil in daylight. Dig a crop when ripe for one or two of the harvest and of seeds; earlier gives less.
   - 4 wheat make flour, which bakes into bread in the furnace (15 s); bread heals 5. 9 wheat make 3 straw blocks, and back. 4 cotton make white wool, 2 make 2 string.
+- **Beds:** Minetest Game's simple bed (three white wool over three planks) and fancy bed (the same with a stick at the top right). A bed is two nodes long and points the way you look as you place it. Right-click it at night to lie down; a window shows how many players are in bed, and when everyone online is, the night is skipped to the morning (05:31). Once more than half are in bed, anyone lying down can force the night skip. Leave Bed (or Escape) gets you up again. Using a bed, by day or night, makes it where you respawn after dying; respawn points are kept in `world/beds_spawns`. A bed can't be dug while someone lies in it.
 - **Buckets:** three steel ingots in a V make an empty bucket. Left-click water with it to fill it; right-click to pour the water out again, wherever you like.
 - **Glass:** smelt sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
   - steel pickaxes, shovels, axes and swords from steel ingots.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
   - It smelts iron lumps into steel ingots, cobblestone into stone and sand into glass, 3 seconds each, and bakes flour into bread in 15.
-  - Fuel: coal lumps burn for 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, wooden trapdoors 7 s, straw 3 s, planks 5 to 7 s, leaves, grass, torches and wooden tools a few seconds, sticks, wheat, cotton and string 1 s. A piece of fuel that is alight burns to the end.
+  - Fuel: coal lumps burn for 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, beds 12 to 13 s, wooden trapdoors 7 s, straw 3 s, planks 5 to 7 s, leaves, grass, torches and wooden tools a few seconds, sticks, wheat, cotton and string 1 s. A piece of fuel that is alight burns to the end.
   - It burns whether or not anyone has it open. While lit, its front shows the fire, it glows, the window's flame and arrow fill up, and you hear it.
   - Only fuel goes in the fuel slot, and nothing into the output. Empty it before digging it (with a stone pickaxe). Its contents are kept on the SD card in `world/furnaces.txt`.
 - **Chests:** Minetest Game's, 32 slots, placed facing you. Right-click opens one: the lid lifts with a creak while anyone has it open (unless a block sits on it) and closes with a thud. A locked chest opens only for whoever placed it. Empty a chest before digging it. Contents are kept in `world/chests.txt`.
@@ -162,6 +163,7 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 ```
 /sd/auth/       accounts (salt and SRP verifier per player)
 /sd/world/      the world: nodes.log (every change made), furnaces.txt and chests.txt (their contents), items.txt (dropped items), doors.txt (steel doors' and trapdoors' owners),
+                beds_spawns (where players respawn),
                 env_meta.txt (the time of day, as Luanti keeps it) and the generator version
 /sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin)
 /sd/media/      optional extra media (see below)
@@ -254,6 +256,7 @@ src/clock.rs       the time of day, kept over restarts
 src/stairs.rs      stairs and slabs
 src/doors.rs       doors and trapdoors
 src/farming.rs     farming: soil, seeds, crops, hoes
+src/beds.rs        beds, sleeping and respawn points
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto
@@ -294,7 +297,7 @@ options (speed, how far apart they join, view range, names).
 The code is released under the [MIT licence](LICENSE).
 
 The media in `media/` have their own licences:
-- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt` and `media/LICENSE-items.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
+- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Also the doors, farming and bed media (`doors_*`, `door_*.b3d`, `farming_*`, `default_grass_*.png`, `wool_white.png`, `beds_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt`, `media/LICENSE-items.txt`, `media/LICENSE-doors.txt`, `media/LICENSE-farming.txt` and `media/LICENSE-beds.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
 - **Sounds from Minetest Game** (`default_*.ogg`, `player_damage.ogg`): CC BY-SA 3.0, CC BY 3.0 or CC0, with credits in `media/LICENSE-sounds.txt`.
 - **The skins `esp_skin_wizard.png` and `esp_skin_elf.png`:** made by Keir Finlow-Bates, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 - **The other `esp_*.png` textures:** made for this project and covered by the MIT licence.

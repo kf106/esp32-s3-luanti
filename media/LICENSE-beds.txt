@@ -1,0 +1,47 @@
+Bed media from Minetest Game (https://github.com/luanti-org/minetest_game), mods/beds/textures,
+unmodified and under their original names: beds_bed.png, beds_bed_fancy.png, beds_bed_foot.png,
+beds_bed_head.png, beds_bed_side1.png, beds_bed_side2.png, beds_bed_side_bottom.png,
+beds_bed_side_bottom_r.png, beds_bed_side_top.png, beds_bed_side_top_r.png, beds_bed_top1.png,
+beds_bed_top2.png, beds_bed_top_bottom.png, beds_bed_top_top.png, beds_bed_under.png.
+
+Credits, from the beds mod's README.md:
+
+BlockMen (CC BY-SA 3.0): all textures unless otherwise noted.
+TumeniNodes (CC BY-SA 3.0): beds_bed_under.png
+
+The licence of the media, from the beds mod's license.txt:
+
+Licenses of media (textures)
+----------------------------
+
+Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+Copyright (C) 2014-2016 BlockMen
+Copyright (C) 2018 TumeniNodes
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+ShareAlike — If you remix, transform, or build upon the material, you must distribute
+your contributions under the same license as the original.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by-sa/3.0/

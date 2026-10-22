@@ -98,6 +98,30 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(ITEM_COTTON); 2], output: ITEM_STRING, count: 2 },
     Recipe { width: 3, pattern: &[I(ITEM_WHEAT); 9], output: farming::STRAW, count: 3 },
     Recipe { width: 1, pattern: &[I(farming::STRAW)], output: ITEM_WHEAT, count: 3 },
+    // Beds (beds.lua): three wool on three planks; the fancy bed has a
+    // stick on top at the right.
+    Recipe {
+        width: 3,
+        pattern: &[I(farming::WOOL_WHITE), I(farming::WOOL_WHITE), I(farming::WOOL_WHITE), G("wood"), G("wood"), G("wood")],
+        output: crate::beds::BED_BOTTOM,
+        count: 1,
+    },
+    Recipe {
+        width: 3,
+        pattern: &[
+            E,
+            E,
+            I(ITEM_STICK),
+            I(farming::WOOL_WHITE),
+            I(farming::WOOL_WHITE),
+            I(farming::WOOL_WHITE),
+            G("wood"),
+            G("wood"),
+            G("wood"),
+        ],
+        output: crate::beds::FANCY_BOTTOM,
+        count: 1,
+    },
     // A bucket: three steel ingots in a V (bucket mod).
     Recipe {
         width: 3,
@@ -159,6 +183,8 @@ pub fn burn_time(id: u16) -> f32 {
         farming::STRAW => 3.0,
         id if id == farming::GRASS[0] => 2.0,
         crate::doors::FIRST_TRAPDOOR => 7.0,
+        crate::beds::BED_BOTTOM => 12.0,
+        crate::beds::FANCY_BOTTOM => 13.0,
         id => crate::stairs::burn_time(id, burn_time),
     }
 }
@@ -419,6 +445,20 @@ mod tests {
         assert_eq!(result(&grid(&nine)), Some((farming::STRAW, 3)));
         assert_eq!(cook_result(ITEM_FLOUR), Some((ITEM_BREAD, 15.0)));
         assert_eq!(burn_time(farming::GRASS[0]), 2.0);
+    }
+
+    #[test]
+    fn beds() {
+        let (w, a, x) = (farming::WOOL_WHITE, CONTENT_APPLE_WOOD, CONTENT_FIR_WOOD);
+        let simple = [(3, w, 1), (4, w, 1), (5, w, 1), (6, a, 1), (7, x, 1), (8, a, 1)];
+        assert_eq!(result(&grid(&simple)), Some((crate::beds::BED_BOTTOM, 1)));
+        let mut fancy = simple.to_vec();
+        fancy.push((2, ITEM_STICK, 1));
+        assert_eq!(result(&grid(&fancy)), Some((crate::beds::FANCY_BOTTOM, 1)));
+        // Six planks are still trapdoors.
+        let planks: Vec<(usize, u16, u16)> = (3..9).map(|i| (i, a, 1)).collect();
+        assert_eq!(result(&grid(&planks)), Some((crate::doors::FIRST_TRAPDOOR, 2)));
+        assert_eq!(burn_time(crate::beds::FANCY_BOTTOM), 13.0);
     }
 
     #[test]

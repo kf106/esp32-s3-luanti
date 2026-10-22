@@ -18,6 +18,7 @@ use crate::items::{Change, Items};
 use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
+use crate::beds;
 use crate::doors::{self, Door};
 use crate::farming;
 use crate::stairs;
@@ -255,6 +256,8 @@ struct Peer {
     keys: u32,
     /// The chest whose window they have open.
     chest: Option<NodePos>,
+    /// The bed they lie in, if any.
+    in_bed: Option<InBed>,
     /// Average round-trip time (seconds) from ACKs, and the resend timeout
     /// it gives (Luanti's UDPPeer::reportRTT).
     avg_rtt: Option<f32>,
@@ -295,6 +298,7 @@ impl Peer {
             furnace_form_sent: None,
             keys: 0,
             chest: None,
+            in_bed: None,
             avg_rtt: None,
             resend_timeout: RESEND_INTERVAL,
         }
@@ -389,6 +393,11 @@ pub struct Server {
     clock: Clock,
     /// Who owns each steel door.
     door_owners: doors::Owners,
+    /// The bed each player respawns at.
+    bed_spawns: beds::Spawns,
+    /// When everyone online lay down in bed: the night is skipped two
+    /// seconds later (beds' schedule_update).
+    night_skip_at: Option<Instant>,
     /// Farmed soil, looked after every farming::SOIL_INTERVAL.
     fields: BTreeSet<NodePos>,
     fields_checked: Instant,
@@ -433,6 +442,7 @@ pub struct Setup {
     pub items: Items,
     pub clock: Clock,
     pub door_owners: doors::Owners,
+    pub bed_spawns: beds::Spawns,
     pub media: Media,
     pub status: SharedStatus,
 }
@@ -614,7 +624,7 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, media, status } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, bed_spawns, media, status } = setup;
         // Items dropped before a restart: out of any block built over them.
         items.settle(&|x, y, z| content::walkable(world.node((x, y, z))));
         let itemdef = build_itemdef(&content::itemdef_bytes());
@@ -697,6 +707,8 @@ impl Server {
             items,
             clock,
             door_owners,
+            bed_spawns,
+            night_skip_at: None,
             fields,
             fields_checked: Instant::now(),
             recent: VecDeque::new(),
@@ -1450,7 +1462,7 @@ impl Server {
         }
         self.send_command(from, 0, &build_privileges(PRIVILEGES));
         // Frame ranges for the client's own model (third-person view)
-        self.send_command(from, 0, &build_local_player_animations());
+        self.send_command(from, 0, &build_local_player_animations(true));
         self.send_command(from, 0, &build_move_player(spawn_bs, pitch, yaw));
         self.send_inventory(from);
         self.send_inventory_formspec(from);
@@ -1564,7 +1576,8 @@ impl Server {
         // Walk, mine or stand, as player_api does from the pressed keys.
         // Animation changes go reliably on channel 0: if one were lost the
         // player would be stuck walking (or frozen) until the next change.
-        let anim = animation_for(&pp);
+        // Lying in bed, the animation stays (player_api's player_attached).
+        let anim = if peer.in_bed.is_some() { peer.anim } else { animation_for(&pp) };
         if anim != peer.anim {
             peer.anim = anim;
             let packet = build_object_messages(&[(id, set_animation_message(anim))]);
@@ -1620,6 +1633,7 @@ impl Server {
         }
         if let Some(pp) = &msg.pos {
             peer.pos_bs = pp.pos_bs;
+            peer.speed_bs = pp.speed_bs;
         }
         let name = peer.display_name().to_string();
         let body = [peer.pos_bs[0] / 10.0, peer.pos_bs[1] / 10.0 + 1.0, peer.pos_bs[2] / 10.0];
@@ -1718,6 +1732,26 @@ impl Server {
                         self.world.set_node(node_pos(top), world::CONTENT_AIR, 0);
                         self.broadcast_node(top, &build_removenode(top));
                     }
+                }
+                // A bed isn't dug while someone lies in it; its other half
+                // goes with it, and nobody respawns there any more.
+                if let Some((_, top)) = beds::bed_of(current) {
+                    let param2 = self.world.param2(furnace_at);
+                    let other = beds::other_half(furnace_at, param2, top);
+                    let paired = beds::is_bed(self.world.node(other)) && self.world.param2(other) == param2;
+                    let bottom = if top { paired.then_some(other) } else { Some(furnace_at) };
+                    if bottom.is_some_and(|b| self.bed_occupied(b)) {
+                        info!("{name}: someone is lying in the bed at {under:?}");
+                        self.resend_node(from, under);
+                        return;
+                    }
+                    if paired {
+                        let o16 = [other.0 as i16, other.1 as i16, other.2 as i16];
+                        self.world.set_node(other, world::CONTENT_AIR, 0);
+                        self.broadcast_node(o16, &build_removenode(o16));
+                        self.bed_spawns.remove_at(other);
+                    }
+                    self.bed_spawns.remove_at(furnace_at);
                 }
                 if content::is_furnace(current) {
                     self.close_furnace(furnace_at);
@@ -1819,6 +1853,13 @@ impl Server {
                     }
                     return;
                 }
+                // A bed's bottom is slept in (its top isn't rightclickable).
+                if beds::is_bed_bottom(target) && !sneaking {
+                    if in_reach(under) {
+                        self.use_bed(from, node_pos(under));
+                    }
+                    return;
+                }
                 // Where the player looks (the stairs and doors use it).
                 let (pitch, yaw) = match (&msg.pos, self.peers.get(&from)) {
                     (Some(pp), _) => (pp.pitch, pp.yaw),
@@ -1841,6 +1882,14 @@ impl Server {
                     let place = DoorPlace { under, above, look: look_dir(pitch, yaw), slot };
                     if in_reach(above) {
                         self.place_door(from, door, place);
+                    }
+                    return;
+                }
+                // A bed places its two halves.
+                if let Some(bed) = wielded.filter(|s| slot < HOTBAR_SIZE && beds::is_bed_bottom(s.id)).map(|s| s.id) {
+                    let place = DoorPlace { under, above, look: look_dir(pitch, yaw), slot };
+                    if in_reach(above) {
+                        self.place_bed(from, bed, place);
                     }
                     return;
                 }
@@ -2017,6 +2066,213 @@ impl Server {
         }
         let (sound, gain) = content::place_sound(node);
         self.play_sound_near(-1, sound, gain, pos.map(|v| v as f32 * 10.0), HEARING);
+    }
+
+    /// Placing a bed (beds' on_place): its bottom in the node pointed at (or
+    /// one it can build into), its top beyond that the way the player
+    /// looks, both turned that way. Nothing is checked underneath: beds
+    /// can be put in the air, as in minetest_game.
+    fn place_bed(&mut self, from: SocketAddr, bed: u16, at: DoorPlace) {
+        let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
+        let node_pos = |p: [i16; 3]| (p[0] as i32, p[1] as i32, p[2] as i32);
+        let free = content::buildable_to;
+        let pos = if free(self.world.node(node_pos(at.under))) { at.under } else { at.above };
+        let dir = doors::facedir_of(at.look);
+        let top = beds::other_half(node_pos(pos), dir, false);
+        if !free(self.world.node(node_pos(pos))) || !free(self.world.node(top)) {
+            info!("{name}: no room for a bed at {pos:?}");
+            return;
+        }
+        let Some((kind, _)) = beds::bed_of(bed) else {
+            return;
+        };
+        let top16 = [top.0 as i16, top.1 as i16, top.2 as i16];
+        info!("{name} placed {} at {pos:?}", content::name_of(bed));
+        self.edit_event(&name, "placed", bed);
+        if let Some(peer) = self.peers.get_mut(&from) {
+            peer.inventory.take_one(at.slot);
+        }
+        self.inventory_changed(from);
+        self.world.set_node(node_pos(pos), kind.bottom, dir);
+        self.broadcast_node(pos, &build_addnode(pos, kind.bottom, dir));
+        self.world.set_node(top, kind.top, dir);
+        self.broadcast_node(top16, &build_addnode(top16, kind.top, dir));
+        let (sound, gain) = content::place_sound(bed);
+        self.play_sound_near(-1, sound, gain, pos.map(|v| v as f32 * 10.0), HEARING);
+    }
+
+    /// Whether someone lies in the bed whose bottom is at `bed`.
+    fn bed_occupied(&self, bed: NodePos) -> bool {
+        self.peers.values().any(|p| p.in_bed.is_some_and(|b| b.bed == bed))
+    }
+
+    /// Right-clicking a bed (beds.on_rightclick). By day it only becomes
+    /// where the player respawns; at night they lie down in it, or get up
+    /// if they already lie there, and everyone in bed sees how many are.
+    fn use_bed(&mut self, from: SocketAddr, bed: NodePos) {
+        let Some(peer) = self.peers.get(&from) else {
+            return;
+        };
+        let (name, lying) = (peer.display_name().to_string(), peer.in_bed.is_some());
+        if !beds::is_night(self.time_of_day()) {
+            if lying {
+                self.get_up(from, true);
+            }
+            if self.bed_spawns.get(&name) != Some(bed) {
+                self.bed_spawns.set(&name, bed);
+                self.tell(from, "Spawn point set.");
+            } else {
+                self.tell(from, "You can only sleep at night.");
+            }
+            return;
+        }
+        if lying {
+            self.get_up(from, true);
+        } else {
+            self.lie_down(from, bed);
+            // As minetest_game, the respawn point is set even if the
+            // player couldn't lie down.
+            self.bed_spawns.set(&name, bed);
+        }
+        self.update_bed_forms(false);
+    }
+
+    /// beds' lay_down: unless the bed is taken or the player is moving,
+    /// put them on it, looking towards its foot, unable to move, lying
+    /// down, without the item in their hand.
+    fn lie_down(&mut self, from: SocketAddr, bed: NodePos) {
+        if self.bed_occupied(bed) {
+            self.tell(from, "This bed is already occupied!");
+            return;
+        }
+        let param2 = self.world.param2(bed);
+        let Some(peer) = self.peers.get_mut(&from) else {
+            return;
+        };
+        let speed = peer.speed_bs.iter().map(|v| (v / 10.0).powi(2)).sum::<f32>().sqrt();
+        if speed > 0.05 {
+            self.tell(from, "You have to stop moving before going to bed!");
+            return;
+        }
+        let (pos, yaw) = beds::lying_position(bed, param2);
+        let pos_bs = pos.map(|v| v * 10.0);
+        peer.in_bed = Some(InBed { bed, from_bs: peer.pos_bs });
+        peer.pos_bs = pos_bs;
+        peer.yaw = yaw;
+        peer.anim = Animation::new(ANIM_LAY, 0.0);
+        let (id, name, pitch, skin) = (peer.id, peer.display_name().to_string(), peer.pitch, peer.skin.clone());
+        info!("{name} lies down in the bed at {bed:?}");
+        let texture = self.skin_texture(&skin);
+        self.send_command(from, 0, &build_object_messages(&[(id, physics_override_message(true))]));
+        self.send_command(from, 0, &build_move_player(pos_bs, pitch, yaw));
+        self.send_command(from, 0, &build_local_player_animations(false));
+        self.send_command(from, 0, &build_hud_set_flags(0, HUD_FLAG_WIELDITEM_VISIBLE));
+        let lay = build_object_messages(&[
+            (id, set_animation_message(Animation::new(ANIM_LAY, 0.0))),
+            (id, player_properties_message(&texture, true)),
+        ]);
+        self.send_to_players(&lay);
+    }
+
+    /// beds' lay_down to stand up: back where they were (`move_back`; not
+    /// when they died there), free to move, standing, with their item in
+    /// hand, looking a random way. Returns whether they were in bed.
+    fn get_up(&mut self, from: SocketAddr, move_back: bool) -> bool {
+        let yaw = (self.rng.range(1, 180) as f32 / 100.0).to_degrees();
+        let Some(peer) = self.peers.get_mut(&from) else {
+            return false;
+        };
+        let Some(was) = peer.in_bed.take() else {
+            return false;
+        };
+        let stand = Animation::new(ANIM_STAND, ANIM_FPS);
+        peer.anim = stand;
+        if move_back {
+            peer.pos_bs = was.from_bs;
+            peer.yaw = yaw;
+        }
+        let (id, name, pitch, skin) = (peer.id, peer.display_name().to_string(), peer.pitch, peer.skin.clone());
+        info!("{name} gets up from the bed at {:?}", was.bed);
+        let texture = self.skin_texture(&skin);
+        if move_back {
+            self.send_command(from, 0, &build_move_player(was.from_bs, pitch, yaw));
+        }
+        self.send_command(from, 0, &build_object_messages(&[(id, physics_override_message(false))]));
+        self.send_command(from, 0, &build_local_player_animations(true));
+        self.send_command(from, 0, &build_hud_set_flags(HUD_FLAG_WIELDITEM_VISIBLE, HUD_FLAG_WIELDITEM_VISIBLE));
+        let up = build_object_messages(&[(id, set_animation_message(stand)), (id, player_properties_message(&texture, false))]);
+        self.send_to_players(&up);
+        true
+    }
+
+    /// beds' update_formspecs: everyone in bed sees how many of the
+    /// players are, with "Force night skip" once more than half are; or
+    /// "Good morning." when the night is over.
+    fn update_bed_forms(&mut self, finished: bool) {
+        let online = self.peers.values().filter(|p| p.ready).count();
+        let sleepers: Vec<SocketAddr> = self.peers.iter().filter(|(_, p)| p.in_bed.is_some()).map(|(a, _)| *a).collect();
+        let form = if finished {
+            beds::formspec("Good morning.", 2.7, false)
+        } else {
+            let majority = online as f32 / 2.0 < sleepers.len() as f32;
+            beds::formspec(&format!("{} of {online} players are in bed", sleepers.len()), 2.2, majority)
+        };
+        let packet = build_show_formspec(&form, beds::FORM);
+        for addr in sleepers {
+            self.send_command(addr, 0, &packet);
+        }
+    }
+
+    /// The bed window's buttons: leaving the bed (or closing the window),
+    /// and forcing the night to end if more than half are in bed.
+    fn on_bed_fields(&mut self, from: SocketAddr, fields: &[(String, String)]) {
+        let pressed = |name: &str| fields.iter().any(|(f, _)| f == name);
+        let in_bed = self.peers.values().filter(|p| p.in_bed.is_some()).count();
+        if pressed("quit") || pressed("leave") {
+            self.get_up(from, true);
+            self.update_bed_forms(false);
+        }
+        if pressed("force") {
+            let online = self.peers.values().filter(|p| p.ready).count();
+            if (online as f32 / 2.0) < in_bed as f32 {
+                self.update_bed_forms(true);
+                self.skip_night();
+            } else {
+                self.update_bed_forms(false);
+            }
+        }
+    }
+
+    /// The night is over (beds.skip_night and kick_players): morning for
+    /// everyone, and everyone gets up.
+    fn skip_night(&mut self) {
+        info!("Everyone slept: the night is skipped");
+        self.clock.set_time_of_day(beds::MORNING);
+        self.send_to_players(&build_time_of_day(beds::MORNING, clock::TIME_SPEED));
+        let sleepers: Vec<SocketAddr> = self.peers.iter().filter(|(_, p)| p.in_bed.is_some()).map(|(a, _)| *a).collect();
+        for addr in sleepers {
+            self.get_up(addr, true);
+        }
+    }
+
+    /// When everyone online is in bed, the night is skipped two seconds
+    /// later (beds' check_in_beds and schedule_update; also when someone
+    /// still up leaves the game).
+    fn tend_beds(&mut self) {
+        match self.night_skip_at {
+            Some(at) if Instant::now() >= at => {
+                self.night_skip_at = None;
+                self.update_bed_forms(true);
+                self.skip_night();
+            }
+            Some(_) => {}
+            None => {
+                let mut ready = self.peers.values().filter(|p| p.ready).peekable();
+                if ready.peek().is_some() && ready.all(|p| p.in_bed.is_some()) {
+                    self.night_skip_at = Some(Instant::now() + Duration::from_secs(2));
+                }
+            }
+        }
     }
 
     /// What digging a node gives: its drop, except that leaves sometimes
@@ -2519,6 +2775,10 @@ impl Server {
         let Some((form, fields)) = parse_inventory_fields(payload) else {
             return;
         };
+        if form == beds::FORM {
+            self.on_bed_fields(from, &fields);
+            return;
+        }
         let pressed = |name: &str| fields.iter().any(|(f, _)| f == name);
         if form == CHEST_FORM {
             if pressed("quit") {
@@ -2560,12 +2820,12 @@ impl Server {
         let skin = self.skins.get(next);
         peer.skin = skin.key.clone();
         peer.save(&self.players);
-        let (id, name, texture, label) = (peer.id, peer.display_name().to_string(), skin.texture.clone(), skin.label.clone());
+        let (id, name, texture, label, lying) = (peer.id, peer.display_name().to_string(), skin.texture.clone(), skin.label.clone(), peer.in_bed.is_some());
         info!("{name} now wears the {label} skin");
         self.send_inventory_formspec(from);
         // Everyone (the player too, for the third-person view) redraws
         // the model with the new texture.
-        let packet = build_object_messages(&[(id, player_properties_message(&texture))]);
+        let packet = build_object_messages(&[(id, player_properties_message(&texture, lying))]);
         self.send_to_players(&packet);
     }
 
@@ -2717,6 +2977,8 @@ impl Server {
         self.send_command(from, 0, &build_health_bar_change(hp));
         if hp == 0 {
             info!("{name} died");
+            // Dead, they get up where they lie (beds' on_dieplayer).
+            self.get_up(from, false);
             self.event(format!("{name} fell to their death"));
             self.send_command(from, 0, &build_deathscreen());
             if let Some(peer) = self.peers.get_mut(&from) {
@@ -2733,8 +2995,13 @@ impl Server {
         if !peer.ready || peer.hp != 0 {
             return; // only the dead respawn
         }
-        let spawn = self.spawn_point(peer.id);
         let name = peer.display_name().to_string();
+        // At the bed they last used, standing on it, if it is still there
+        // (beds' register_on_spawn).
+        let spawn = match self.bed_spawns.get(&name) {
+            Some(b) => [b.0 as f32, b.1 as f32 + 0.07, b.2 as f32],
+            None => self.spawn_point(peer.id),
+        };
         let spawn_bs = spawn.map(|v| v * 10.0);
         if let Some(peer) = self.peers.get_mut(&from) {
             peer.hp = PLAYER_MAX_HP;
@@ -3615,6 +3882,7 @@ impl Server {
         }
         self.update_power_saving();
         self.run_timers();
+        self.tend_beds();
         if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
             let dt = now.duration_since(self.furnaces_stepped).as_secs_f32();
             self.furnaces_stepped = now;
@@ -3743,6 +4011,14 @@ struct DoorPlace {
     above: [i16; 3],
     look: [f32; 3],
     slot: usize,
+}
+
+/// A player lying in a bed: the bed's bottom, and where they were before
+/// (beds.pos), to get up there again.
+#[derive(Clone, Copy)]
+struct InBed {
+    bed: NodePos,
+    from_bs: [f32; 3],
 }
 
 /// Where builtin's item_drop puts a dropped item, and how it throws it:

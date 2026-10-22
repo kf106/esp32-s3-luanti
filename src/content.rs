@@ -12,6 +12,7 @@ use log::{info, warn};
 
 use crate::messages::Writer;
 use crate::sha1::sha1;
+use crate::beds;
 use crate::doors;
 use crate::farming;
 use crate::stairs;
@@ -89,6 +90,11 @@ pub enum Kind {
     /// A planted seed: a flat picture on the soil (signlike), standing on
     /// it.
     Seed,
+    /// A bed's bottom half (beds.rs), the item: boxes turned by facedir,
+    /// slept in with a right-click.
+    Bed,
+    /// A bed's top half: it drops nothing, and goes with the bottom.
+    BedTop,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -947,6 +953,76 @@ pub const NODES: &[Node] = &[
     plant!(farming::COTTON_STAGES[5], "cotton_6", "Cotton", "farming_cotton_6.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 6)]),
     plant!(farming::COTTON_STAGES[6], "cotton_7", "Cotton", "farming_cotton_7.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 7)]),
     plant!(farming::COTTON_STAGES[7], "cotton_8", "Cotton", "farming_cotton_8.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 8)]),
+    // Beds (beds.rs), with minetest_game's textures (CC BY-SA 3.0, see
+    // media/LICENSE-beds.txt). The top drops nothing.
+    Node {
+        id: beds::BED_BOTTOM,
+        name: "esp:bed_bottom",
+        description: "Simple Bed",
+        tiles: [
+            "beds_bed_top_bottom.png^[transformR90",
+            "beds_bed_under.png",
+            "beds_bed_side_bottom_r.png",
+            "beds_bed_side_bottom_r.png^[transformFX",
+            "blank.png",
+            "beds_bed_side_bottom.png",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("bed", 1)],
+        drop: beds::BED_BOTTOM,
+        drop_count: 1,
+        kind: Kind::Bed,
+    },
+    Node {
+        id: beds::BED_TOP,
+        name: "esp:bed_top",
+        description: "Simple Bed",
+        tiles: [
+            "beds_bed_top_top.png^[transformR90",
+            "beds_bed_under.png",
+            "beds_bed_side_top_r.png",
+            "beds_bed_side_top_r.png^[transformFX",
+            "beds_bed_side_top.png",
+            "blank.png",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("bed", 2), ("not_in_creative_inventory", 1)],
+        drop: beds::BED_TOP,
+        drop_count: 0,
+        kind: Kind::BedTop,
+    },
+    Node {
+        id: beds::FANCY_BOTTOM,
+        name: "esp:fancy_bed_bottom",
+        description: "Fancy Bed",
+        tiles: [
+            "beds_bed_top1.png",
+            "beds_bed_under.png",
+            "beds_bed_side1.png",
+            "beds_bed_side1.png^[transformFX",
+            "beds_bed_foot.png",
+            "beds_bed_foot.png",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("bed", 1)],
+        drop: beds::FANCY_BOTTOM,
+        drop_count: 1,
+        kind: Kind::Bed,
+    },
+    Node {
+        id: beds::FANCY_TOP,
+        name: "esp:fancy_bed_top",
+        description: "Fancy Bed",
+        tiles: [
+            "beds_bed_top2.png",
+            "beds_bed_under.png",
+            "beds_bed_side2.png",
+            "beds_bed_side2.png^[transformFX",
+            "beds_bed_head.png",
+            "beds_bed_head.png",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("bed", 2), ("not_in_creative_inventory", 1)],
+        drop: beds::FANCY_TOP,
+        drop_count: 0,
+        kind: Kind::BedTop,
+    },
 ];
 
 /// minetest_game's tall grass groups.
@@ -1540,7 +1616,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop))
 }
 
 /// Whether a node is water.
@@ -1567,7 +1643,7 @@ pub fn passes_sunlight(id: u16) -> bool {
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -1718,7 +1794,8 @@ pub fn is_item(id: u16) -> bool {
 /// or 1 for tools.
 pub fn stack_max(id: u16) -> u16 {
     // A full bucket doesn't stack (minetest_game's stack_max = 1).
-    if is_tool(id) || id == ITEM_BUCKET_WATER { 1 } else { 99 }
+    // So doesn't a bed.
+    if is_tool(id) || id == ITEM_BUCKET_WATER || beds::is_bed(id) { 1 } else { 99 }
 }
 
 /// Whether an item points at liquids, as buckets do: then the client
@@ -1963,6 +2040,21 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_grass_4.png", include_bytes!("../media/default_grass_4.png")),
     ("default_grass_5.png", include_bytes!("../media/default_grass_5.png")),
     ("wool_white.png", include_bytes!("../media/wool_white.png")),
+    ("beds_bed.png", include_bytes!("../media/beds_bed.png")),
+    ("beds_bed_fancy.png", include_bytes!("../media/beds_bed_fancy.png")),
+    ("beds_bed_foot.png", include_bytes!("../media/beds_bed_foot.png")),
+    ("beds_bed_head.png", include_bytes!("../media/beds_bed_head.png")),
+    ("beds_bed_side1.png", include_bytes!("../media/beds_bed_side1.png")),
+    ("beds_bed_side2.png", include_bytes!("../media/beds_bed_side2.png")),
+    ("beds_bed_side_bottom.png", include_bytes!("../media/beds_bed_side_bottom.png")),
+    ("beds_bed_side_bottom_r.png", include_bytes!("../media/beds_bed_side_bottom_r.png")),
+    ("beds_bed_side_top.png", include_bytes!("../media/beds_bed_side_top.png")),
+    ("beds_bed_side_top_r.png", include_bytes!("../media/beds_bed_side_top_r.png")),
+    ("beds_bed_top1.png", include_bytes!("../media/beds_bed_top1.png")),
+    ("beds_bed_top2.png", include_bytes!("../media/beds_bed_top2.png")),
+    ("beds_bed_top_bottom.png", include_bytes!("../media/beds_bed_top_bottom.png")),
+    ("beds_bed_top_top.png", include_bytes!("../media/beds_bed_top_top.png")),
+    ("beds_bed_under.png", include_bytes!("../media/beds_bed_under.png")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -2127,6 +2219,7 @@ fn sounds_of(id: u16) -> Sounds {
             place: ("default_place_node_metal", 0.5),
         },
         id if is_torch(id) => wood,
+        id if beds::is_bed(id) => wood,
         // stone, sandstone, ores
         _ => stone,
     }
@@ -2138,6 +2231,11 @@ fn trapdoor_image(id: u16) -> &'static str {
         Some((t, _)) if t.locked => TRAPDOOR_STEEL_CLOSED[0],
         _ => TRAPDOOR_WOOD_CLOSED[0],
     }
+}
+
+/// A bed item's picture (beds.lua's inventory_image).
+fn bed_image(id: u16) -> &'static str {
+    if id == beds::FANCY_BOTTOM { "beds_bed_fancy.png" } else { "beds_bed.png" }
 }
 
 /// The sound of placing a node, and its gain.
@@ -2212,6 +2310,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 _ if n.id == farming::GRASS[0] => "default_grass_3.png",
                 Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
+                Kind::Bed => bed_image(n.id),
                 _ => "",
             },
             wield_image: match n.kind {
@@ -2219,10 +2318,13 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 _ if n.id == farming::GRASS[0] => "default_grass_3.png",
                 Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
+                Kind::Bed => bed_image(n.id),
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
-            place_prediction: n.name,
+            // A bed is placed as two nodes, or not at all (its on_place):
+            // the client doesn't guess.
+            place_prediction: if n.kind == Kind::Bed { "" } else { n.name },
             tool_capabilities: Vec::new(),
             place_sound: sounds_of(n.id).place,
             stack_max: stack_max(n.id),
@@ -2461,6 +2563,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let seed = n.kind == Kind::Seed;
     // Wheat grows as a "#" of pictures (meshoptions; param2 says which shape).
     let wheat = farming::WHEAT_STAGES.contains(&n.id);
+    let bed = beds::is_bed(n.id);
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -2482,7 +2585,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
     } else if seed {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
-    } else if shaped.is_some() || door.is_some() || hidden || trapdoor.is_some() {
+    } else if shaped.is_some() || door.is_some() || hidden || trapdoor.is_some() || bed {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else {
         w.u8(0) // param_type: none
@@ -2505,6 +2608,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Trapdoor => (NDT_NODEBOX, ""),
         Kind::Plant => (NDT_PLANTLIKE, ""),
         Kind::Seed => (NDT_SIGNLIKE, ""),
+        Kind::Bed | Kind::BedTop => (NDT_NODEBOX, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
@@ -2566,7 +2670,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed) as u8) // light_propagates
         .u8((torch || sapling || mark || glass || ladder || doorway || plant || seed) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
@@ -2581,7 +2685,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(!(mark || hidden || liquid) as u8) // diggable
         .u8(ladder as u8) // climbable
         .u8((mark || liquid || plant) as u8) // buildable_to
-        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor) as u8) // rightclickable
+        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed) as u8) // rightclickable
         .u32(0); // damage_per_second
 
     // liquid
@@ -2608,6 +2712,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     match (shaped, trapdoor) {
         (Some((shape, _)), _) => fixed_nodebox(&mut w, shape.boxes()), // node_box
         (_, Some((_, open))) => fixed_nodebox(&mut w, &[doors::trapdoor_box(open)]),
+        _ if bed => fixed_nodebox(&mut w, beds::boxes(n.id)),
         _ => regular_nodebox(&mut w), // node_box (unused by meshes)
     }
     if let Some((_, open)) = trapdoor {
@@ -2633,6 +2738,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         fixed_nodebox(&mut w, &[DOOR_BOX]);
     } else if plant || seed {
         fixed_nodebox(&mut w, &[farming_box(n.id)]);
+    } else if bed {
+        fixed_nodebox(&mut w, &[beds::selection_box(n.id)]);
     } else {
         regular_nodebox(&mut w); // selection_box
     }
@@ -2641,6 +2748,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     } else if hidden {
         // 1px block inside the door's hinge, near the top.
         fixed_nodebox(&mut w, &[[-15.0 / 32.0, 13.0 / 32.0, -15.0 / 32.0, -13.0 / 32.0, 0.5, -13.0 / 32.0]]);
+    } else if bed {
+        // Left empty in beds.lua, so the node box.
+        fixed_nodebox(&mut w, beds::boxes(n.id));
     } else {
         regular_nodebox(&mut w); // collision_box (torches aren't walkable)
     }
@@ -2659,7 +2769,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(LEVELED_MAX)
         .u8(if liquid {
             ALPHAMODE_BLEND
-        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed {
+        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed {
             ALPHAMODE_CLIP
         } else {
             ALPHAMODE_OPAQUE

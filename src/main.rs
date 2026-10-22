@@ -1,4 +1,5 @@
 mod auth;
+mod beds;
 mod chest;
 mod clock;
 mod content;
@@ -146,6 +147,7 @@ fn main() -> anyhow::Result<()> {
     let items = items::Items::open(format!("{MOUNT}/world/items.txt"));
     let clock = clock::Clock::open(format!("{MOUNT}/world/env_meta.txt"));
     let door_owners = doors::Owners::open(format!("{MOUNT}/world/doors.txt"));
+    let bed_spawns = beds::Spawns::open(format!("{MOUNT}/world/beds_spawns"));
     let media = content::Media::load(&format!("{MOUNT}/media"));
     let socket = UdpSocket::bind(("0.0.0.0", PORT))?;
     let sent = std::sync::Arc::as_ptr(&status) as usize;
@@ -154,7 +156,7 @@ fn main() -> anyhow::Result<()> {
     if motd.is_some() {
         info!("Welcome message from {MOUNT}/motd.txt");
     }
-    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, furnaces, chests, items, clock, door_owners, media, status });
+    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, furnaces, chests, items, clock, door_owners, bed_spawns, media, status });
     // Guard against the compiler problem that once lost an argument on the
     // way into Server::new (see server::Setup).
     if server.status_data_addr() != sent {

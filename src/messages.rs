@@ -54,6 +54,7 @@ pub const TOCLIENT_INVENTORY_FORMSPEC: u16 = 0x42;
 pub const TOCLIENT_DETACHED_INVENTORY: u16 = 0x43;
 pub const TOCLIENT_SHOW_FORMSPEC: u16 = 0x44;
 pub const TOCLIENT_MOVEMENT: u16 = 0x45;
+pub const TOCLIENT_HUD_SET_FLAGS: u16 = 0x4c;
 pub const TOCLIENT_SRP_BYTES_S_B: u16 = 0x60;
 
 /// Highest map serialisation format we speak.
@@ -662,12 +663,19 @@ pub fn properties_message(p: &Props) -> Vec<u8> {
 /// The Luanti engine's default player properties (PlayerSAO's
 /// constructor), with player_api's model wearing `skin` (a texture). For
 /// the local player the client also takes its collision box, eye height
-/// and zoom from these. Sent again when the player changes skin.
-pub fn player_properties_message(skin: &str) -> Vec<u8> {
+/// and zoom from these. Sent again when the player changes skin, and when
+/// they lie down in a bed or get up: player_api's "lay" animation has a
+/// low, wide box and eyes 0.3 above the ground.
+pub fn player_properties_message(skin: &str, lying: bool) -> Vec<u8> {
+    let (collisionbox, eye_height) = if lying {
+        ([-0.6, 0.0, -0.6, 0.6, 0.3, 0.6], 0.3)
+    } else {
+        ([-0.3, 0.0, -0.3, 0.3, 1.7, 0.3], 1.47) // player_api's "stand" box
+    };
     properties_message(&Props {
         hp_max: PLAYER_MAX_HP,
         physical: false,
-        collisionbox: [-0.3, 0.0, -0.3, 0.3, 1.7, 0.3], // player_api's "stand" box
+        collisionbox,
         selectionbox: [-0.3, 0.0, -0.3, 0.3, 1.77, 0.3],
         visual: "mesh",
         visual_size: [1.0; 3],
@@ -680,7 +688,7 @@ pub fn player_properties_message(skin: &str) -> Vec<u8> {
         infotext: "",
         wield_item: "",
         glow: 0,
-        eye_height: 1.47, // player_api
+        eye_height, // player_api
         damage_texture_modifier: "^[brighten",
     })
 }
@@ -698,6 +706,7 @@ pub const ANIM_STAND: (f32, f32) = (0.0, 79.0);
 pub const ANIM_WALK: (f32, f32) = (168.0, 187.0);
 pub const ANIM_MINE: (f32, f32) = (189.0, 198.0);
 pub const ANIM_WALK_MINE: (f32, f32) = (200.0, 219.0);
+pub const ANIM_LAY: (f32, f32) = (162.0, 166.0);
 
 impl Animation {
     pub fn new(range: (f32, f32), fps: f32) -> Self {
@@ -724,12 +733,28 @@ pub fn set_animation_message(anim: Animation) -> Vec<u8> {
 
 /// TOCLIENT_LOCAL_PLAYER_ANIMATIONS: the ranges the client uses to animate
 /// its own player (seen in third-person view), as player_api sets them.
-pub fn build_local_player_animations() -> Vec<u8> {
+/// With `on` false, none at all, which suspends them (player_api, while
+/// the player lies in a bed).
+pub fn build_local_player_animations(on: bool) -> Vec<u8> {
     let mut w = Writer::new(TOCLIENT_LOCAL_PLAYER_ANIMATIONS);
     for (a, b) in [ANIM_STAND, ANIM_WALK, ANIM_MINE, ANIM_WALK_MINE] {
-        w.f32(a).f32(b);
+        if on {
+            w.f32(a).f32(b);
+        } else {
+            w.f32(0.0).f32(0.0);
+        }
     }
-    w.f32(ANIM_FPS);
+    w.f32(if on { ANIM_FPS } else { 1.0 });
+    w.into_inner()
+}
+
+/// The HUD flag for the wielded item in the player's hand.
+pub const HUD_FLAG_WIELDITEM_VISIBLE: u32 = 1 << 3;
+
+/// TOCLIENT_HUD_SET_FLAGS: the flags in `mask` are set as in `flags`.
+pub fn build_hud_set_flags(flags: u32, mask: u32) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_HUD_SET_FLAGS);
+    w.u32(flags).u32(mask);
     w.into_inner()
 }
 
@@ -759,13 +784,15 @@ fn not_attached_message() -> Vec<u8> {
     w.into_inner()
 }
 
-/// AO_CMD_SET_PHYSICS_OVERRIDE with every override at its default.
-fn physics_override_message() -> Vec<u8> {
+/// AO_CMD_SET_PHYSICS_OVERRIDE with every override at its default, or
+/// with speed, jump and gravity 0 (`frozen`: beds' lay_down).
+pub fn physics_override_message(frozen: bool) -> Vec<u8> {
+    let v = if frozen { 0.0 } else { 1.0 };
     let mut w = Writer::plain();
     w.u8(AO_CMD_SET_PHYSICS_OVERRIDE)
-        .f32(1.0) // speed
-        .f32(1.0) // jump
-        .f32(1.0) // gravity
+        .f32(v) // speed
+        .f32(v) // jump
+        .f32(v) // gravity
         .u8(0) // !sneak (sent inverted)
         .u8(1) // !sneak_glitch
         .u8(0); // !new_move
@@ -823,11 +850,11 @@ pub fn player_init_data(p: &PlayerInit) -> Vec<u8> {
         .u16(PLAYER_MAX_HP);
     // The same messages, in the same order, as PlayerSAO's init data.
     let messages = [
-        player_properties_message(skin),
+        player_properties_message(skin, false),
         armor_groups_message(),
         set_animation_message(anim),
         not_attached_message(),
-        physics_override_message(),
+        physics_override_message(false),
     ];
     w.u8(messages.len() as u8);
     for m in &messages {
