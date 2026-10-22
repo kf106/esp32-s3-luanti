@@ -15,6 +15,7 @@ use crate::sha1::sha1;
 use crate::beds;
 use crate::doors;
 use crate::farming;
+use crate::fences;
 use crate::stairs;
 
 // ---------------------------------------------------------------------------
@@ -95,6 +96,12 @@ pub enum Kind {
     Bed,
     /// A bed's top half: it drops nothing, and goes with the bottom.
     BedTop,
+    /// A fence (fences.rs): a post, joined by rails to its neighbours
+    /// (a "connected" nodebox the client joins up).
+    Fence,
+    /// A fence gate, closed or open: a model turned by facedir, opened and
+    /// closed with a right-click.
+    Gate,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -1065,6 +1072,97 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Solid,
     },
+    // minetest_game's fences and fence gates (fences.rs), of our planks.
+    Node {
+        id: fences::FENCE_APPLE,
+        name: "esp:fence_apple_wood",
+        description: "Apple Wood Fence",
+        tiles: ["esp_apple_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::FENCE_APPLE,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    Node {
+        id: fences::FENCE_FIR,
+        name: "esp:fence_fir_wood",
+        description: "Fir Wood Fence",
+        tiles: ["esp_fir_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("fence", 1)],
+        drop: fences::FENCE_FIR,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    Node {
+        id: fences::FENCE_BIRCH,
+        name: "esp:fence_birch_wood",
+        description: "Birch Wood Fence",
+        tiles: ["esp_birch_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("fence", 1)],
+        drop: fences::FENCE_BIRCH,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    Node {
+        id: fences::GATE_APPLE,
+        name: "esp:gate_apple_wood_closed",
+        description: "Apple Wood Fence Gate",
+        tiles: ["esp_apple_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::GATE_APPLE,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::GATE_APPLE + 1,
+        name: "esp:gate_apple_wood_open",
+        description: "Apple Wood Fence Gate",
+        tiles: ["esp_apple_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1), ("not_in_creative_inventory", 1)],
+        drop: fences::GATE_APPLE,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::GATE_FIR,
+        name: "esp:gate_fir_wood_closed",
+        description: "Fir Wood Fence Gate",
+        tiles: ["esp_fir_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("fence", 1)],
+        drop: fences::GATE_FIR,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::GATE_FIR + 1,
+        name: "esp:gate_fir_wood_open",
+        description: "Fir Wood Fence Gate",
+        tiles: ["esp_fir_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("fence", 1), ("not_in_creative_inventory", 1)],
+        drop: fences::GATE_FIR,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::GATE_BIRCH,
+        name: "esp:gate_birch_wood_closed",
+        description: "Birch Wood Fence Gate",
+        tiles: ["esp_birch_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("fence", 1)],
+        drop: fences::GATE_BIRCH,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::GATE_BIRCH + 1,
+        name: "esp:gate_birch_wood_open",
+        description: "Birch Wood Fence Gate",
+        tiles: ["esp_birch_wood.png"; 6],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3), ("fence", 1), ("not_in_creative_inventory", 1)],
+        drop: fences::GATE_BIRCH,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
 ];
 
 /// minetest_game's tall grass groups.
@@ -1667,7 +1765,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -1711,12 +1809,12 @@ pub fn buildable_to(id: u16) -> bool {
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -2059,6 +2157,11 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("doors_item_steel.png", include_bytes!("../media/doors_item_steel.png")),
     ("doors_item_glass.png", include_bytes!("../media/doors_item_glass.png")),
     ("doors_door_open.ogg", include_bytes!("../media/doors_door_open.ogg")),
+    ("doors_fencegate_open.ogg", include_bytes!("../media/doors_fencegate_open.ogg")),
+    ("doors_fencegate_close.ogg", include_bytes!("../media/doors_fencegate_close.ogg")),
+    ("doors_fencegate_closed.obj", include_bytes!("../media/doors_fencegate_closed.obj")),
+    ("doors_fencegate_open.obj", include_bytes!("../media/doors_fencegate_open.obj")),
+    ("default_fence_overlay.png", include_bytes!("../media/default_fence_overlay.png")),
     ("doors_door_close.ogg", include_bytes!("../media/doors_door_close.ogg")),
     ("doors_steel_door_open.ogg", include_bytes!("../media/doors_steel_door_open.ogg")),
     ("doors_steel_door_close.ogg", include_bytes!("../media/doors_steel_door_close.ogg")),
@@ -2307,6 +2410,7 @@ fn sounds_of(id: u16) -> Sounds {
         },
         id if is_torch(id) => wood,
         id if beds::is_bed(id) => wood,
+        id if fences::is_fence(id) || fences::is_gate(id) => wood,
         // stone, sandstone, ores
         _ => stone,
     }
@@ -2317,6 +2421,16 @@ fn trapdoor_image(id: u16) -> &'static str {
     match doors::trapdoor_of(id) {
         Some((t, _)) if t.locked => TRAPDOOR_STEEL_CLOSED[0],
         _ => TRAPDOOR_WOOD_CLOSED[0],
+    }
+}
+
+/// A fence item's picture (default.register_fence's inventory_image: the
+/// planks cut out by the overlay's pink).
+fn fence_image(id: u16) -> &'static str {
+    match id {
+        fences::FENCE_FIR => "default_fence_overlay.png^esp_fir_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
+        fences::FENCE_BIRCH => "default_fence_overlay.png^esp_birch_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
+        _ => "default_fence_overlay.png^esp_apple_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
     }
 }
 
@@ -2398,6 +2512,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
                 Kind::Bed => bed_image(n.id),
+                Kind::Fence => fence_image(n.id),
                 _ => "",
             },
             wield_image: match n.kind {
@@ -2406,6 +2521,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
                 Kind::Bed => bed_image(n.id),
+                Kind::Fence => fence_image(n.id),
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
@@ -2629,6 +2745,31 @@ fn fixed_nodebox(w: &mut Writer, boxes: &[[f32; 6]]) {
     }
 }
 
+const NODEBOX_CONNECTED: u8 = 4;
+
+/// A "connected" node box (in nodes), in BS units: the fixed boxes, then
+/// those for joining top, bottom, front, left, back and right, then the
+/// six "disconnected" side lists, "disconnected" and "disconnected_sides"
+/// (NodeBox::serialize), which fences leave empty.
+fn connected_nodebox(w: &mut Writer, c: &fences::Connected) {
+    w.u8(6).u8(NODEBOX_CONNECTED);
+    let none: &[[f32; 6]] = &[];
+    for list in [c.fixed, none, none, c.front, c.left, c.back, c.right, none, none, none, none, none, none, none, none] {
+        w.u16(list.len() as u16);
+        for b in list {
+            for v in b {
+                w.f32(v * 10.0);
+            }
+        }
+    }
+}
+
+/// The nodes a fence joins (its connects_to, as content ids, sorted):
+/// those in the groups fences::JOINS.
+fn fence_joins() -> Vec<u16> {
+    NODES.iter().filter(|n| fences::JOINS.iter().any(|g| n.groups.iter().any(|(ng, _)| ng == g))).map(|n| n.id).collect()
+}
+
 fn serialize_node(n: &Node) -> Vec<u8> {
     let mut w = Writer::plain();
     w.u8(CONTENTFEATURES_VERSION).string16(n.name);
@@ -2656,6 +2797,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // Wheat grows as a "#" of pictures (meshoptions; param2 says which shape).
     let wheat = farming::WHEAT_STAGES.contains(&n.id);
     let bed = beds::is_bed(n.id);
+    let fence = n.kind == Kind::Fence;
+    let gate = fences::gate_of(n.id);
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -2677,7 +2820,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
     } else if seed {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
-    } else if shaped.is_some() || door.is_some() || hidden || trapdoor.is_some() || bed {
+    } else if fence {
+        w.u8(CPT_LIGHT).u8(0);
+    } else if shaped.is_some() || door.is_some() || hidden || trapdoor.is_some() || bed || gate.is_some() {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else {
         w.u8(0) // param_type: none
@@ -2701,6 +2846,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Plant => (NDT_PLANTLIKE, ""),
         Kind::Seed => (NDT_SIGNLIKE, ""),
         Kind::Bed | Kind::BedTop => (NDT_NODEBOX, ""),
+        Kind::Fence => (NDT_NODEBOX, ""),
+        Kind::Gate => (NDT_MESH, fences::gate_mesh(n.id)),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
@@ -2716,6 +2863,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         // asks; the glass door, left to the mesh default, doesn't.
         let culling = if d.item == ITEM_DOOR_GLASS { 0 } else { TILE_FLAG_BACKFACE_CULLING };
         TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL | culling
+    } else if gate.is_some() {
+        TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL | TILE_FLAG_BACKFACE_CULLING
     } else if sapling || ladder || plant || seed {
         0
     } else {
@@ -2757,15 +2906,21 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(255) // colour
         .string16("") // palette
         .u8(if liquid && !lava { 3 } else if plant { 1 } else { 0 }) // waving: water ripples, plants sway
-        .u8(0) // connect_sides
-        .u16(0) // connects_to
+        .u8(if gate.is_some() { fences::GATE_SIDES } else { 0 }); // connect_sides
+    // connects_to: what a fence joins.
+    let joins = if fence { fence_joins() } else { Vec::new() };
+    w.u16(joins.len() as u16);
+    for id in joins {
+        w.u16(id);
+    }
+    w
         .u32(if lava { LAVA_POST_EFFECT } else if liquid { WATER_POST_EFFECT } else { 0 }) // post_effect_color (ARGB)
         .u8(0); // leveled
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed) as u8) // light_propagates
-        .u8((torch || sapling || mark || glass || ladder || doorway || plant || seed) as u8) // sunlight_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some()) as u8) // light_propagates
+        .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
     let tree = n.groups.iter().any(|(g, _)| *g == "tree");
@@ -2779,7 +2934,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(!(mark || hidden || liquid) as u8) // diggable
         .u8(ladder as u8) // climbable
         .u8((mark || liquid || plant) as u8) // buildable_to
-        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed) as u8) // rightclickable
+        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::Gate) as u8) // rightclickable
         .u32(damage_per_second(n.id) as u32); // damage_per_second
 
     // liquid
@@ -2809,6 +2964,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         (Some((shape, _)), _) => fixed_nodebox(&mut w, shape.boxes()), // node_box
         (_, Some((_, open))) => fixed_nodebox(&mut w, &[doors::trapdoor_box(open)]),
         _ if bed => fixed_nodebox(&mut w, beds::boxes(n.id)),
+        _ if fence => connected_nodebox(&mut w, &fences::FENCE_BOX),
         _ => regular_nodebox(&mut w), // node_box (unused by meshes)
     }
     if let Some((_, open)) = trapdoor {
@@ -2836,6 +2992,11 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         fixed_nodebox(&mut w, &[farming_box(n.id)]);
     } else if bed {
         fixed_nodebox(&mut w, &[beds::selection_box(n.id)]);
+    } else if fence {
+        // builtin's register_node: a nodebox's selection box is its node box.
+        connected_nodebox(&mut w, &fences::FENCE_BOX);
+    } else if gate.is_some() {
+        fixed_nodebox(&mut w, &[fences::GATE_SELECTION]);
     } else {
         regular_nodebox(&mut w); // selection_box
     }
@@ -2847,6 +3008,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     } else if bed {
         // Left empty in beds.lua, so the node box.
         fixed_nodebox(&mut w, beds::boxes(n.id));
+    } else if fence {
+        connected_nodebox(&mut w, &fences::FENCE_COLLISION);
+    } else if let Some((_, open)) = gate {
+        fixed_nodebox(&mut w, fences::gate_collision(open));
     } else {
         regular_nodebox(&mut w); // collision_box (torches aren't walkable)
     }
@@ -2867,7 +3032,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
             ALPHAMODE_OPAQUE
         } else if liquid {
             ALPHAMODE_BLEND
-        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed {
+        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed || gate.is_some() {
             ALPHAMODE_CLIP
         } else {
             ALPHAMODE_OPAQUE

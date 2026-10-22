@@ -6,6 +6,7 @@
 
 use crate::content::{self, *};
 use crate::farming;
+use crate::fences;
 use crate::inventory::Stack;
 
 pub const GRID_WIDTH: usize = 3;
@@ -122,6 +123,15 @@ pub const RECIPES: &[Recipe] = &[
         output: crate::beds::FANCY_BOTTOM,
         count: 1,
     },
+    // Fences: planks either side of sticks, two rows, make 4
+    // (default.register_fence); gates: sticks either side of planks
+    // (doors.register_fencegate).
+    Recipe { width: 3, pattern: &fence(CONTENT_APPLE_WOOD), output: fences::FENCE_APPLE, count: 4 },
+    Recipe { width: 3, pattern: &fence(CONTENT_FIR_WOOD), output: fences::FENCE_FIR, count: 4 },
+    Recipe { width: 3, pattern: &fence(CONTENT_BIRCH_WOOD), output: fences::FENCE_BIRCH, count: 4 },
+    Recipe { width: 3, pattern: &gate(CONTENT_APPLE_WOOD), output: fences::GATE_APPLE, count: 1 },
+    Recipe { width: 3, pattern: &gate(CONTENT_FIR_WOOD), output: fences::GATE_FIR, count: 1 },
+    Recipe { width: 3, pattern: &gate(CONTENT_BIRCH_WOOD), output: fences::GATE_BIRCH, count: 1 },
     // A bucket: three steel ingots in a V (bucket mod).
     Recipe {
         width: 3,
@@ -188,8 +198,21 @@ pub fn burn_time(id: u16) -> f32 {
         ITEM_BUCKET_LAVA => 60.0,
         crate::beds::BED_BOTTOM => 12.0,
         crate::beds::FANCY_BOTTOM => 13.0,
+        id if fences::is_fence(id) || fences::is_gate(id) => {
+            fences::WOODS.iter().find(|w| w.fence == id || w.gate == id).map_or(0.0, |w| w.burn)
+        }
         id => crate::stairs::burn_time(id, burn_time),
     }
+}
+
+/// A fence: two rows of planks, stick, planks.
+const fn fence(planks: u16) -> [Ingredient; 6] {
+    [I(planks), G("stick"), I(planks), I(planks), G("stick"), I(planks)]
+}
+
+/// A gate: two rows of stick, planks, stick.
+const fn gate(planks: u16) -> [Ingredient; 6] {
+    [G("stick"), I(planks), G("stick"), G("stick"), I(planks), G("stick")]
 }
 
 /// minetest_game's ladder shape: two sides joined in the middle.
@@ -462,6 +485,21 @@ mod tests {
         let planks: Vec<(usize, u16, u16)> = (3..9).map(|i| (i, a, 1)).collect();
         assert_eq!(result(&grid(&planks)), Some((crate::doors::FIRST_TRAPDOOR, 2)));
         assert_eq!(burn_time(crate::beds::FANCY_BOTTOM), 13.0);
+    }
+
+    #[test]
+    fn fences() {
+        let (a, f, s) = (CONTENT_APPLE_WOOD, CONTENT_FIR_WOOD, ITEM_STICK);
+        let fence = [(0, f, 1), (1, s, 1), (2, f, 1), (3, f, 1), (4, s, 1), (5, f, 1)];
+        assert_eq!(result(&grid(&fence)), Some((fences::FENCE_FIR, 4)));
+        let gate = [(3, s, 1), (4, a, 1), (5, s, 1), (6, s, 1), (7, a, 1), (8, s, 1)];
+        assert_eq!(result(&grid(&gate)), Some((fences::GATE_APPLE, 1)));
+        // Woods don't mix.
+        let mixed = [(0, f, 1), (1, s, 1), (2, a, 1), (3, f, 1), (4, s, 1), (5, f, 1)];
+        assert_eq!(result(&grid(&mixed)), None);
+        assert_eq!(burn_time(fences::FENCE_BIRCH), 5.0);
+        assert_eq!(burn_time(fences::GATE_APPLE), 7.0);
+        assert_eq!(burn_time(fences::GATE_APPLE + 1), 0.0);
     }
 
     #[test]

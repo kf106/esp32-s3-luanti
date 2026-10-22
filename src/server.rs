@@ -21,6 +21,7 @@ use crate::srp;
 use crate::beds;
 use crate::doors::{self, Door};
 use crate::farming;
+use crate::fences;
 use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
@@ -1929,9 +1930,9 @@ impl Server {
                     }
                     return;
                 }
-                // Doors and trapdoors open and close the same way.
+                // Doors, trapdoors and gates open and close the same way.
                 let target = self.world.node(node_pos(under));
-                if (doors::is_door(target) || doors::is_trapdoor(target)) && !sneaking {
+                if (doors::is_door(target) || doors::is_trapdoor(target) || fences::is_gate(target)) && !sneaking {
                     if in_reach(under) {
                         self.toggle_door(from, node_pos(under));
                     }
@@ -2031,7 +2032,7 @@ impl Server {
                 // Torches and ladders face what they were placed against.
                 let param2 = if content::is_wallmounted(id) {
                     content::wallmounted_param2(under, above)
-                } else if content::is_furnace(id) || content::is_chest(id) || doors::is_trapdoor(id) {
+                } else if content::is_furnace(id) || content::is_chest(id) || doors::is_trapdoor(id) || fences::is_gate(id) {
                     content::facedir_param2(above, body)
                 } else if stairs::shape_of(id).is_some() {
                     // Stairs and slabs: the way the player looks decides
@@ -2096,9 +2097,9 @@ impl Server {
         }
     }
 
-    /// Right-clicking a door or trapdoor: open it if it's shut, shut it if
-    /// it's open (doors.door_toggle, trapdoor_toggle), with its sound. A
-    /// steel one only for its owner.
+    /// Right-clicking a door, trapdoor or gate: open it if it's shut, shut
+    /// it if it's open (doors.door_toggle, trapdoor_toggle, the gate's
+    /// on_rightclick), with its sound. A steel one only for its owner.
     fn toggle_door(&mut self, from: SocketAddr, pos: NodePos) {
         let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
         if !self.door_owners.allows(pos, &name) {
@@ -2107,12 +2108,13 @@ impl Server {
             return;
         }
         let (node, param2) = (self.world.node(pos), self.world.param2(pos));
-        // A door changes node and turn; a trapdoor only node.
+        // A door changes node and turn; a trapdoor or gate only node.
         let toggled = match (doors::door_of(node), doors::trapdoor_of(node)) {
             (Some((door, _)), _) => doors::toggle(node, param2).map(|(to, p2, opened)| (to, p2, opened, door.open, door.close)),
             (_, Some((trap, _))) => doors::trapdoor_toggle(node).map(|(to, opened)| (to, param2, opened, trap.open, trap.close)),
-            _ => None,
+            _ => fences::gate_toggle(node).map(|(to, opened)| (to, param2, opened, fences::GATE_OPEN, fences::GATE_CLOSE)),
         };
+        let hearing = if fences::is_gate(node) { fences::GATE_HEARING } else { DOOR_HEARING };
         let Some((to, to_param2, opened, open_sound, close_sound)) = toggled else {
             return;
         };
@@ -2120,7 +2122,7 @@ impl Server {
         self.world.set_node(pos, to, to_param2);
         self.broadcast_node(p16, &build_addnode(p16, to, to_param2));
         let (sound, gain) = if opened { open_sound } else { close_sound };
-        self.play_sound_near(-1, sound, gain, p16.map(|v| v as f32 * 10.0), DOOR_HEARING);
+        self.play_sound_near(-1, sound, gain, p16.map(|v| v as f32 * 10.0), hearing);
     }
 
     /// Placing a door (the door item's on_place): in the node pointed at

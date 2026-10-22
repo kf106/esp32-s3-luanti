@@ -1,4 +1,4 @@
-Doors and trapdoors: models, textures and sounds from Minetest Game's doors mod
+Doors, trapdoors and fence gates: models, textures and sounds from Minetest Game's doors mod
 (https://github.com/luanti-org/minetest_game, mods/doors), unchanged:
 
   door_a.b3d, door_b.b3d
@@ -8,6 +8,8 @@ Doors and trapdoors: models, textures and sounds from Minetest Game's doors mod
   doors_steel_door_close.ogg, doors_glass_door_open.ogg, doors_glass_door_close.ogg
   doors_trapdoor.png, doors_trapdoor_side.png, doors_trapdoor_steel.png,
   doors_trapdoor_steel_side.png
+  doors_fencegate_closed.obj, doors_fencegate_open.obj
+  doors_fencegate_open.ogg, doors_fencegate_close.ogg
 
 Credits, from the mod's README.md:
 

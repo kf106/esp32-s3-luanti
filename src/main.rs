@@ -6,6 +6,7 @@ mod content;
 mod crafting;
 mod doors;
 mod farming;
+mod fences;
 mod fasthash;
 mod font;
 mod furnace;

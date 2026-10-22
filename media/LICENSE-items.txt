@@ -2,7 +2,7 @@ default_stick.png, default_coal_lump.png, default_iron_lump.png, gui_furnace_arr
 default_steel_ingot.png, gui_furnace_arrow_fg.png, the tool pictures
 default_tool_{wood,stone,steel}{pick,shovel,axe,sword}.png, the furnace textures
 default_furnace_*.png, default_apple.png and the saplings default_aspen_sapling.png,
-default_pine_sapling.png and default_sapling.png, the chest textures default_chest_*.png and
+default_pine_sapling.png and default_sapling.png, default_fence_overlay.png, the chest textures default_chest_*.png and
 the open chest model chest_open.obj, default_glass.png, default_glass_detail.png,
 default_coal_block.png, default_steel_block.png, default_ladder_wood.png,
 default_ladder_steel.png, the water textures default_water.png,
