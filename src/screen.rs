@@ -20,8 +20,29 @@ const BACKGROUND: u16 = rgb(16, 20, 24);
 const HEADER: u16 = rgb(46, 125, 50);
 const TEXT: u16 = rgb(232, 234, 237);
 const LABEL: u16 = rgb(138, 145, 153);
-const GOOD: u16 = rgb(129, 199, 132);
-const EVENT: u16 = rgb(255, 213, 79);
+const GOOD_RGB: [u8; 3] = [129, 199, 132];
+const EVENT_RGB: [u8; 3] = [255, 213, 79];
+const BAD_RGB: [u8; 3] = [239, 83, 80];
+const GOOD: u16 = rgb(GOOD_RGB[0], GOOD_RGB[1], GOOD_RGB[2]);
+const EVENT: u16 = rgb(EVENT_RGB[0], EVENT_RGB[1], EVENT_RGB[2]);
+const BAD: u16 = rgb(BAD_RGB[0], BAD_RGB[1], BAD_RGB[2]);
+
+/// The chip's temperature bands: the ESP32-S3 is rated for 85 C around
+/// it; ordinary SD cards for about 70 C, and the card sits right over the
+/// chip. Their colours, on the Device page and in the LED's breathing:
+/// green, amber from CHIP_WARM, red from CHIP_HOT.
+pub const CHIP_WARM: f32 = 60.0;
+pub const CHIP_HOT: f32 = 75.0;
+
+pub fn chip_colour(celsius: f32) -> [u8; 3] {
+    if celsius < CHIP_WARM {
+        GOOD_RGB
+    } else if celsius < CHIP_HOT {
+        EVENT_RGB
+    } else {
+        BAD_RGB
+    }
+}
 const RULE: u16 = rgb(52, 58, 64);
 
 /// Things the display thread measures itself.
@@ -228,7 +249,7 @@ fn bar(f: &mut Frame, at: (usize, usize), w: usize, percent: f32) {
     let (x, y) = (at.0, at.1 + 4);
     f.fill(x, y, w, h, RULE);
     let filled = ((percent.clamp(0.0, 100.0) / 100.0) * w as f32).round() as usize;
-    let colour = if percent < 60.0 { GOOD } else if percent < 85.0 { EVENT } else { rgb(239, 83, 80) };
+    let colour = if percent < 60.0 { GOOD } else if percent < 85.0 { EVENT } else { BAD };
     f.fill(x, y, filled, h, colour);
 }
 
@@ -307,12 +328,12 @@ fn render_device(f: &mut Frame, st: &Status, sys: &System) {
     f.pair(&(margin, y), "SD card ", &sd);
     y += line;
 
-    // Heat: the ESP32-S3 is rated for 85 C around it; ordinary SD cards
-    // for about 70 C, and the card sits right over the chip.
+    // Heat (see chip_colour).
     let x = f.text(&label, margin, y, "Chip ");
     match sys.chip_temp {
         Some(t) => {
-            let colour = if t < 60.0 { GOOD } else if t < 75.0 { EVENT } else { rgb(239, 83, 80) };
+            let [r, g, b] = chip_colour(t);
+            let colour = rgb(r, g, b);
             f.text(&Pen::new(&SMALL, colour, BACKGROUND, WIDTH), x, y, &format!("{t:.0} °C"));
         }
         None => {
@@ -524,7 +545,7 @@ fn render_overview(f: &mut Frame, st: &Status, sys: &System) {
         let devices = if n == 1 { "device" } else { "devices" };
         f.text_right(&Pen::new(&SMALL, GOOD, BACKGROUND, WIDTH), right, y, &format!("Hotspot, {n} {devices}"));
     } else if let Some(rssi) = sys.rssi {
-        let colour = if rssi >= -67 { GOOD } else if rssi >= -80 { EVENT } else { rgb(239, 83, 80) };
+        let colour = if rssi >= -67 { GOOD } else if rssi >= -80 { EVENT } else { BAD };
         f.text_right(&Pen::new(&SMALL, colour, BACKGROUND, WIDTH), right, y, &format!("Wi-Fi {rssi} dBm"));
     }
     y += line;

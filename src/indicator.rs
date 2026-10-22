@@ -1,5 +1,6 @@
-//! What the board's RGB LED shows: a slow green
-//! "breathing" while the server runs (a little quicker with players on),
+//! What the board's RGB LED shows: a slow "breathing" while the server
+//! runs (a little quicker with players on), green, or amber or red as the
+//! chip gets warm or hot (the Device page's temperature colours),
 //! flashes when players join (blue) or leave (purple) and on chat (white),
 //! red flashes on problems, and amber blinking while looking for Wi-Fi.
 //!
@@ -20,7 +21,6 @@ const BREATH_PLAYERS: Duration = Duration::from_millis(2500);
 pub struct Rgb(pub f32, pub f32, pub f32);
 
 const OFF: Rgb = Rgb(0.0, 0.0, 0.0);
-const GREEN: Rgb = Rgb(0.0, 1.0, 0.0);
 const BLUE: Rgb = Rgb(0.0, 0.0, 1.0);
 const PURPLE: Rgb = Rgb(0.6, 0.0, 1.0);
 const WHITE: Rgb = Rgb(1.0, 1.0, 1.0);
@@ -41,7 +41,9 @@ pub enum Event {
 pub enum State {
     /// Not on Wi-Fi yet (or lost it).
     NoWifi,
-    Running { players: usize },
+    /// `colour`: what to breathe in, as 8-bit RGB (the chip temperature's
+    /// colour on the Device page).
+    Running { players: usize, colour: [u8; 3] },
 }
 
 pub struct Indicator {
@@ -96,14 +98,15 @@ impl Indicator {
                 // Blink: half a second on, half off.
                 if self.clock.as_millis() % 1000 < 500 { AMBER } else { OFF }
             }
-            State::Running { players } => {
+            State::Running { players, colour } => {
                 let period = if players > 0 { BREATH_PLAYERS } else { BREATH_IDLE };
                 let phase = (self.clock.as_secs_f32() / period.as_secs_f32()).fract();
                 // A smooth rise and fall, squared so the dark part lingers
                 // the way a breathing light usually looks.
                 let s = 0.5 - 0.5 * (2.0 * PI * phase).cos();
                 let level = BREATH_FLOOR + (1.0 - BREATH_FLOOR) * s * s;
-                Rgb(GREEN.0 * level, GREEN.1 * level, GREEN.2 * level)
+                let c = colour.map(|v| v as f32 / 255.0);
+                Rgb(c[0] * level, c[1] * level, c[2] * level)
             }
         }
     }

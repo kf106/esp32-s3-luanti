@@ -206,7 +206,15 @@ fn run(lcd: Lcd, status: SharedStatus) {
     // Whether the board runs its own hotspot. Decided at start-up, after
     // this thread starts; when it is, the Join page (its QR code) is shown.
     let mut hotspot = false;
+    // The chip's temperature, read every few seconds for the LED's colour
+    // (and shown on the Device page).
+    let mut chip_temp: Option<f32> = None;
+    let mut temp_read: Option<Instant> = None;
     loop {
+        if temp_read.map_or(true, |t| t.elapsed() >= TEMP_INTERVAL) {
+            chip_temp = thermometer.as_ref().and_then(Thermometer::read);
+            temp_read = Some(Instant::now());
+        }
         if stacks_reported.map_or(true, |t| t.elapsed() >= STACK_REPORT) {
             report_stacks();
             stacks_reported = Some(Instant::now());
@@ -218,7 +226,10 @@ fn run(lcd: Lcd, status: SharedStatus) {
             let state = if st.address.starts_with("Wi-Fi") {
                 State::NoWifi
             } else {
-                State::Running { players: st.players.len() }
+                // Breathing in the temperature's colour: green, amber when
+                // warm, red when hot.
+                let colour = chip_temp.map_or(screen::chip_colour(0.0), screen::chip_colour);
+                State::Running { players: st.players.len(), colour }
             };
             (state, (st.joins, st.leaves, st.chats, status::problems()), st.hotspot.is_some())
         };
@@ -323,7 +334,7 @@ fn run(lcd: Lcd, status: SharedStatus) {
                 server_busy: busy.clamp(0.0, 100.0),
                 block_ms,
                 sd: sd.1,
-                chip_temp: thermometer.as_ref().and_then(Thermometer::read),
+                chip_temp,
             }
         };
         last = (now, snapshot.packets_in, snapshot.packets_out);
@@ -425,6 +436,8 @@ impl Button {
 
 /// How often to report every task's unused stack.
 const STACK_REPORT: Duration = Duration::from_secs(60);
+/// How often the chip temperature is read for the LED.
+const TEMP_INTERVAL: Duration = Duration::from_secs(2);
 /// Below this much unused stack (bytes), one of our tasks is reported as a
 /// warning.
 const STACK_LOW: u32 = 1536;

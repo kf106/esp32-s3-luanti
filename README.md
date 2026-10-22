@@ -108,7 +108,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - 64×64 Minecraft skins are accepted.
 - **Saving:** player positions, health, skins and inventories are saved and restored. So are dropped items (they fall back to the ground after a restart, keeping how long they have left) and the time of day, so a restart carries on where the game was. The board is usually stopped by pulling the plug, so the time is saved every minute and items 10 seconds after they change: at most that much is lost.
 - **Status light:** the board's RGB LED shows what is happening, whether the screen is on or off. It never goes above 60% of full power.
-  - slow green breathing while the server runs, a little quicker with players on;
+  - slow breathing while the server runs, a little quicker with players on: green, turning amber when the chip is warm (60 °C) and red when it is hot (75 °C), the same colours as the temperature on the Device page;
   - two blue flashes when a player joins, two purple when one leaves, and a white flash for chat;
   - three red flashes when something goes wrong, such as failing to save to the SD card;
   - amber blinking while looking for Wi-Fi.
