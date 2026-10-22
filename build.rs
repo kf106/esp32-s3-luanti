@@ -8,7 +8,8 @@
 //!
 //! `TEST=1 cargo run --release` builds firmware for testing that gives every
 //! player, once, a test kit: 50 of each crafting material (see
-//! inventory.rs). The value is the kit's token: rebuilding with the same one
+//! inventory.rs), and grows saplings, apples and crops ten times faster
+//! (nature.rs). The value is the kit's token: rebuilding with the same one
 //! gives nothing more, and a new value (TEST=2, and so on) hands out a fresh
 //! kit. Build normally for play.
 
@@ -32,6 +33,6 @@ fn main() {
     let test = test.trim();
     if !test.is_empty() && test != "0" && test.chars().all(|c| c.is_ascii_alphanumeric()) {
         println!("cargo:rustc-env=TEST_KIT_TOKEN={test}");
-        println!("cargo:warning=This firmware gives every player test kit {test} of crafting materials, once");
+        println!("cargo:warning=This firmware gives every player test kit {test} of crafting materials, once, and grows plants ten times faster");
     }
 }

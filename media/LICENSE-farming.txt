@@ -1,0 +1,161 @@
+Farming, wool and tall grass media from Minetest Game (https://github.com/luanti-org/minetest_game),
+unmodified and under their original names (the soil textures are drawn over our dirt):
+
+From mods/farming/textures: farming_soil.png, farming_soil_wet.png, farming_soil_wet_side.png,
+farming_wheat_1..8.png, farming_cotton_1..8.png, farming_wheat_seed.png, farming_cotton_seed.png,
+farming_wheat.png, farming_flour.png, farming_bread.png, farming_cotton.png, farming_string.png,
+farming_straw.png, farming_cotton_wild.png, farming_tool_woodhoe.png, farming_tool_stonehoe.png,
+farming_tool_steelhoe.png. Credits, from the farming mod's README.md:
+
+## Authors of media (textures)
+
+Created by PilzAdam (CC BY 3.0):
+
+- `farming_bread.png`
+- `farming_soil.png`
+- `farming_soil_wet.png`
+- `farming_soil_wet_side.png`
+- `farming_string.png`
+
+Created by BlockMen (CC BY 3.0):
+
+- `farming_tool_diamondhoe.png`
+- `farming_tool_mesehoe.png`
+- `farming_tool_bronzehoe.png`
+- `farming_tool_steelhoe.png`
+- `farming_tool_stonehoe.png`
+- `farming_tool_woodhoe.png`
+
+Created by MasterGollum (CC BY 3.0):
+
+- `farming_straw.png`
+
+Created by Gambit (CC BY 3.0):
+
+- `farming_wheat.png`
+- `farming_wheat_*.png`
+- `farming_cotton_*.png`
+- `farming_flour.png`
+- `farming_cotton_seed.png`
+- `farming_wheat_seed.png`
+
+Created by Napiophelios (CC BY-SA 3.0):
+
+- `farming_cotton.png`
+
+Created by Extex101 (CC BY-SA 3.0):
+
+- `farming_cotton_wild.png`
+
+Licence, from the farming mod's license.txt:
+
+License of media (textures)
+---------------------------
+
+Attribution 3.0 Unported (CC BY 3.0)
+Copyright (C) 2012-2016 PilzAdam
+Copyright (C) 2014-2016 BlockMen
+Copyright (C) 2015-2016 MasterGollum
+Copyright (C) 2015-2016 Gambit
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by/3.0/
+
+-----------------------
+
+Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+Copyright (C) 2017 Napiophelios
+Copyright (C) 2020 Extex101
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+ShareAlike — If you remix, transform, or build upon the material, you must distribute
+your contributions under the same license as the original.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by-sa/3.0/
+
+-----------------------
+
+From mods/wool/textures: wool_white.png, by Cisoun. Licence, from the wool mod's license.txt:
+
+Licenses of media (textures)
+----------------------------
+
+Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+Copyright (C) 2012-2016 Cisoun
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+ShareAlike — If you remix, transform, or build upon the material, you must distribute
+your contributions under the same license as the original.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by-sa/3.0/
+
+-----------------------
+
+From mods/default/textures: default_grass_1.png to default_grass_5.png, under the default mod's
+licence (CC BY-SA 3.0), as given in LICENSE-items.txt.

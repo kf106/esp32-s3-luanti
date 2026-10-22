@@ -6,7 +6,13 @@ A standard, unmodified Luanti client connects to it over Wi-Fi as it would to an
 
 The server does not run Lua. A normal Luanti server runs a game (such as Minetest Game) written in Lua mods. This one implements the engine's network protocol directly and builds a small built-in game on top of it, in about 7,000 lines of Rust.
 
-![The server running on a Waveshare ESP32-S3-LCD-1.47, with its status on the built-in screen](assets/server.jpeg)
+<p align="center">
+  <img src="assets/server-001.jpg" width="32%" alt="The server running on a Waveshare ESP32-S3-LCD-1.47, showing its overview page: players online, packets, memory and recent events">
+  <img src="assets/server-002.jpg" width="32%" alt="The device page: load on each CPU core, memory, Wi-Fi signal, SD card space and chip temperature">
+  <img src="assets/server-003.jpg" width="32%" alt="The chat page: the latest public chat">
+</p>
+
+*The server running on a Waveshare ESP32-S3-LCD-1.47. Its built-in screen has three pages, switched with the BOOT button: overview, device and chat.*
 
 ## What it looks like
 
@@ -66,12 +72,17 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **Doors:** Minetest Game's wooden, glass and steel doors: two columns of three planks, glass or steel ingots make one. A door faces the way you look as you place it, and one placed beside another hinges on the other side, so the pair opens outwards. Right-click opens and shuts it, with its sound; with sneak held, right-click builds against it instead. A steel door belongs to whoever placed it: only they can open or dig it (with a steel pickaxe). Owners are kept in `world/doors.txt`.
 - **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
 - **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. It is still water for now: it doesn't flow, so a hole dug beside a lake stays dry, and nobody drowns.
+- **Farming:** Minetest Game's wheat and cotton.
+  - Tall grass grows on grassland; digging it gives a wheat seed one time in five. Wild cotton grows in patches here and there and gives cotton seeds.
+  - A hoe (two planks, stones or steel ingots over two sticks, like Minetest Game's) turns dirt or grass into soil with a left-click. Soil within 3 nodes of water turns wet; without water it dries, and bare dry soil turns back into dirt.
+  - Plant seeds on soil. They sprout, then grow through 8 stages, a stage every 3 to 5 minutes, but only on wet soil in daylight. Dig a crop when ripe for one or two of the harvest and of seeds; earlier gives less.
+  - 4 wheat make flour, which bakes into bread in the furnace (15 s); bread heals 5. 9 wheat make 3 straw blocks, and back. 4 cotton make white wool, 2 make 2 string.
 - **Buckets:** three steel ingots in a V make an empty bucket. Left-click water with it to fill it; right-click to pour the water out again, wherever you like.
 - **Glass:** smelt sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
   - steel pickaxes, shovels, axes and swords from steel ingots.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
-  - It smelts iron lumps into steel ingots and cobblestone into stone, 3 seconds each.
-  - Fuel: coal lumps burn for 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, wooden trapdoors 7 s, planks 5 to 7 s, leaves, torches and wooden tools a few seconds, sticks 1 s. A piece of fuel that is alight burns to the end.
+  - It smelts iron lumps into steel ingots, cobblestone into stone and sand into glass, 3 seconds each, and bakes flour into bread in 15.
+  - Fuel: coal lumps burn for 40 s, chests 30 s, trunks 22 to 30 s, wooden doors 14 s, wooden trapdoors 7 s, straw 3 s, planks 5 to 7 s, leaves, grass, torches and wooden tools a few seconds, sticks, wheat, cotton and string 1 s. A piece of fuel that is alight burns to the end.
   - It burns whether or not anyone has it open. While lit, its front shows the fire, it glows, the window's flame and arrow fill up, and you hear it.
   - Only fuel goes in the fuel slot, and nothing into the output. Empty it before digging it (with a stone pickaxe). Its contents are kept on the SD card in `world/furnaces.txt`.
 - **Chests:** Minetest Game's, 32 slots, placed facing you. Right-click opens one: the lid lifts with a creak while anyone has it open (unless a block sits on it) and closes with a thud. A locked chest opens only for whoever placed it. Empty a chest before digging it. Contents are kept in `world/chests.txt`.
@@ -105,7 +116,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- No beds, fences, fence gates, farming, lava or flowing water yet; no admin commands.
+- No beds, fences, fence gates, dyes, lava or flowing water yet; no admin commands.
 - No Lua mods: the game content is built in.
 - One world per SD card.
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
@@ -207,7 +218,7 @@ To try out crafting and building without gathering everything first, build with 
 TEST=1 WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
 ```
 
-Every player then gets, once, 50 each of cobblestone, stone, sand, sandstone, the three kinds of tree trunk and planks, sticks, coal lumps, iron lumps, steel ingots and apples. The value of `TEST` is the kit's name, recorded in the player's inventory file: rebuilding with `TEST=1` gives nothing more, and `TEST=2` (or any new value) hands out a fresh kit. Build without `TEST` for normal play.
+Every player then gets, once, 50 each of cobblestone, stone, sand, sandstone, the three kinds of tree trunk and planks, sticks, coal lumps, iron lumps, steel ingots, apples, wheat and cotton seeds, wheat and cotton. The value of `TEST` is the kit's name, recorded in the player's inventory file: rebuilding with `TEST=1` gives nothing more, and `TEST=2` (or any new value) hands out a fresh kit. A test build also grows saplings, apples and crops ten times faster, so a field of wheat ripens in a few minutes rather than an hour. Build without `TEST` for normal play.
 
 ### Extra media and skins
 
@@ -242,6 +253,7 @@ src/nature.rs      leaf decay, saplings and apples
 src/clock.rs       the time of day, kept over restarts
 src/stairs.rs      stairs and slabs
 src/doors.rs       doors and trapdoors
+src/farming.rs     farming: soil, seeds, crops, hoes
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto

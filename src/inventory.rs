@@ -47,6 +47,11 @@ const TEST_KIT: &[u16] = &[
     content::ITEM_IRON_LUMP,
     content::ITEM_STEEL_INGOT,
     content::CONTENT_APPLE,
+    // Farming: seeds to plant, and wheat and cotton to craft with.
+    crate::farming::SEED_WHEAT,
+    crate::farming::SEED_COTTON,
+    content::ITEM_WHEAT,
+    content::ITEM_COTTON,
 ];
 const TEST_KIT_COUNT: u16 = 50;
 

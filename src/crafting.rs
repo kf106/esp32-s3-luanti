@@ -5,6 +5,7 @@
 //! Each crafting uses up one item from every filled cell.
 
 use crate::content::{self, *};
+use crate::farming;
 use crate::inventory::Stack;
 
 pub const GRID_WIDTH: usize = 3;
@@ -88,6 +89,15 @@ pub const RECIPES: &[Recipe] = &[
     // ingots 1.
     Recipe { width: 3, pattern: &[G("wood"); 6], output: crate::doors::FIRST_TRAPDOOR, count: 2 },
     Recipe { width: 2, pattern: &[I(ITEM_STEEL_INGOT); 4], output: crate::doors::FIRST_TRAPDOOR + 2, count: 1 },
+    // Farming (farming/init.lua, hoes.lua): hoes, wool and string from
+    // cotton, straw from wheat and back.
+    Recipe { width: 2, pattern: &hoe(G("wood")), output: TOOL_HOE_WOOD, count: 1 },
+    Recipe { width: 2, pattern: &hoe(G("stone")), output: TOOL_HOE_STONE, count: 1 },
+    Recipe { width: 2, pattern: &hoe(I(ITEM_STEEL_INGOT)), output: TOOL_HOE_STEEL, count: 1 },
+    Recipe { width: 2, pattern: &[I(ITEM_COTTON); 4], output: farming::WOOL_WHITE, count: 1 },
+    Recipe { width: 1, pattern: &[I(ITEM_COTTON); 2], output: ITEM_STRING, count: 2 },
+    Recipe { width: 3, pattern: &[I(ITEM_WHEAT); 9], output: farming::STRAW, count: 3 },
+    Recipe { width: 1, pattern: &[I(farming::STRAW)], output: ITEM_WHEAT, count: 3 },
     // A bucket: three steel ingots in a V (bucket mod).
     Recipe {
         width: 3,
@@ -112,6 +122,8 @@ pub fn cook_result(id: u16) -> Option<(u16, f32)> {
         CONTENT_COBBLE => Some((CONTENT_STONE, 3.0)),
         // group:sand: glass.
         CONTENT_SAND => Some((CONTENT_GLASS, 3.0)),
+        // farming: flour bakes into bread, slowly.
+        ITEM_FLOUR => Some((ITEM_BREAD, 15.0)),
         _ => None,
     }
 }
@@ -142,6 +154,10 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_COAL_BLOCK => 370.0,
         CONTENT_LADDER_WOOD => 7.0,
         ITEM_DOOR_WOOD => 14.0,
+        ITEM_WHEAT | ITEM_COTTON | ITEM_STRING => 1.0,
+        TOOL_HOE_WOOD => 5.0,
+        farming::STRAW => 3.0,
+        id if id == farming::GRASS[0] => 2.0,
         crate::doors::FIRST_TRAPDOOR => 7.0,
         id => crate::stairs::burn_time(id, burn_time),
     }
@@ -169,6 +185,8 @@ pub struct Shapeless {
 pub const SHAPELESS: &[Shapeless] = &[
     // A chest and a steel ingot make a locked chest (chests.lua).
     Shapeless { items: &[I(CONTENT_CHEST), I(ITEM_STEEL_INGOT)], output: CONTENT_CHEST_LOCKED, count: 1 },
+    // Four wheat, anyhow, make flour (farming/init.lua).
+    Shapeless { items: &[I(ITEM_WHEAT); 4], output: ITEM_FLOUR, count: 1 },
 ];
 
 impl Shapeless {
@@ -202,6 +220,9 @@ const fn axe(m: Ingredient) -> [Ingredient; 6] {
 }
 const fn sword(m: Ingredient) -> [Ingredient; 3] {
     [m, m, STICK]
+}
+const fn hoe(m: Ingredient) -> [Ingredient; 6] {
+    [m, m, E, STICK, E, STICK]
 }
 
 /// The box (min x, min y, width, height) around the filled cells of a
@@ -383,6 +404,21 @@ mod tests {
         assert_eq!(result(&grid(&outer)), Some((shaped(Shape::Outer, c).unwrap(), 6)));
         // Two stone in a row are still nothing, three a slab.
         assert_eq!(result(&grid(&[(0, CONTENT_STONE, 1), (1, CONTENT_STONE, 1)])), None);
+    }
+
+    #[test]
+    fn farming() {
+        let (w, s, c) = (CONTENT_BIRCH_WOOD, ITEM_STICK, ITEM_COTTON);
+        assert_eq!(result(&grid(&[(1, w, 1), (2, w, 1), (5, s, 1), (8, s, 1)])), Some((TOOL_HOE_WOOD, 1)));
+        // The axe's shape is still an axe.
+        assert_eq!(result(&grid(&[(1, w, 1), (2, w, 1), (4, w, 1), (5, s, 1), (8, s, 1)])), Some((TOOL_AXE_WOOD, 1)));
+        assert_eq!(result(&grid(&[(0, c, 1), (1, c, 1), (3, c, 1), (4, c, 1)])), Some((farming::WOOL_WHITE, 1)));
+        assert_eq!(result(&grid(&[(2, c, 1), (5, c, 1)])), Some((ITEM_STRING, 2)));
+        assert_eq!(result(&grid(&[(0, ITEM_WHEAT, 1), (4, ITEM_WHEAT, 1), (6, ITEM_WHEAT, 1), (8, ITEM_WHEAT, 1)])), Some((ITEM_FLOUR, 1)));
+        let nine: Vec<(usize, u16, u16)> = (0..9).map(|i| (i, ITEM_WHEAT, 1)).collect();
+        assert_eq!(result(&grid(&nine)), Some((farming::STRAW, 3)));
+        assert_eq!(cook_result(ITEM_FLOUR), Some((ITEM_BREAD, 15.0)));
+        assert_eq!(burn_time(farming::GRASS[0]), 2.0);
     }
 
     #[test]

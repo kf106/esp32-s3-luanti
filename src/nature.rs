@@ -37,6 +37,8 @@ pub enum Job {
     Grow,
     /// Try to grow an apple again where one was picked.
     Regrow,
+    /// Try to grow a seed or crop a stage (farming.rs).
+    Crop,
 }
 
 /// Node timers (minetest_game's are per node; here they are kept in one
@@ -114,7 +116,19 @@ pub fn grow_delay(rng: &mut Rng) -> Duration {
     if let Some(secs) = std::env::var("LUANTI_GROW_SECS").ok().and_then(|v| v.parse().ok()) {
         return Duration::from_secs(secs);
     }
-    Duration::from_secs(rng.range(300, 1500) as u64)
+    quick(Duration::from_secs(rng.range(300, 1500) as u64))
+}
+
+/// Whether this firmware was built for testing (TEST=..., see build.rs).
+pub const TEST_BUILD: bool = option_env!("TEST_KIT_TOKEN").is_some();
+/// How much faster things grow in a test build.
+const TEST_SPEED: u32 = 10;
+
+/// A growing time, ten times shorter in a test build, so saplings, apples
+/// and crops can be watched growing (normal builds keep minetest_game's
+/// times).
+pub fn quick(d: Duration) -> Duration {
+    if TEST_BUILD { d / TEST_SPEED } else { d }
 }
 
 /// minetest_game's on_grow_failed: try again in 300 seconds.

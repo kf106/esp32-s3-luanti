@@ -37,6 +37,7 @@ use std::sync::Arc;
 use log::{info, warn};
 
 use crate::content::{self, TORCH_LIGHT};
+use crate::farming;
 use crate::messages::Writer;
 use crate::storage;
 use crate::terrain::{self, Column, GENERATOR_VERSION};
@@ -113,11 +114,21 @@ impl BlockColumn {
     /// A node above the surface (the caller checks that it is): part of a
     /// tree, lake water up to the water level, or air.
     fn above_ground(&self, x: i32, y: i32, z: i32) -> u16 {
-        let open = if y <= terrain::WATER_LEVEL { content::CONTENT_WATER } else { CONTENT_AIR };
-        if y > self.tree_top[(z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize] {
-            return open;
+        let i = (z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize;
+        let open = || {
+            let col = &self.columns[i];
+            if y <= terrain::WATER_LEVEL {
+                content::CONTENT_WATER
+            } else if y == col.height + 1 {
+                terrain::plant_on(x, z, col).unwrap_or(CONTENT_AIR)
+            } else {
+                CONTENT_AIR
+            }
+        };
+        if y > self.tree_top[i] {
+            return open();
         }
-        terrain::tree_node_in(&self.trees, x, y, z).unwrap_or(open)
+        terrain::tree_node_in(&self.trees, x, y, z).unwrap_or_else(open)
     }
 
     /// How high anything generated goes in this column (surface, lake or
@@ -403,7 +414,8 @@ impl World {
     fn generated(&self, x: i32, y: i32, z: i32, col: &Column) -> u16 {
         // Above the surface it's air or trees: no need to look at caves.
         if y > col.height {
-            return self.block_column(block_of(x), block_of(z)).above_ground(x, y, z);
+            let id = self.block_column(block_of(x), block_of(z)).above_ground(x, y, z);
+            return self.unless_unsupported(id, x, y, z, col);
         }
         let mut cache = self.cave_samples.borrow_mut();
         if cache.len() >= CAVE_CACHE_MAX {
@@ -541,6 +553,18 @@ impl World {
         field
     }
 
+    /// A generated plant needs the ground it grows on: where a player dug
+    /// that out (in a world from before plants, or just now), there is
+    /// only air.
+    fn unless_unsupported(&self, id: u16, x: i32, y: i32, z: i32, col: &Column) -> u16 {
+        let dug_out = || self.state.changes.get(&(x, col.height, z)).is_some_and(|&g| !content::walkable(g));
+        if y == col.height + 1 && farming::is_attached_plant(id) && dug_out() {
+            CONTENT_AIR
+        } else {
+            id
+        }
+    }
+
     /// The y of the highest solid node in a column (leaves included): below
     /// it is out of direct sunlight, and on it is where a player can stand.
     pub fn highest_solid(&self, x: i32, z: i32) -> i32 {
@@ -605,7 +629,7 @@ impl World {
                     let change = if changed { self.state.changes.get(&(wx, wy, wz)) } else { None };
                     let id = match change {
                         Some(&id) => id,
-                        _ if wy > col.height => bc.above_ground(wx, wy, wz),
+                        _ if wy > col.height => self.unless_unsupported(bc.above_ground(wx, wy, wz), wx, wy, wz, &col),
                         _ => {
                             let cell = ((z / 4) * 16 + (y / 4) * 4 + x / 4) as usize;
                             let corners = *cells[cell]

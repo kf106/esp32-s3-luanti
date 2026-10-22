@@ -4,6 +4,7 @@ mod clock;
 mod content;
 mod crafting;
 mod doors;
+mod farming;
 mod fasthash;
 mod font;
 mod furnace;

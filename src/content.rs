@@ -13,6 +13,7 @@ use log::{info, warn};
 use crate::messages::Writer;
 use crate::sha1::sha1;
 use crate::doors;
+use crate::farming;
 use crate::stairs;
 
 // ---------------------------------------------------------------------------
@@ -82,6 +83,12 @@ pub enum Kind {
     /// Water: see-through, swum in, built into, not pointed at (except
     /// with a bucket). Light passes, dimming, as through leaves.
     Liquid,
+    /// Tall grass, wild cotton and crops (farming.rs): plantlike, walked
+    /// through, built over, and standing on the node below.
+    Plant,
+    /// A planted seed: a flat picture on the soil (signlike), standing on
+    /// it.
+    Seed,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -150,6 +157,14 @@ pub const ITEM_DOOR_GLASS: u16 = 0x1006;
 /// minetest_game's buckets.
 pub const ITEM_BUCKET_EMPTY: u16 = 0x1007;
 pub const ITEM_BUCKET_WATER: u16 = 0x1008;
+/// Farming's harvests and what is made of them (farming.rs).
+pub const ITEM_WHEAT: u16 = 0x1009;
+pub const ITEM_FLOUR: u16 = 0x100A;
+pub const ITEM_BREAD: u16 = 0x100B;
+pub const ITEM_COTTON: u16 = 0x100C;
+pub const ITEM_STRING: u16 = 0x100D;
+/// Health bread gives (minetest_game's item_eat(5)).
+pub const BREAD_HP: u16 = 5;
 /// Tools have ids from 0x2000 up.
 pub const TOOL_PICK_WOOD: u16 = 0x2000;
 pub const TOOL_PICK_STONE: u16 = 0x2001;
@@ -163,6 +178,9 @@ pub const TOOL_PICK_STEEL: u16 = 0x2008;
 pub const TOOL_SHOVEL_STEEL: u16 = 0x2009;
 pub const TOOL_AXE_STEEL: u16 = 0x200A;
 pub const TOOL_SWORD_STEEL: u16 = 0x200B;
+pub const TOOL_HOE_WOOD: u16 = 0x200C;
+pub const TOOL_HOE_STONE: u16 = 0x200D;
+pub const TOOL_HOE_STEEL: u16 = 0x200E;
 /// Light given off by a torch (minetest_game: LIGHT_MAX - 1 = 13; 12 is
 /// slightly gentler and keeps the lit area, and the work, smaller).
 pub const TORCH_LIGHT: u8 = 12;
@@ -199,8 +217,41 @@ macro_rules! door {
     };
 }
 
+/// A plant (Kind::Plant): what it drops is farming::drops.
+macro_rules! plant {
+    ($id:expr, $name:literal, $description:literal, $tile:literal, $groups:expr) => {
+        Node {
+            id: $id,
+            name: concat!("esp:", $name),
+            description: $description,
+            tiles: [$tile; 6],
+            groups: $groups,
+            drop: $id,
+            drop_count: 0,
+            kind: Kind::Plant,
+        }
+    };
+}
+
+/// A planted seed: it gives itself back.
+macro_rules! seed {
+    ($id:expr, $name:literal, $description:literal, $tile:literal) => {
+        Node {
+            id: $id,
+            name: concat!("esp:", $name),
+            description: $description,
+            tiles: [$tile; 6],
+            groups: &[("seed", 1), ("snappy", 3), ("attached_node", 1), ("flammable", 2), ("grassland", 1)],
+            drop: $id,
+            drop_count: 1,
+            kind: Kind::Seed,
+        }
+    };
+}
+
 /// Content IDs 125, 126 and 127 are reserved for unknown, air and ignore.
-/// Listed in id order, without gaps, so that an id finds its node at once.
+/// Listed in id order, without gaps except those three, so that an id
+/// finds its node at once.
 pub const NODES: &[Node] = &[
     Node {
         id: CONTENT_STONE,
@@ -822,7 +873,84 @@ pub const NODES: &[Node] = &[
         drop_count: 0,
         kind: Kind::Liquid,
     },
+    // Farming (farming.rs), with minetest_game's pictures (see
+    // media/LICENSE-farming.txt). What digging gives is farming::drops.
+    plant!(farming::GRASS[0], "grass_1", "Grass", "default_grass_1.png", GRASS_GROUPS),
+    plant!(farming::GRASS[1], "grass_2", "Grass", "default_grass_2.png", GRASS_GROUPS),
+    plant!(farming::GRASS[2], "grass_3", "Grass", "default_grass_3.png", GRASS_GROUPS),
+    plant!(farming::GRASS[3], "grass_4", "Grass", "default_grass_4.png", GRASS_GROUPS),
+    plant!(farming::GRASS[4], "grass_5", "Grass", "default_grass_5.png", GRASS_GROUPS),
+    plant!(farming::COTTON_WILD, "cotton_wild", "Wild Cotton", "farming_cotton_wild.png", &[("snappy", 3), ("attached_node", 1), ("flammable", 4)]),
+    Node {
+        id: farming::SOIL,
+        name: "esp:soil",
+        description: "Soil",
+        tiles: ["esp_dirt.png^farming_soil.png", "esp_dirt.png", "esp_dirt.png", "esp_dirt.png", "esp_dirt.png", "esp_dirt.png"],
+        groups: &[("crumbly", 3), ("not_in_creative_inventory", 1), ("soil", 2), ("grassland", 1), ("field", 1)],
+        drop: CONTENT_DIRT,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: farming::SOIL_WET,
+        name: "esp:soil_wet",
+        description: "Wet Soil",
+        tiles: [
+            "esp_dirt.png^farming_soil_wet.png",
+            "esp_dirt.png",
+            "esp_dirt.png^farming_soil_wet_side.png",
+            "esp_dirt.png^farming_soil_wet_side.png",
+            "esp_dirt.png^farming_soil_wet_side.png",
+            "esp_dirt.png^farming_soil_wet_side.png",
+        ],
+        groups: &[("crumbly", 3), ("not_in_creative_inventory", 1), ("soil", 3), ("wet", 1), ("grassland", 1), ("field", 1)],
+        drop: CONTENT_DIRT,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    seed!(farming::SEED_WHEAT, "seed_wheat", "Wheat Seed", "farming_wheat_seed.png"),
+    seed!(farming::SEED_COTTON, "seed_cotton", "Cotton Seed", "farming_cotton_seed.png"),
+    plant!(farming::WHEAT_STAGES[0], "wheat_1", "Wheat", "farming_wheat_1.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("wheat", 1)]),
+    plant!(farming::WHEAT_STAGES[1], "wheat_2", "Wheat", "farming_wheat_2.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("wheat", 2)]),
+    plant!(farming::WHEAT_STAGES[2], "wheat_3", "Wheat", "farming_wheat_3.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("wheat", 3)]),
+    plant!(farming::WHEAT_STAGES[3], "wheat_4", "Wheat", "farming_wheat_4.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("wheat", 4)]),
+    plant!(farming::WHEAT_STAGES[4], "wheat_5", "Wheat", "farming_wheat_5.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("wheat", 5)]),
+    plant!(farming::WHEAT_STAGES[5], "wheat_6", "Wheat", "farming_wheat_6.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("wheat", 6)]),
+    plant!(farming::WHEAT_STAGES[6], "wheat_7", "Wheat", "farming_wheat_7.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("wheat", 7)]),
+    plant!(farming::WHEAT_STAGES[7], "wheat_8", "Wheat", "farming_wheat_8.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("wheat", 8)]),
+    Node {
+        id: farming::STRAW,
+        name: "esp:straw",
+        description: "Straw",
+        tiles: ["farming_straw.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 4), ("fall_damage_add_percent", -30)],
+        drop: farming::STRAW,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: farming::WOOL_WHITE,
+        name: "esp:wool_white",
+        description: "White Wool",
+        tiles: ["wool_white.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_white", 1)],
+        drop: farming::WOOL_WHITE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    plant!(farming::COTTON_STAGES[0], "cotton_1", "Cotton", "farming_cotton_1.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 1)]),
+    plant!(farming::COTTON_STAGES[1], "cotton_2", "Cotton", "farming_cotton_2.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 2)]),
+    plant!(farming::COTTON_STAGES[2], "cotton_3", "Cotton", "farming_cotton_3.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 3)]),
+    plant!(farming::COTTON_STAGES[3], "cotton_4", "Cotton", "farming_cotton_4.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 4)]),
+    plant!(farming::COTTON_STAGES[4], "cotton_5", "Cotton", "farming_cotton_5.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 5)]),
+    // Luanti's own content ids 125 to 127 come here.
+    plant!(farming::COTTON_STAGES[5], "cotton_6", "Cotton", "farming_cotton_6.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 6)]),
+    plant!(farming::COTTON_STAGES[6], "cotton_7", "Cotton", "farming_cotton_7.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 7)]),
+    plant!(farming::COTTON_STAGES[7], "cotton_8", "Cotton", "farming_cotton_8.png", &[("snappy", 3), ("flammable", 2), ("plant", 1), ("not_in_creative_inventory", 1), ("attached_node", 1), ("cotton", 8)]),
 ];
+
+/// minetest_game's tall grass groups.
+const GRASS_GROUPS: &[(&str, i16)] = &[("snappy", 3), ("flora", 1), ("attached_node", 1), ("grass", 1), ("normal_grass", 1), ("flammable", 1)];
 
 /// minetest_game's water textures: 16 frames one above another.
 const WATER_SOURCE_TILE: &str = "default_water_source_animated.png";
@@ -1008,6 +1136,42 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Water Bucket",
         image: "bucket_water.png",
         groups: &[("tool", 1), ("water_bucket", 1)],
+    },
+    // farming's (see media/LICENSE-farming.txt).
+    CraftItem {
+        id: ITEM_WHEAT,
+        name: "esp:wheat",
+        description: "Wheat",
+        image: "farming_wheat.png",
+        groups: &[("food_wheat", 1), ("flammable", 4)],
+    },
+    CraftItem {
+        id: ITEM_FLOUR,
+        name: "esp:flour",
+        description: "Flour",
+        image: "farming_flour.png",
+        groups: &[("food_flour", 1), ("flammable", 1)],
+    },
+    CraftItem {
+        id: ITEM_BREAD,
+        name: "esp:bread",
+        description: "Bread",
+        image: "farming_bread.png",
+        groups: &[("food_bread", 1), ("flammable", 2)],
+    },
+    CraftItem {
+        id: ITEM_COTTON,
+        name: "esp:cotton",
+        description: "Cotton",
+        image: "farming_cotton.png",
+        groups: &[("flammable", 4)],
+    },
+    CraftItem {
+        id: ITEM_STRING,
+        name: "esp:string",
+        description: "String",
+        image: "farming_string.png",
+        groups: &[("flammable", 2)],
     },
 ];
 
@@ -1233,6 +1397,35 @@ pub const TOOLS: &[Tool] = &[
         },
         groups: &[("sword", 1)],
     },
+    // farming's hoes (hoes.lua). They have no digging of their own: a
+    // left-click uses them, to turn dirt into soil (farming.rs).
+    Tool {
+        id: TOOL_HOE_WOOD,
+        name: "esp:hoe_wood",
+        description: "Wooden Hoe",
+        image: "farming_tool_woodhoe.png",
+        wield_image: "farming_tool_woodhoe.png",
+        caps: HAND,
+        groups: &[("hoe", 1), ("flammable", 2)],
+    },
+    Tool {
+        id: TOOL_HOE_STONE,
+        name: "esp:hoe_stone",
+        description: "Stone Hoe",
+        image: "farming_tool_stonehoe.png",
+        wield_image: "farming_tool_stonehoe.png",
+        caps: HAND,
+        groups: &[("hoe", 1)],
+    },
+    Tool {
+        id: TOOL_HOE_STEEL,
+        name: "esp:hoe_steel",
+        description: "Steel Hoe",
+        image: "farming_tool_steelhoe.png",
+        wield_image: "farming_tool_steelhoe.png",
+        caps: HAND,
+        groups: &[("hoe", 1)],
+    },
 ];
 
 /// The sound a tool makes when it wears out (minetest_game's sound.breaks).
@@ -1256,7 +1449,7 @@ pub fn caps_of(id: Option<u16>) -> &'static ToolCaps {
 
 /// The wear one use adds to a tool that lasts `uses` uses, spread so that
 /// it breaks after exactly that many (Luanti's calculateResultWear).
-fn use_wear(uses: u32, wear: u16) -> u32 {
+pub fn use_wear(uses: u32, wear: u16) -> u32 {
     if uses == 0 {
         return 0;
     }
@@ -1328,7 +1521,12 @@ pub fn torch_variant(id: u16, param2: u8) -> u16 {
 }
 
 fn def(id: u16) -> Option<&'static Node> {
-    NODES.get(id as usize).filter(|n| n.id == id).or_else(|| NODES.iter().find(|n| n.id == id))
+    NODES.get(node_index(id)).filter(|n| n.id == id).or_else(|| NODES.iter().find(|n| n.id == id))
+}
+
+/// Where a node is in NODES: its id, less three past Luanti's reserved ids.
+fn node_index(id: u16) -> usize {
+    if id >= 128 { id as usize - 3 } else { id as usize }
 }
 
 /// Light a node gives off (0 for most).
@@ -1342,24 +1540,29 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed))
 }
 
-/// Whether a node is water (or another liquid).
+/// Whether a node is water.
 pub fn is_liquid(id: u16) -> bool {
     def(id).is_some_and(|n| n.kind == Kind::Liquid)
+}
+
+/// Whether water washes a node away (minetest_game's floodable): torches.
+pub fn floodable(id: u16) -> bool {
+    is_torch(id)
 }
 
 /// Whether placing a node can replace this one (builtin's buildable_to):
 /// air, an apple mark, or water.
 pub fn buildable_to(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid | Kind::Plant))
 }
 
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
@@ -1722,6 +1925,44 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_water_footstep.3.ogg", include_bytes!("../media/default_water_footstep.3.ogg")),
     ("bucket.png", include_bytes!("../media/bucket.png")),
     ("bucket_water.png", include_bytes!("../media/bucket_water.png")),
+    // minetest_game's farming, tall grass and wool (see media/LICENSE-farming.txt).
+    ("farming_soil.png", include_bytes!("../media/farming_soil.png")),
+    ("farming_soil_wet.png", include_bytes!("../media/farming_soil_wet.png")),
+    ("farming_soil_wet_side.png", include_bytes!("../media/farming_soil_wet_side.png")),
+    ("farming_wheat_seed.png", include_bytes!("../media/farming_wheat_seed.png")),
+    ("farming_cotton_seed.png", include_bytes!("../media/farming_cotton_seed.png")),
+    ("farming_wheat.png", include_bytes!("../media/farming_wheat.png")),
+    ("farming_flour.png", include_bytes!("../media/farming_flour.png")),
+    ("farming_bread.png", include_bytes!("../media/farming_bread.png")),
+    ("farming_cotton.png", include_bytes!("../media/farming_cotton.png")),
+    ("farming_string.png", include_bytes!("../media/farming_string.png")),
+    ("farming_straw.png", include_bytes!("../media/farming_straw.png")),
+    ("farming_cotton_wild.png", include_bytes!("../media/farming_cotton_wild.png")),
+    ("farming_tool_woodhoe.png", include_bytes!("../media/farming_tool_woodhoe.png")),
+    ("farming_tool_stonehoe.png", include_bytes!("../media/farming_tool_stonehoe.png")),
+    ("farming_tool_steelhoe.png", include_bytes!("../media/farming_tool_steelhoe.png")),
+    ("farming_wheat_1.png", include_bytes!("../media/farming_wheat_1.png")),
+    ("farming_wheat_2.png", include_bytes!("../media/farming_wheat_2.png")),
+    ("farming_wheat_3.png", include_bytes!("../media/farming_wheat_3.png")),
+    ("farming_wheat_4.png", include_bytes!("../media/farming_wheat_4.png")),
+    ("farming_wheat_5.png", include_bytes!("../media/farming_wheat_5.png")),
+    ("farming_wheat_6.png", include_bytes!("../media/farming_wheat_6.png")),
+    ("farming_wheat_7.png", include_bytes!("../media/farming_wheat_7.png")),
+    ("farming_wheat_8.png", include_bytes!("../media/farming_wheat_8.png")),
+    ("farming_cotton_1.png", include_bytes!("../media/farming_cotton_1.png")),
+    ("farming_cotton_2.png", include_bytes!("../media/farming_cotton_2.png")),
+    ("farming_cotton_3.png", include_bytes!("../media/farming_cotton_3.png")),
+    ("farming_cotton_4.png", include_bytes!("../media/farming_cotton_4.png")),
+    ("farming_cotton_5.png", include_bytes!("../media/farming_cotton_5.png")),
+    ("farming_cotton_6.png", include_bytes!("../media/farming_cotton_6.png")),
+    ("farming_cotton_7.png", include_bytes!("../media/farming_cotton_7.png")),
+    ("farming_cotton_8.png", include_bytes!("../media/farming_cotton_8.png")),
+    ("default_grass_1.png", include_bytes!("../media/default_grass_1.png")),
+    ("default_grass_2.png", include_bytes!("../media/default_grass_2.png")),
+    ("default_grass_3.png", include_bytes!("../media/default_grass_3.png")),
+    ("default_grass_4.png", include_bytes!("../media/default_grass_4.png")),
+    ("default_grass_5.png", include_bytes!("../media/default_grass_5.png")),
+    ("wool_white.png", include_bytes!("../media/wool_white.png")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -1835,6 +2076,21 @@ fn sounds_of(id: u16) -> Sounds {
             dug: ("default_sand_footstep", 0.15),
             place: ("default_place_node", 1.0),
         },
+        farming::SOIL | farming::SOIL_WET => dirt(("default_dirt_footstep", 0.25)),
+        // farming's seeds: no digging sound, a soft rustle when dug.
+        farming::SEED_WHEAT | farming::SEED_COTTON => Sounds {
+            footstep: ("default_dirt_footstep", 0.25),
+            dig: ("", 0.0),
+            dug: ("default_grass_footstep", 0.2),
+            place: ("default_place_node", 0.25),
+        },
+        farming::WOOL_WHITE => Sounds {
+            footstep: ("", 1.0),
+            dig: ("default_dig_dig_immediate", 0.5),
+            dug: ("default_dug_node", 0.25),
+            place: ("default_place_node_hard", 1.0),
+        },
+        id if farming::is_attached_plant(id) || id == farming::STRAW => sounds_of(CONTENT_BIRCH_LEAVES),
         CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES | CONTENT_BIRCH_SAPLING | CONTENT_FIR_SAPLING | CONTENT_APPLE_LEAVES
         | CONTENT_APPLE | CONTENT_APPLE_SAPLING => Sounds {
             footstep: ("default_grass_footstep", 0.45),
@@ -1952,13 +2208,16 @@ pub fn itemdef_bytes() -> Vec<u8> {
             // A torch or sapling is a flat picture, not a cube.
             inventory_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
-                Kind::Sapling | Kind::Apple | Kind::Ladder => n.tiles[0],
+                // Tall grass shows a taller tuft than the one it places.
+                _ if n.id == farming::GRASS[0] => "default_grass_3.png",
+                Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
                 _ => "",
             },
             wield_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
-                Kind::Sapling | Kind::Apple | Kind::Ladder => n.tiles[0],
+                _ if n.id == farming::GRASS[0] => "default_grass_3.png",
+                Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
                 _ => "",
             },
@@ -1985,8 +2244,9 @@ pub fn itemdef_bytes() -> Vec<u8> {
             place_sound: ("", 1.0),
             stack_max: stack_max(c.id),
             groups: c.groups,
-            // The empty bucket is used (left-click) to scoop water.
-            usable: c.id == ITEM_BUCKET_EMPTY,
+            // The empty bucket is used (left-click) to scoop water; bread
+            // is eaten.
+            usable: matches!(c.id, ITEM_BUCKET_EMPTY | ITEM_BREAD),
             liquids_pointable: liquids_pointable(c.id),
         });
     }
@@ -2003,7 +2263,8 @@ pub fn itemdef_bytes() -> Vec<u8> {
             place_sound: ("", 1.0),
             stack_max: stack_max(t.id),
             groups: t.groups,
-            usable: false,
+            // Hoes are used (left-click) on dirt.
+            usable: farming::hoe_uses(t.id).is_some(),
             liquids_pointable: false,
         });
     }
@@ -2039,6 +2300,7 @@ const NDT_NODEBOX: u8 = 12;
 const NDT_LIQUID: u8 = 2;
 const NDT_FLOWINGLIQUID: u8 = 3;
 const CPT2_FLOWINGLIQUID: u8 = 2;
+const CPT2_MESHOPTIONS: u8 = 7;
 const ALPHAMODE_BLEND: u8 = 0;
 const LIQUID_FLOWING: u8 = 1;
 const LIQUID_SOURCE: u8 = 2;
@@ -2135,6 +2397,19 @@ fn ladder_selection_box(w: &mut Writer) {
 /// minetest_game's open chest model.
 const CHEST_OPEN_MESH: &str = "chest_open.obj";
 
+/// The selection boxes of farming's nodes (nodes.lua, api.lua): low
+/// tufts of grass, taller wild cotton, and crops and seeds flat on the
+/// ground.
+fn farming_box(id: u16) -> [f32; 6] {
+    if farming::is_grass(id) {
+        [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, -5.0 / 16.0, 6.0 / 16.0]
+    } else if id == farming::COTTON_WILD {
+        [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, 5.0 / 16.0, 6.0 / 16.0]
+    } else {
+        [-0.5, -0.5, -0.5, 0.5, -5.0 / 16.0, 0.5]
+    }
+}
+
 /// A door's selection and collision box: two nodes tall, a thin slab at the
 /// front, turned by facedir.
 const DOOR_BOX: [f32; 6] = [-0.5, -0.5, -0.5, 0.5, 1.5, -6.0 / 16.0];
@@ -2182,6 +2457,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let trapdoor = doors::trapdoor_of(n.id);
     let liquid = n.kind == Kind::Liquid;
     let flowing = n.id == CONTENT_WATER_FLOWING;
+    let plant = n.kind == Kind::Plant;
+    let seed = n.kind == Kind::Seed;
+    // Wheat grows as a "#" of pictures (meshoptions; param2 says which shape).
+    let wheat = farming::WHEAT_STAGES.contains(&n.id);
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -2199,6 +2478,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(0);
     } else if liquid {
         w.u8(CPT_LIGHT).u8(if flowing { CPT2_FLOWINGLIQUID } else { 0 });
+    } else if plant {
+        w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
+    } else if seed {
+        w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if shaped.is_some() || door.is_some() || hidden || trapdoor.is_some() {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else {
@@ -2220,6 +2503,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Door => (NDT_MESH, doors::mesh_of(n.id)),
         Kind::DoorHidden => (NDT_AIRLIKE, ""),
         Kind::Trapdoor => (NDT_NODEBOX, ""),
+        Kind::Plant => (NDT_PLANTLIKE, ""),
+        Kind::Seed => (NDT_SIGNLIKE, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
@@ -2235,7 +2520,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         // asks; the glass door, left to the mesh default, doesn't.
         let culling = if d.item == ITEM_DOOR_GLASS { 0 } else { TILE_FLAG_BACKFACE_CULLING };
         TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL | culling
-    } else if sapling || ladder {
+    } else if sapling || ladder || plant || seed {
         0
     } else {
         TILE_FLAG_BACKFACE_CULLING
@@ -2273,7 +2558,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(255)
         .u8(255) // colour
         .string16("") // palette
-        .u8(if liquid { 3 } else { 0 }) // waving: liquids ripple
+        .u8(if liquid { 3 } else if plant { 1 } else { 0 }) // waving: liquids ripple, plants sway
         .u8(0) // connect_sides
         .u16(0) // connects_to
         .u32(if liquid { WATER_POST_EFFECT } else { 0 }) // post_effect_color (ARGB)
@@ -2281,8 +2566,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid) as u8) // light_propagates
-        .u8((torch || sapling || mark || glass || ladder || doorway) as u8) // sunlight_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed) as u8) // light_propagates
+        .u8((torch || sapling || mark || glass || ladder || doorway || plant || seed) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
     let tree = n.groups.iter().any(|(g, _)| *g == "tree");
@@ -2295,7 +2580,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(if mark || hidden || liquid { 0 } else { POINTABLE })
         .u8(!(mark || hidden || liquid) as u8) // diggable
         .u8(ladder as u8) // climbable
-        .u8((mark || liquid) as u8) // buildable_to
+        .u8((mark || liquid || plant) as u8) // buildable_to
         .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor) as u8) // rightclickable
         .u32(0); // damage_per_second
 
@@ -2346,6 +2631,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         sapling_selection_box(&mut w);
     } else if door.is_some() {
         fixed_nodebox(&mut w, &[DOOR_BOX]);
+    } else if plant || seed {
+        fixed_nodebox(&mut w, &[farming_box(n.id)]);
     } else {
         regular_nodebox(&mut w); // selection_box
     }
@@ -2372,7 +2659,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(LEVELED_MAX)
         .u8(if liquid {
             ALPHAMODE_BLEND
-        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() {
+        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed {
             ALPHAMODE_CLIP
         } else {
             ALPHAMODE_OPAQUE
@@ -2473,10 +2760,10 @@ mod tests {
     #[test]
     fn node_ids_in_order() {
         for (i, n) in NODES.iter().enumerate() {
-            assert_eq!(n.id as usize, i, "{} is out of place", n.name);
+            assert_eq!(node_index(n.id), i, "{} is out of place", n.name);
+            assert!(!(125..=127).contains(&n.id), "{} has a reserved id", n.name);
         }
-        assert!(NODES.len() <= 125);
-        assert!(is_liquid(CONTENT_WATER) && passes_light(CONTENT_WATER) && !passes_sunlight(CONTENT_WATER));
+        assert!(is_liquid(CONTENT_WATER) && floodable(CONTENT_TORCH) && passes_light(CONTENT_WATER) && !passes_sunlight(CONTENT_WATER));
         assert!(buildable_to(CONTENT_WATER) && buildable_to(crate::world::CONTENT_AIR) && !buildable_to(CONTENT_STONE));
         assert!(!walkable(CONTENT_WATER));
         assert_eq!(stack_max(ITEM_BUCKET_WATER), 1);

@@ -8,6 +8,7 @@
 //! The noise is gradient (Perlin) noise built from integer hashing and
 //! plain + and *, so it gives identical results on any machine.
 
+use crate::farming;
 use crate::content::{
     CONTENT_APPLE, CONTENT_APPLE_LEAVES, CONTENT_APPLE_TREE, CONTENT_BIRCH_LEAVES, CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_FIR_NEEDLES,
     CONTENT_FIR_TREE, CONTENT_GRASS, CONTENT_IRON, CONTENT_SAND, CONTENT_SANDSTONE, CONTENT_SNOW,
@@ -28,6 +29,8 @@ const SEED_ORE: u32 = 0x5F60_7182;
 const SEED_ENTRANCE: u32 = 0x93A4_B5C6;
 const SEED_TREES: u32 = 0xA7B8_C9DA;
 const SEED_FOREST: u32 = 0xEB0C_1D2E;
+const SEED_GRASS: u32 = 0x2F40_5162;
+const SEED_COTTON: u32 = 0x7384_95A6;
 
 /// Caves are sampled every CAVE_GRID nodes and interpolated in between.
 const CAVE_GRID: i32 = 4;
@@ -195,12 +198,6 @@ pub fn column(x: i32, z: i32) -> Column {
 /// (Luanti's default water_level). About an eighth of the land is under
 /// it, mostly a few nodes deep.
 pub const WATER_LEVEL: i32 = 1;
-
-/// Whether the generated node at height y is lake water: above the ground
-/// and not above the water level.
-pub fn is_lake(y: i32, col: &Column) -> bool {
-    y > col.height && y <= WATER_LEVEL
-}
 
 /// The layered node at height y, before caves and ores.
 fn layer(y: i32, col: &Column) -> u16 {
@@ -537,6 +534,24 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
         TreeKind::Apple => 4 + ((h >> 24) % 2) as i32,
     };
     Some(Tree { x, z, ground: col.height, kind, height })
+}
+
+/// The plant growing on the grassland surface of a column, if any: tall
+/// grass in drifts that come and go across the land (minetest_game's grass
+/// decorations, five heights), and here and there a patch of wild cotton
+/// (minetest_game grows it in savanna, which we don't have). Not on sand,
+/// snow or a cave mouth. It stands in the node above the surface, which
+/// was empty in worlds made before.
+pub fn plant_on(x: i32, z: i32, col: &Column) -> Option<u16> {
+    if col.biome != Biome::Grassland || col.height <= WATER_LEVEL || col.cave_top >= col.height {
+        return None;
+    }
+    let h = hash(x, 0x6A55, z, SEED_GRASS);
+    if noise2(x as f32 / 60.0, z as f32 / 60.0, SEED_COTTON) > 0.55 && h % 16 == 0 {
+        return Some(farming::COTTON_WILD);
+    }
+    let density = ((fbm2(x as f32 / 100.0, z as f32 / 100.0, 2, SEED_GRASS) + 0.3) * 0.25).clamp(0.0, 0.2);
+    ((h >> 8) % 1000 < (density * 1000.0) as u32).then(|| farming::GRASS[((h >> 20) % 5) as usize])
 }
 
 /// Every tree that could have a node in the columns from (x0, z0) to

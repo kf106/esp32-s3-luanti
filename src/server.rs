@@ -1,6 +1,6 @@
 //! The server loop: peers, the reliability layer, and command dispatch.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::io::ErrorKind;
@@ -19,6 +19,7 @@ use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
 use crate::doors::{self, Door};
+use crate::farming;
 use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
@@ -388,6 +389,9 @@ pub struct Server {
     clock: Clock,
     /// Who owns each steel door.
     door_owners: doors::Owners,
+    /// Farmed soil, looked after every farming::SOIL_INTERVAL.
+    fields: BTreeSet<NodePos>,
+    fields_checked: Instant,
     /// The last RECENT things the server did, for the heap check.
     recent: VecDeque<(Instant, &'static str, u16)>,
     heap_checked: Instant,
@@ -644,6 +648,18 @@ impl Server {
         for pos in world.changed_nodes(content::is_mark) {
             timers.start(pos, Job::Regrow, nature::grow_delay(&mut rng));
         }
+        // Seeds and crops carry on growing; soil is looked after again.
+        let crops = world.changed_nodes(farming::is_growing);
+        for &pos in &crops {
+            timers.start(pos, Job::Crop, farming::grow_retry(&mut rng));
+        }
+        let fields: BTreeSet<NodePos> = world.changed_nodes(farming::is_soil).into_iter().collect();
+        if !crops.is_empty() || !fields.is_empty() {
+            info!("Farming: {} soil, {} crops growing", fields.len(), crops.len());
+        }
+        if nature::TEST_BUILD {
+            info!("Test build: saplings, apples and crops grow ten times faster");
+        }
         // Chests left open when the server stopped are closed again
         // (minetest_game's "close opened chests on load").
         let mut world = world;
@@ -681,6 +697,8 @@ impl Server {
             items,
             clock,
             door_owners,
+            fields,
+            fields_checked: Instant::now(),
             recent: VecDeque::new(),
             heap_checked: Instant::now(),
             heap_check_timed: false,
@@ -1611,7 +1629,9 @@ impl Server {
                 // An empty bucket scoops up the water it points at.
                 let scooped = match msg.pointed {
                     Pointed::Node { under, above } => {
-                        self.scoop_water(from, BucketUse { slot: msg.item as usize, under, above, body })
+                        let at = BucketUse { slot: msg.item as usize, under, above, body };
+                        // ... and a hoe turns dirt into soil.
+                        self.scoop_water(from, at) || self.hoe(from, at)
                     }
                     _ => false,
                 };
@@ -1721,6 +1741,11 @@ impl Server {
                     self.inventory_changed(from);
                 }
                 self.edit_event(&name, "dug", current);
+                // What stands on it, before it goes: a generated plant
+                // vanishes from the world's view with its ground (see
+                // World::unless_unsupported), but clients still have it.
+                let above_pos = (under[0] as i32, under[1] as i32 + 1, under[2] as i32);
+                let on_top = self.world.node(above_pos);
                 // A picked apple that grew on a tree leaves a mark where a
                 // new one grows (minetest_game's after_dig_node).
                 if content::is_apple(current) && self.world.param2(node_pos(under)) == 0 {
@@ -1738,16 +1763,26 @@ impl Server {
                 // it, fall off and drop as items, as builtin's attached
                 // nodes do.
                 self.drop_attached(under);
+                // So does a generated plant that stood on it.
+                if farming::is_attached_plant(on_top) && self.world.node(above_pos) == world::CONTENT_AIR {
+                    let a16 = [under[0], under[1] + 1, under[2]];
+                    info!("{} at {a16:?} lost its support", content::name_of(on_top));
+                    self.world.set_node(above_pos, world::CONTENT_AIR, 0);
+                    self.broadcast_node(a16, &build_removenode(a16));
+                    for (item, count) in self.drops(on_top) {
+                        self.spawn_item(Stack::new(item, count), (a16.map(|v| v as f32), [0.0; 3]));
+                    }
+                }
                 // Its leaves may now decay (minetest_game's leafdecay).
                 self.start_leaf_decay(node_pos(under), current);
                 // The drop goes into the digger's inventory; what doesn't
                 // fit is dropped where the node was (builtin's
                 // handle_node_drops). Leaves sometimes give a sapling.
-                let drop = match content::drop_of(current) {
-                    Some((leaf, 1)) if content::is_leaves(current) => Some((nature::leaf_drop(leaf, &mut self.rng), 1)),
-                    other => other,
-                };
-                if let Some((item, count)) = drop {
+                if farming::is_soil(current) {
+                    self.fields.remove(&node_pos(under));
+                }
+                let drops = self.drops(current);
+                for (item, count) in drops {
                     let left = match self.peers.get_mut(&from) {
                         Some(peer) => peer.inventory.add(Stack::new(item, count)),
                         None => count,
@@ -1850,7 +1885,11 @@ impl Server {
                 let below = (above[0] as i32, above[1] as i32 - 1, above[2] as i32);
                 let supported = if torch {
                     content::walkable(support)
-                } else if content::is_sapling(id) {
+                } else if farming::is_seed(id) {
+                    // A seed goes on soil, directly on top (farming's
+                    // place_seed).
+                    farming::is_soil(support) && above[1] == under[1] + 1
+                } else if content::is_sapling(id) || farming::is_attached_plant(id) {
                     content::walkable(self.world.node(below))
                 } else {
                     support != world::CONTENT_AIR
@@ -1870,13 +1909,19 @@ impl Server {
                     // Placed leaves never decay (minetest_game's
                     // after_place_leaves), and placed apples don't regrow.
                     nature::PLACED_LEAVES
+                } else if farming::is_seed(id) {
+                    1 // lying on the floor (wallmounted)
                 } else {
                     0
                 };
                 // The item is always the floor torch; on a wall or ceiling
                 // it becomes that torch node (minetest_game's on_place).
-                let node = content::torch_variant(id, param2);
-                if !free || !supported || !in_reach(above) {
+                // Tall grass comes up any of its five heights.
+                let node = if id == farming::GRASS[0] { farming::placed_grass(&mut self.rng) } else { content::torch_variant(id, param2) };
+                // Water would wash a torch straight out again (it is
+                // floodable), so it stays in the hand.
+                let flooded = content::floodable(id) && content::is_liquid(target);
+                if !free || !supported || flooded || !in_reach(above) {
                     info!("{name}: refused placing at {above:?}");
                     self.resend_node(from, above);
                     return;
@@ -1892,6 +1937,10 @@ impl Server {
                 if content::is_sapling(node) {
                     let after = nature::grow_delay(&mut self.rng);
                     self.timers.start(node_pos(above), Job::Grow, after);
+                }
+                if farming::is_seed(node) {
+                    let after = farming::grow_delay(&mut self.rng);
+                    self.timers.start(node_pos(above), Job::Crop, after);
                 }
                 // A locked chest belongs to whoever placed it; so does a
                 // steel trapdoor.
@@ -1970,6 +2019,119 @@ impl Server {
         self.play_sound_near(-1, sound, gain, pos.map(|v| v as f32 * 10.0), HEARING);
     }
 
+    /// What digging a node gives: its drop, except that leaves sometimes
+    /// give a sapling, and farming's plants roll for theirs.
+    fn drops(&mut self, id: u16) -> Vec<(u16, u16)> {
+        if farming::is_attached_plant(id) || farming::is_soil(id) {
+            return farming::drops(id, &mut self.rng);
+        }
+        match content::drop_of(id) {
+            Some((leaf, 1)) if content::is_leaves(id) => vec![(nature::leaf_drop(leaf, &mut self.rng), 1)],
+            other => other.into_iter().collect(),
+        }
+    }
+
+    /// A hoe used on dirt or grass with air above (farming.hoe_on_use):
+    /// dry soil, with the sound of digging, and wear on the hoe. Returns
+    /// whether the wielded item was a hoe.
+    fn hoe(&mut self, addr: SocketAddr, at: BucketUse) -> bool {
+        let BucketUse { slot, under, body, .. } = at;
+        let Some(peer) = self.peers.get(&addr) else {
+            return false;
+        };
+        let Some(mut hoe) = peer.inventory.get(slot).filter(|_| slot < HOTBAR_SIZE) else {
+            return false;
+        };
+        let Some(uses) = farming::hoe_uses(hoe.id) else {
+            return false;
+        };
+        let name = peer.display_name().to_string();
+        let pos = (under[0] as i32, under[1] as i32, under[2] as i32);
+        let near = (0..3).map(|i| (under[i] as f32 - body[i]).powi(2)).sum::<f32>().sqrt() <= MAX_INTERACT_DISTANCE;
+        let soil = farming::hoed(self.world.node(pos));
+        let clear = farming::clear_above(self.world.node((pos.0, pos.1 + 1, pos.2)));
+        let Some(soil) = soil.filter(|_| clear && near) else {
+            return true;
+        };
+        info!("{name} hoed {} at {under:?}", content::name_of(self.world.node(pos)));
+        self.edit_event(&name, "hoed", soil);
+        self.world.set_node(pos, soil, 0);
+        self.broadcast_node(under, &build_addnode(under, soil, 0));
+        self.fields.insert(pos);
+        let at_bs = under.map(|v| v as f32 * 10.0);
+        self.play_sound_near(-1, "default_dig_crumbly", 0.3, at_bs, HEARING);
+        let intact = hoe.add_wear(content::use_wear(uses, hoe.wear));
+        if let Some(peer) = self.peers.get_mut(&addr) {
+            peer.inventory.set(slot, intact.then_some(hoe));
+        }
+        if !intact {
+            info!("{name}'s {} broke", content::name_of(hoe.id));
+            self.play_sound_near(-1, content::TOOL_BREAKS, 0.5, at_bs, HEARING);
+        }
+        self.inventory_changed(addr);
+        true
+    }
+
+    /// farming.grow_plant: a seed sprouts on soil; a crop grows a stage on
+    /// wet soil in daylight under the open sky, otherwise it tries again
+    /// in a minute or so. A seed off soil stays a seed.
+    fn grow_crop(&mut self, pos: NodePos) {
+        let id = self.world.node(pos);
+        if !farming::is_growing(id) {
+            return; // dug or eaten meanwhile
+        }
+        let below = self.world.node((pos.0, pos.1 - 1, pos.2));
+        let daytime = (6000..18000).contains(&self.time_of_day());
+        let lit = daytime && self.world.highest_solid(pos.0, pos.2) < pos.1;
+        match farming::grow(id, below, lit) {
+            Some((next, param2)) => {
+                let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+                self.world.set_node(pos, next, param2);
+                self.broadcast_node(p16, &build_addnode(p16, next, param2));
+                if farming::is_growing(next) {
+                    let after = farming::grow_delay(&mut self.rng);
+                    self.timers.start(pos, Job::Crop, after);
+                }
+            }
+            None if farming::is_seed(id) && !farming::is_soil(below) => {}
+            None => {
+                let after = farming::grow_retry(&mut self.rng);
+                self.timers.start(pos, Job::Crop, after);
+            }
+        }
+    }
+
+    /// The "Farming soil" ABM, every SOIL_INTERVAL for one soil node in
+    /// SOIL_CHANCE: wet with water within 3 nodes, drying without, and
+    /// back to dirt when dry and bare or covered by something solid.
+    fn tend_fields(&mut self) {
+        let fields: Vec<NodePos> = self.fields.iter().copied().collect();
+        for pos in fields {
+            let soil = self.world.node(pos);
+            if !farming::is_soil(soil) {
+                self.fields.remove(&pos);
+                continue;
+            }
+            if !self.rng.one_in(farming::soil_check().1) {
+                continue;
+            }
+            let above = self.world.node((pos.0, pos.1 + 1, pos.2));
+            let r = farming::WATER_REACH;
+            let water_near = (-r..=r).any(|dy| {
+                (-r..=r).any(|dz| (-r..=r).any(|dx| farming::is_water(self.world.node((pos.0 + dx, pos.1 + dy, pos.2 + dz)))))
+            });
+            let Some(next) = farming::soil_update(soil, above, water_near) else {
+                continue;
+            };
+            let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+            self.world.set_node(pos, next, 0);
+            self.broadcast_node(p16, &build_addnode(p16, next, 0));
+            if !farming::is_soil(next) {
+                self.fields.remove(&pos);
+            }
+        }
+    }
+
     /// Remove what was attached to the node at `pos` (just removed):
     /// torches hanging on it, and a sapling standing on it. They drop as
     /// items where they were.
@@ -1982,7 +2144,7 @@ impl Server {
                 let s = content::wallmounted_support(self.world.param2(np));
                 (np.0 + s.0, np.1 + s.1, np.2 + s.2) == (pos[0] as i32, pos[1] as i32, pos[2] as i32)
             } else {
-                content::is_sapling(id) && dy == 1
+                (content::is_sapling(id) || farming::is_attached_plant(id)) && dy == 1
             };
             if !attached {
                 continue;
@@ -1990,7 +2152,7 @@ impl Server {
             info!("{} at {n:?} lost its support", content::name_of(id));
             self.world.set_node(np, world::CONTENT_AIR, 0);
             self.broadcast_node(n, &build_removenode(n));
-            if let Some((item, count)) = content::drop_of(id) {
+            for (item, count) in self.drops(id) {
                 self.spawn_item(Stack::new(item, count), (n.map(|v| v as f32), [0.0; 3]));
             }
         }
@@ -2017,6 +2179,7 @@ impl Server {
                 Job::Decay => self.decay_leaf(pos),
                 Job::Grow => self.grow_sapling(pos),
                 Job::Regrow => self.regrow_apple(pos),
+                Job::Crop => self.grow_crop(pos),
             }
         }
     }
@@ -2058,7 +2221,7 @@ impl Server {
                 self.world.set_node(pos, world::CONTENT_AIR, 0);
                 self.broadcast_node(p16, &build_removenode(p16));
             }
-            nature::Regrow::Wait => self.timers.start(pos, Job::Regrow, nature::REGROW_RETRY),
+            nature::Regrow::Wait => self.timers.start(pos, Job::Regrow, nature::quick(nature::REGROW_RETRY)),
             nature::Regrow::Apple => {
                 self.world.set_node(pos, content::CONTENT_APPLE, 0);
                 self.broadcast_node(p16, &build_addnode(p16, content::CONTENT_APPLE, 0));
@@ -2134,15 +2297,20 @@ impl Server {
         let Some(peer) = self.peers.get_mut(&addr) else {
             return;
         };
-        let wielded = peer.inventory.get(slot).filter(|_| slot < HOTBAR_SIZE);
-        if !wielded.is_some_and(|s| content::is_apple(s.id)) {
+        // Food: an apple heals 2, bread 5 (minetest_game's item_eat).
+        let food = peer.inventory.get(slot).filter(|_| slot < HOTBAR_SIZE).and_then(|s| match s.id {
+            id if content::is_apple(id) => Some((id, content::APPLE_HP)),
+            content::ITEM_BREAD => Some((content::ITEM_BREAD, content::BREAD_HP)),
+            _ => None,
+        });
+        let Some((food, heals)) = food else {
             return;
-        }
+        };
         peer.inventory.take_one(slot);
-        peer.hp = (peer.hp + content::APPLE_HP).min(PLAYER_MAX_HP);
+        peer.hp = (peer.hp + heals).min(PLAYER_MAX_HP);
         let (hp, name) = (peer.hp, peer.display_name().to_string());
         peer.save(&self.players);
-        info!("{name} ate an apple: {hp} HP");
+        info!("{name} ate {}: {hp} HP", content::description_of(food));
         self.send_command(addr, 0, &build_hp(hp, false));
         self.send_command(addr, 0, &build_health_bar_change(hp));
         self.inventory_changed(addr);
@@ -2160,7 +2328,7 @@ impl Server {
         let node = |p: NodePos| world.node(p);
         let sky = world.highest_solid(pos.0, pos.2) < pos.1;
         if !nature::can_grow(pos, &node, sky, daytime) {
-            self.timers.start(pos, Job::Grow, nature::GROW_RETRY);
+            self.timers.start(pos, Job::Grow, nature::quick(nature::GROW_RETRY));
             return;
         }
         let height = nature::tree_height(sapling, &mut self.rng);
@@ -3441,6 +3609,10 @@ impl Server {
             self.note("time saved", 0);
         }
         self.check_heap(now);
+        if now.duration_since(self.fields_checked) >= farming::soil_check().0 {
+            self.fields_checked = now;
+            self.tend_fields();
+        }
         self.update_power_saving();
         self.run_timers();
         if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
