@@ -1,10 +1,12 @@
-# esp32-s3-luanti
+# esp32-s3-minetest
 
-A minimal [Luanti](https://www.luanti.org/) (formerly Minetest) server that runs on an ESP32-S3 microcontroller, written in Rust on ESP-IDF.
+**Minetest on a $12 stick:** Minetest Game, rebuilt in Rust, running as a [Luanti](https://www.luanti.org/) server on a $12 ESP32-S3 board the size of a slightly oversized USB stick.
 
-A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. You can create an account, log in, explore a generated world with hills, forests, caves, biomes and ores, dig and build, craft, place torches, drop and pick up items, choose a skin, and see the other players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
+A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. The board can join your access point, or run as its own free-standing hotspot. You can create an account, log in, explore a generated world with hills, forests, lakes, caves, lava and ores, dig and build, craft, smelt, farm, sleep through the night, and see the other players; testing shows it handles about six players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
 
-The server does not run Lua. A normal Luanti server runs a game (such as Minetest Game) written in Lua mods. This one speaks Luanti's network protocol directly and builds in much of Minetest Game, in about 13,000 lines of Rust.
+**Why "minetest" and not "luanti"?** When Minetest became Luanti, the point was to separate the engine (Luanti) from the game (Minetest Game). This project was first called esp32-s3-luanti, but it is really the other half: the server doesn't run Lua and can't load games or mods. It speaks Luanti's network protocol so that a normal client can connect, and everything else is Minetest Game (its nodes, recipes, furnace, doors, farming, beds and so on), built in, in under 20,000 lines of Rust. So it was renamed. The old GitHub link redirects here.
+
+It covers roughly half of Minetest Game so far: see [What works](#what-works) and [What doesn't (yet)](#what-doesnt-yet).
 
 <p align="center">
   <img src="assets/server-001.jpg" width="32%" alt="The server running on a Waveshare ESP32-S3-LCD-1.47, showing its overview page: players online, packets, memory and recent events">
@@ -121,7 +123,8 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- No dyes or signs yet; no admin commands.
+- Much of Minetest Game is still missing: copper, tin, gold, mese and diamond (so no bronze, mese or diamond tools), jungle and acacia trees, cactus, papyrus and other plants, gravel, clay and the other desert and snow blocks, falling sand and gravel, flowers, dyes and coloured wool, signs, bookshelves, TNT and fire, bones, boats, carts, keys, walls, glass panes, dungeons, weather and creative mode.
+- No admin commands.
 - No Lua mods: the game content is built in.
 - One world per SD card.
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.

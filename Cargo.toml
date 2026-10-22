@@ -1,16 +1,16 @@
 [package]
-name = "esp32-luanti"
+name = "esp32-s3-minetest"
 version = "0.1.0"
 authors = ["Keir Finlow-Bates <keir@chainfrog.com>"]
 edition = "2021"
 resolver = "2"
 rust-version = "1.82"
-description = "A minimal Luanti (Minetest) server for the ESP32-S3"
+description = "Minetest Game on a stick: a Luanti server for the ESP32-S3 with the game built in"
 license = "MIT"
 readme = "README.md"
 
 [[bin]]
-name = "esp32-luanti"
+name = "esp32-s3-minetest"
 harness = false # do not use the built-in cargo test harness -> resolve rust-analyzer errors
 
 [profile.release]

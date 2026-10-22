@@ -146,9 +146,9 @@ Commands: /help, /me <action>, /msg <player> <message>, /status, /time";
 /// The welcome message, shown in the chat area when a player joins, one
 /// line per message. A /sd/motd.txt file replaces it.
 const WELCOME: &str = "\
-Welcome! This Luanti server runs on an ESP32-S3 microcontroller: a Waveshare ESP32-S3-LCD-1.47 board, with 512 KB of RAM plus 8 MB of PSRAM.
-It is written from scratch in Rust, with no Lua: the world, digging and building, torches, trees, items and skins are all built in. Up to 6 players.
-Source: https://github.com/kf106/esp32-s3-luanti
+Welcome! This server runs Minetest Game on an ESP32-S3 microcontroller: a Waveshare ESP32-S3-LCD-1.47 board, with 512 KB of RAM plus 8 MB of PSRAM.
+It is written from scratch in Rust, with no Lua: the game is built in. Up to 6 players.
+Source: https://github.com/kf106/esp32-s3-minetest
 Chat works as usual; type /help for the commands.";
 /// How often dropped items are moved on.
 const ITEM_STEP_INTERVAL: Duration = Duration::from_millis(50);
@@ -3091,7 +3091,7 @@ impl Server {
         let up = status::lock(&self.status).started.elapsed().as_secs();
         let players: Vec<&str> = self.peers.values().filter(|p| p.ready).map(|p| p.display_name()).collect();
         format!(
-            "# Server: ESP32-S3 Luanti server, uptime: {}h {:02}m, time of day: {}, players ({}/{MAX_PLAYERS}): {}",
+            "# Server: ESP32-S3 Minetest server, uptime: {}h {:02}m, time of day: {}, players ({}/{MAX_PLAYERS}): {}",
             up / 3600,
             up / 60 % 60,
             self.clock.hh_mm(),
