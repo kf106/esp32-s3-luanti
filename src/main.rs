@@ -13,6 +13,7 @@ mod indicator;
 mod inventory;
 mod items;
 mod lcd;
+mod liquids;
 mod messages;
 mod nature;
 mod player;

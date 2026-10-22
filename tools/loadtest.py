@@ -85,6 +85,11 @@ class Bot:
         self.state = "starting"
         self.blocks = 0
         self.blocks_reported = 0
+        # Map block bytes received, and when the first and latest arrived.
+        self.block_bytes = 0
+        self.bytes_reported = 0
+        self.first_block = None
+        self.last_block = None
         self.rtts = []
         self.resends = 0
         self.last_heard = time.time()
@@ -122,6 +127,16 @@ class Bot:
                 u[3] += 1
                 self.resends += 1
 
+    def got_command(self, cmd):
+        # Map blocks are counted as they arrive, even during the login.
+        if len(cmd) >= 2 and u16(cmd) == TOCLIENT_BLOCKDATA:
+            self.last_block = time.time()
+            if self.first_block is None:
+                self.first_block = self.last_block
+            self.blocks += 1
+            self.block_bytes += len(cmd)
+        self.cmds.append(cmd)
+
     def handle_inner(self, ch, p):
         t = p[0]
         if t == 0:  # control
@@ -132,13 +147,13 @@ class Bot:
             elif p[1] == 1:  # SET_PEER_ID
                 self.peer = u16(p, 2)
         elif t == 1:  # original
-            self.cmds.append(p[1:])
+            self.got_command(p[1:])
         elif t == 2:  # split
             seq, count, n = struct.unpack_from(">HHH", p, 1)
             parts = self.splits.setdefault((ch, seq), {})
             parts[n] = p[7:]
             if len(parts) == count:
-                self.cmds.append(b"".join(parts[i] for i in range(count)))
+                self.got_command(b"".join(parts[i] for i in range(count)))
                 del self.splits[(ch, seq)]
 
     def pump(self, secs):
@@ -280,10 +295,13 @@ class Bot:
             for c in self.take(TOCLIENT_ACCESS_DENIED):
                 self.state = f"kicked: {denial(c)}"
                 return
-            self.blocks += len(self.take(TOCLIENT_BLOCKDATA))
+            self.take(TOCLIENT_BLOCKDATA)  # counted as they arrive
             self.cmds.clear()
-            if time.time() - self.last_heard > LOST_AFTER:
+            # A bot standing still has nothing to hear once its view is
+            # loaded.
+            if self.speed > 0 and time.time() - self.last_heard > LOST_AFTER:
                 self.state = "lost (server silent 30 s)"
+                self.raw(0, b"\x00\x03")  # DISCO
                 return
         self.send_position(False)
         self.raw(0, b"\x00\x03")  # DISCO
@@ -300,20 +318,32 @@ def denial(cmd):
 def report(bots, started, interval, final=False):
     elapsed = time.time() - started
     print(f"\n{'Final' if final else 'At'} {elapsed:5.0f} s")
-    print(f"  {'bot':<7}{'state':<12}{'walked':>8}{'blocks':>8}{'blk/s':>7}{'rtt ms':>8}{'silence':>9}{'resent':>8}")
+    print(f"  {'bot':<7}{'state':<12}{'walked':>8}{'blocks':>8}{'blk/s':>7}{'KB/s':>7}{'rtt ms':>8}{'silence':>9}{'resent':>8}")
     total_rate = 0.0
+    total_kb = 0.0
     for b in bots:
         rate = (b.blocks - b.blocks_reported) / interval if not final else b.blocks / max(elapsed, 1)
+        kb = (b.block_bytes - b.bytes_reported) / 1024 / interval if not final else b.block_bytes / 1024 / max(elapsed, 1)
         b.blocks_reported = b.blocks
+        b.bytes_reported = b.block_bytes
+        total_kb += kb
         total_rate += rate
         rtts = sorted(b.rtts[-200:])
         rtt = f"{rtts[len(rtts) // 2] * 1000:.0f}" if rtts else "-"
         state = b.state if len(b.state) <= 11 else b.state[:11]
-        print(f"  {b.name:<7}{state:<12}{b.walked:7.0f}m{b.blocks:8d}{rate:7.1f}{rtt:>8}{b.longest_gap:8.1f}s{b.resends:8d}")
+        print(f"  {b.name:<7}{state:<12}{b.walked:7.0f}m{b.blocks:8d}{rate:7.1f}{kb:7.1f}{rtt:>8}{b.longest_gap:8.1f}s{b.resends:8d}")
         if len(b.state) > 11:
             print(f"         {b.state}")
-    print(f"  all bots: {total_rate:.1f} blocks/s"
+    print(f"  all bots: {total_rate:.1f} blocks/s, {total_kb:.1f} KB/s of map blocks"
           + ("" if final else f"; logins took {', '.join(f'{b.login_took:.1f}' for b in bots if b.login_took)} s"))
+    if final:
+        # Standing still (--speed 0), the time to load the whole view: from
+        # the first block to the last.
+        for b in bots:
+            if b.first_block is not None and b.speed == 0:
+                took = b.last_block - b.first_block
+                print(f"  {b.name}: {b.blocks} blocks ({b.block_bytes / 1024:.0f} KB) in {took:.1f} s: "
+                      f"{b.blocks / max(took, 0.1):.1f} blocks/s, {b.block_bytes / 1024 / max(took, 0.1):.1f} KB/s")
 
 
 def main():

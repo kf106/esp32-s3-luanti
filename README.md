@@ -71,7 +71,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - Light gets in, so a slab roof doesn't make a dark room. Wooden ones burn, for three quarters (stairs) or half (slabs) the time of the planks.
 - **Doors:** Minetest Game's wooden, glass and steel doors: two columns of three planks, glass or steel ingots make one. A door faces the way you look as you place it, and one placed beside another hinges on the other side, so the pair opens outwards. Right-click opens and shuts it, with its sound; with sneak held, right-click builds against it instead. A steel door belongs to whoever placed it: only they can open or dig it (with a steel pickaxe). Owners are kept in `world/doors.txt`.
 - **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
-- **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. It is still water for now: it doesn't flow, so a hole dug beside a lake stays dry, and nobody drowns.
+- **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. Water flows as in Luanti: dig beside or under a lake and it runs in, up to 8 nodes across flat ground, getting shallower as it goes, and falls down any hole; take the source away and the flow drains. Two sources with a gap between make a third, so a lake never runs dry. Water washes torches out. It spreads a node a second; the server looks at up to 1,000 places a second, so a flood into a big cave takes a while. Where more than 8 nodes in a map block change at once, the block is sent again whole rather than node by node, to spare the radio; while water is moving the log says how much every 10 s ("Liquids: ..."). Nobody drowns yet.
 - **Farming:** Minetest Game's wheat and cotton.
   - Tall grass grows on grassland; digging it gives a wheat seed one time in five. Wild cotton grows in patches here and there and gives cotton seeds.
   - A hoe (two planks, stones or steel ingots over two sticks, like Minetest Game's) turns dirt or grass into soil with a left-click. Soil within 3 nodes of water turns wet; without water it dries, and bare dry soil turns back into dirt.
@@ -151,10 +151,10 @@ You need the Rust toolchain for Xtensa, plus `git` and Python 3 with the `venv` 
 
 The ESP-IDF settings that matter, in `sdkconfig.defaults`:
 - **Flash and PSRAM:** 16 MB flash and 8 MB octal PSRAM at 80 MHz, with PSRAM available to `malloc`.
-- **Main task stack:** 16 KB.
-- **Wi-Fi and network buffers in PSRAM:** `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP` lets them live there where possible.
+- **Main task stack:** 32 KB.
+- **Wi-Fi throughput:** settings from ESP-IDF's iperf example for the ESP32-S3: the Wi-Fi and network buffers stay in internal RAM (copying every packet through PSRAM held sending back), with 64 transmit and receive buffers, larger aggregation windows (32), and the Wi-Fi and lwIP fast paths in IRAM. This takes some 50 to 80 KB of internal RAM under load; every minute the log reports how much is left (`Internal RAM: ... KB free, lowest so far ... KB`), and warns below 16 KB.
 - **CPU statistics:** `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` lets the status screen show the load on each core.
-- **UDP receive queue:** `CONFIG_LWIP_UDP_RECVMBOX_SIZE=32` lengthens it, so bursts of client packets aren't dropped while the server is busy.
+- **UDP receive queue:** `CONFIG_LWIP_UDP_RECVMBOX_SIZE=64` lengthens it, so bursts of client packets aren't dropped while the server is busy.
 
 ## The SD card
 
@@ -257,6 +257,7 @@ src/stairs.rs      stairs and slabs
 src/doors.rs       doors and trapdoors
 src/farming.rs     farming: soil, seeds, crops, hoes
 src/beds.rs        beds, sleeping and respawn points
+src/liquids.rs     flowing water
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto
@@ -278,12 +279,27 @@ python3 tools/loadtest.py 192.168.68.137 --bots 5 --minutes 10
 ```
 
 Every 10 seconds it prints each bot's distance walked, map blocks received
-(in total and per second), round trip time, longest silence from the
+(in total, per second, and in KB per second), round trip time, longest silence from the
 server, and packets it had to resend. Watch the board's Device page
 meanwhile for CPU load and memory. The bots are saved like any player, so
 each run carries on in new terrain. Real players count towards the limit
 of six; a bot over the limit is turned away. `--help` lists the other
 options (speed, how far apart they join, view range, names).
+
+**Measuring Wi-Fi throughput.** Walking bots are limited by how fast the
+board can generate terrain. To measure sending alone, have one bot stand
+still where the terrain is already built:
+
+```
+python3 tools/loadtest.py 192.168.68.137 --bots 1 --speed 0 --minutes 1 --prefix Still
+python3 tools/loadtest.py 192.168.68.137 --bots 1 --speed 0 --minutes 1 --prefix Still
+```
+
+The first run builds the blocks around the bot (and the server keeps up to
+600 of them); the second gets them all from that store, so it measures how
+fast they go out. At the end it prints how long the whole view took to
+arrive, in blocks and KB per second. Run it the same way, from the same
+place, before and after a change.
 
 ## Notes for hackers
 

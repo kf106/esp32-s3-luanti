@@ -445,7 +445,20 @@ fn report_stacks() {
     } else {
         info!("Stack left (bytes), lowest first: {}", text.join(", "));
     }
+    // The Wi-Fi driver and network stack keep their buffers in internal RAM
+    // (for speed, see sdkconfig.defaults): watch how low it gets.
+    let caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    let (free, lowest) = unsafe { (heap_caps_get_free_size(caps) / 1024, heap_caps_get_minimum_free_size(caps) / 1024) };
+    if lowest < INTERNAL_LOW_KB {
+        warn!("Internal RAM: {free} KB free, lowest so far {lowest} KB");
+        crate::status::problem();
+    } else {
+        info!("Internal RAM: {free} KB free, lowest so far {lowest} KB");
+    }
 }
+
+/// Below this much free internal RAM (KB), the report becomes a warning.
+const INTERNAL_LOW_KB: usize = 16;
 
 /// CPU load per core, from how long each core's FreeRTOS idle task ran
 /// (needs CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS; the run-time clock is

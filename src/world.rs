@@ -38,6 +38,7 @@ use log::{info, warn};
 
 use crate::content::{self, TORCH_LIGHT};
 use crate::farming;
+use crate::liquids;
 use crate::messages::Writer;
 use crate::storage;
 use crate::terrain::{self, Column, GENERATOR_VERSION};
@@ -187,7 +188,13 @@ pub struct World {
     column_limit: usize,
     heights: RefCell<FastMap<(i16, i16), (i32, i32)>>,
     cave_samples: RefCell<FastMap<(i32, i32, i32), (f32, f32)>>,
+    /// Places where liquid may flow (liquids.rs).
+    liquid_queue: liquids::Queue,
 }
+
+/// The most queued places the liquids look at each second (Luanti's
+/// liquid_loop_max, which is far higher on a PC).
+const LIQUID_LOOP_MAX: usize = 1000;
 
 impl World {
     /// Load the world's changes from `dir` (created if missing).
@@ -204,6 +211,7 @@ impl World {
             column_limit: SERVER_COLUMNS,
             heights: RefCell::new(FastMap::default()),
             cave_samples: RefCell::new(FastMap::default()),
+            liquid_queue: liquids::Queue::default(),
         };
 
         let data = match storage::read(&log_path) {
@@ -247,6 +255,7 @@ impl World {
             column_limit: BUILDER_COLUMNS,
             heights: RefCell::new(FastMap::default()),
             cave_samples: RefCell::new(FastMap::default()),
+            liquid_queue: liquids::Queue::default(),
         }
     }
 
@@ -474,21 +483,21 @@ impl World {
         self.state.changes.iter().filter(|(_, &id)| wanted(id)).map(|(&p, _)| p).collect()
     }
 
-    /// Change a node and record it on the SD card.
+    /// Change a node and record it on the SD card. Liquid beside it may
+    /// now flow (or stop).
     pub fn set_node(&mut self, pos: NodePos, id: u16, param2: u8) {
+        self.change(pos, id, param2);
+        self.append_log(&record(pos, id, param2));
+        let mut queue = std::mem::take(&mut self.liquid_queue);
+        liquids::after_change(pos, |p| self.node(p), &mut queue);
+        self.liquid_queue = queue;
+    }
+
+    /// Change a node in memory: light, and the version clients' blocks are
+    /// checked against.
+    fn change(&mut self, pos: NodePos, id: u16, param2: u8) {
         let was_torch = content::light_source(self.node(pos)) > 0;
         self.apply(pos, id, param2);
-        if let Some(log_path) = &self.log_path {
-            let result = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)
-                .and_then(|mut f: File| f.write_all(&record(pos, id, param2)));
-            if let Err(e) = result {
-                warn!("Saving node change to {}: {e}", log_path.display());
-                crate::status::problem();
-            }
-        }
         self.relight(pos, was_torch, content::light_source(id) > 0);
         let st = Arc::make_mut(&mut self.state);
         st.version += 1;
@@ -497,6 +506,46 @@ impl World {
         if st.recent.len() > RECENT_CHANGES {
             st.recent.pop_front();
         }
+    }
+
+    fn append_log(&self, records: &[u8]) {
+        if records.is_empty() {
+            return;
+        }
+        if let Some(log_path) = &self.log_path {
+            let result = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+                .and_then(|mut f: File| f.write_all(records));
+            if let Err(e) = result {
+                warn!("Saving node change to {}: {e}", log_path.display());
+                crate::status::problem();
+            }
+        }
+    }
+
+    /// Let the liquids flow a step: look at what is queued now, up to
+    /// LIQUID_LOOP_MAX places, and record what changed in one write.
+    pub fn flow_liquids(&mut self) -> Vec<liquids::Change> {
+        let max = self.liquid_queue.len().min(LIQUID_LOOP_MAX);
+        if max == 0 {
+            return Vec::new();
+        }
+        let mut queue = std::mem::take(&mut self.liquid_queue);
+        let changes = liquids::transform(&mut LiquidView(self), &mut queue, max);
+        self.liquid_queue = queue;
+        let mut log = Vec::new();
+        for c in &changes {
+            log.extend_from_slice(&record(c.pos, c.id, c.param2));
+        }
+        self.append_log(&log);
+        changes
+    }
+
+    /// How many places are waiting for the liquids.
+    pub fn liquid_queue_len(&self) -> usize {
+        self.liquid_queue.len()
     }
 
     /// Keep torch light up to date after a node changed: the torch there
@@ -753,6 +802,18 @@ impl World {
         w.raw(&compressed);
         w.u8(2);
         w.into_inner()
+    }
+}
+
+/// The world as the liquids see and change it.
+struct LiquidView<'a>(&'a mut World);
+
+impl liquids::Nodes for LiquidView<'_> {
+    fn get(&self, pos: NodePos) -> (u16, u8) {
+        (self.0.node(pos), self.0.param2(pos))
+    }
+    fn set(&mut self, pos: NodePos, id: u16, param2: u8) {
+        self.0.change(pos, id, param2);
     }
 }
 

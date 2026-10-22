@@ -51,6 +51,11 @@ const HEAP_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 const RECENT: usize = 32;
 /// How far a door is heard opening and closing (its max_hear_distance).
 const DOOR_HEARING: f32 = 10.0;
+/// How often liquids flow a step (Luanti's liquid_update).
+const LIQUID_UPDATE: Duration = Duration::from_secs(1);
+/// Liquid changes in a block sent node by node; more, and the whole block
+/// is sent again.
+const NODE_UPDATES_PER_BLOCK: usize = 8;
 /// Wi-Fi power saving goes on after this long with nobody doing anything
 /// (no one connected, or every player standing still).
 const IDLE_POWER_SAVE: Duration = Duration::from_secs(30);
@@ -401,6 +406,13 @@ pub struct Server {
     /// Farmed soil, looked after every farming::SOIL_INTERVAL.
     fields: BTreeSet<NodePos>,
     fields_checked: Instant,
+    /// When the liquids last flowed.
+    liquids_flowed: Instant,
+    /// Liquid activity since it was last reported: nodes changed, blocks
+    /// sent again, and when.
+    liquid_changes: u32,
+    liquid_blocks_resent: u32,
+    liquids_reported: Instant,
     /// The last RECENT things the server did, for the heap check.
     recent: VecDeque<(Instant, &'static str, u16)>,
     heap_checked: Instant,
@@ -711,6 +723,10 @@ impl Server {
             night_skip_at: None,
             fields,
             fields_checked: Instant::now(),
+            liquids_flowed: Instant::now(),
+            liquid_changes: 0,
+            liquid_blocks_resent: 0,
+            liquids_reported: Instant::now(),
             recent: VecDeque::new(),
             heap_checked: Instant::now(),
             heap_check_timed: false,
@@ -2271,6 +2287,78 @@ impl Server {
                 if ready.peek().is_some() && ready.all(|p| p.in_bed.is_some()) {
                     self.night_skip_at = Some(Instant::now() + Duration::from_secs(2));
                 }
+            }
+        }
+    }
+
+    /// Let liquids flow a step (liquids.rs), and show everyone what
+    /// changed. A torch the water reaches is washed out and dropped, with
+    /// a hiss (minetest_game's torch on_flood).
+    fn flow_liquids(&mut self) {
+        let changes = self.world.flow_liquids();
+        // Every 10 s while liquid is moving, say how much: water that
+        // never settles would show here.
+        if self.liquid_changes > 0 && self.liquids_reported.elapsed() >= Duration::from_secs(10) {
+            info!(
+                "Liquids: {} nodes changed in the last {}s ({} blocks sent again), {} places waiting",
+                self.liquid_changes,
+                self.liquids_reported.elapsed().as_secs(),
+                self.liquid_blocks_resent,
+                self.world.liquid_queue_len()
+            );
+            self.liquid_changes = 0;
+            self.liquid_blocks_resent = 0;
+            self.liquids_reported = Instant::now();
+        }
+        if changes.is_empty() {
+            return;
+        }
+        if self.liquid_changes == 0 {
+            self.liquids_reported = Instant::now();
+        }
+        self.liquid_changes += changes.len() as u32;
+        self.note("liquids flowed", changes.len() as u16);
+        debug!("Liquids: {} changed, {} queued", changes.len(), self.world.liquid_queue_len());
+        // A few changes in a block go out node by node; a block where
+        // more changed is sent again whole, in turn with the other blocks
+        // players need, as Luanti does with every liquid change. One
+        // packet per node would swamp the radio when water pours into a
+        // cave.
+        let mut per_block: HashMap<BlockPos, usize> = HashMap::new();
+        for c in &changes {
+            *per_block.entry(world::block_of_node(c.pos)).or_default() += 1;
+        }
+        for (&block, &n) in &per_block {
+            if n > NODE_UPDATES_PER_BLOCK {
+                self.send_block_again(block);
+                self.liquid_blocks_resent += 1;
+            }
+        }
+        for c in changes {
+            let p16 = [c.pos.0 as i16, c.pos.1 as i16, c.pos.2 as i16];
+            if per_block[&world::block_of_node(c.pos)] <= NODE_UPDATES_PER_BLOCK {
+                if c.id == world::CONTENT_AIR {
+                    self.broadcast_node(p16, &build_removenode(p16));
+                } else {
+                    self.broadcast_node(p16, &build_addnode(p16, c.id, c.param2));
+                }
+            }
+            if content::is_torch(c.was) {
+                let at = p16.map(|v| v as f32);
+                self.spawn_item(Stack::new(content::CONTENT_TORCH, 1), (at, [0.0; 3]));
+                self.play_sound_near(-1, "default_cool_lava", 0.07, at.map(|v| v * 10.0), 16.0);
+            }
+            // Items lying where it went may now float off or fall.
+            self.wake_items(c.pos);
+        }
+    }
+
+    /// Players who have a block get it again, before anything else they
+    /// are waiting for (Luanti's SetBlockNotSent).
+    fn send_block_again(&mut self, block: BlockPos) {
+        for peer in self.peers.values_mut() {
+            if peer.ready && peer.sent_blocks.remove(&block) && !peer.pending_blocks.contains(&block) {
+                peer.pending_blocks.push_front(block);
             }
         }
     }
@@ -3883,6 +3971,10 @@ impl Server {
         self.update_power_saving();
         self.run_timers();
         self.tend_beds();
+        if now.duration_since(self.liquids_flowed) >= LIQUID_UPDATE {
+            self.liquids_flowed = now;
+            self.flow_liquids();
+        }
         if now.duration_since(self.furnaces_stepped) >= FURNACE_STEP_INTERVAL {
             let dt = now.duration_since(self.furnaces_stepped).as_secs_f32();
             self.furnaces_stepped = now;
