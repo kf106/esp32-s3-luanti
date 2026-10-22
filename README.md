@@ -65,6 +65,8 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - Light gets in, so a slab roof doesn't make a dark room. Wooden ones burn, for three quarters (stairs) or half (slabs) the time of the planks.
 - **Doors:** Minetest Game's wooden, glass and steel doors: two columns of three planks, glass or steel ingots make one. A door faces the way you look as you place it, and one placed beside another hinges on the other side, so the pair opens outwards. Right-click opens and shuts it, with its sound; with sneak held, right-click builds against it instead. A steel door belongs to whoever placed it: only they can open or dig it (with a steel pickaxe). Owners are kept in `world/doors.txt`.
 - **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
+- **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. It is still water for now: it doesn't flow, so a hole dug beside a lake stays dry, and nobody drowns.
+- **Buckets:** three steel ingots in a V make an empty bucket. Left-click water with it to fill it; right-click to pour the water out again, wherever you like.
 - **Glass:** smelt sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
   - steel pickaxes, shovels, axes and swords from steel ingots.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
@@ -103,7 +105,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- No beds, fences, fence gates, water or the other Minetest Game blocks yet; no admin commands.
+- No beds, fences, fence gates, farming, lava or flowing water yet; no admin commands.
 - No Lua mods: the game content is built in.
 - One world per SD card.
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.

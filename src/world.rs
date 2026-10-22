@@ -110,18 +110,27 @@ struct BlockColumn {
 
 impl BlockColumn {
     /// The generated node above the surface: a tree's, or air.
+    /// A node above the surface (the caller checks that it is): part of a
+    /// tree, lake water up to the water level, or air.
     fn above_ground(&self, x: i32, y: i32, z: i32) -> u16 {
+        let open = if y <= terrain::WATER_LEVEL { content::CONTENT_WATER } else { CONTENT_AIR };
         if y > self.tree_top[(z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize] {
-            return CONTENT_AIR;
+            return open;
         }
-        terrain::tree_node_in(&self.trees, x, y, z).unwrap_or(CONTENT_AIR)
+        terrain::tree_node_in(&self.trees, x, y, z).unwrap_or(open)
     }
 
-    /// How high anything generated goes in this column (surface or tree).
+    /// How high anything generated goes in this column (surface, lake or
+    /// tree).
     fn generated_top(&self, x: i32, z: i32) -> i32 {
         let i = (z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize;
-        self.columns[i].height.max(self.tree_top[i])
+        surface_or_lake(&self.columns[i]).max(self.tree_top[i])
     }
+}
+
+/// The top of a column's ground, or of the lake over it.
+fn surface_or_lake(c: &Column) -> i32 {
+    c.height.max(terrain::WATER_LEVEL)
 }
 
 /// How many recent changes are remembered for `changed_near_since`.
@@ -345,7 +354,7 @@ impl World {
             }
         }
         let min_height = columns.iter().map(|c| c.height).min().unwrap_or(0);
-        let max_height = columns.iter().map(|c| c.height).max().unwrap_or(0);
+        let max_height = columns.iter().map(surface_or_lake).max().unwrap_or(0);
         let trees = terrain::trees_in(x0, z0, x0 + 15, z0 + 15);
         let mut tree_top = vec![i32::MIN; 256];
         for t in &trees {

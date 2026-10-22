@@ -1608,7 +1608,16 @@ impl Server {
         let dead = peer.hp == 0;
         if msg.action == INTERACT_USE {
             if !dead {
-                self.use_item(from, msg.item as usize);
+                // An empty bucket scoops up the water it points at.
+                let scooped = match msg.pointed {
+                    Pointed::Node { under, above } => {
+                        self.scoop_water(from, BucketUse { slot: msg.item as usize, under, above, body })
+                    }
+                    _ => false,
+                };
+                if !scooped {
+                    self.use_item(from, msg.item as usize);
+                }
             }
             return;
         }
@@ -1785,6 +1794,13 @@ impl Server {
                 // node. An empty slot predicts nothing.
                 let slot = msg.item as usize;
                 let wielded = self.peers.get(&from).and_then(|p| p.inventory.get(slot));
+                // A water bucket pours out a water source.
+                if wielded.is_some_and(|s| slot < HOTBAR_SIZE && s.id == content::ITEM_BUCKET_WATER) {
+                    if in_reach(above) {
+                        self.pour_water(from, BucketUse { slot, under, above, body });
+                    }
+                    return;
+                }
                 // A door item places a door (it isn't a node itself).
                 if let Some(door) = wielded.filter(|_| slot < HOTBAR_SIZE).and_then(|s| doors::door_item(s.id)) {
                     let place = DoorPlace { under, above, look: look_dir(pitch, yaw), slot };
@@ -1802,9 +1818,10 @@ impl Server {
                     return;
                 };
                 let id = stack.id;
-                // Air, or an apple mark (buildable_to: placing replaces it).
+                // Air, water, or an apple mark (buildable_to: placing
+                // replaces it).
                 let target = self.world.node(node_pos(above));
-                let free = target == world::CONTENT_AIR || content::is_mark(target);
+                let free = content::buildable_to(target);
                 let support = self.world.node(node_pos(under));
                 // A slab on the open face of the same kind of slab makes a
                 // full block where that slab was. The client predicted a
@@ -1925,8 +1942,8 @@ impl Server {
     fn place_door(&mut self, from: SocketAddr, door: &'static Door, at: DoorPlace) {
         let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
         let node_pos = |p: [i16; 3]| (p[0] as i32, p[1] as i32, p[2] as i32);
-        let free = |id: u16| id == world::CONTENT_AIR || content::is_mark(id);
-        let pos = if content::is_mark(self.world.node(node_pos(at.under))) { at.under } else { at.above };
+        let free = content::buildable_to;
+        let pos = if free(self.world.node(node_pos(at.under))) { at.under } else { at.above };
         let top = [pos[0], pos[1] + 1, pos[2]];
         if !free(self.world.node(node_pos(pos))) || !free(self.world.node(node_pos(top))) {
             info!("{name}: no room for a door at {pos:?}");
@@ -2051,6 +2068,68 @@ impl Server {
 
     /// Left-click with a usable item: eating an apple restores 2 HP
     /// (minetest_game's item_eat(2): one is used up even at full health).
+    /// An empty bucket used on a water source (the bucket mod's on_use):
+    /// the water goes into the bucket, leaving air. With a stack of empty
+    /// buckets, the full one goes into the inventory (or is dropped if it
+    /// doesn't fit). Returns whether the wielded item was an empty bucket.
+    fn scoop_water(&mut self, addr: SocketAddr, at: BucketUse) -> bool {
+        let BucketUse { slot, under, body, .. } = at;
+        let Some(peer) = self.peers.get(&addr) else {
+            return false;
+        };
+        let Some(bucket) = peer.inventory.get(slot).filter(|s| slot < HOTBAR_SIZE && s.id == content::ITEM_BUCKET_EMPTY) else {
+            return false;
+        };
+        let name = peer.display_name().to_string();
+        let pos = (under[0] as i32, under[1] as i32, under[2] as i32);
+        let near = (0..3).map(|i| (under[i] as f32 - body[i]).powi(2)).sum::<f32>().sqrt() <= MAX_INTERACT_DISTANCE;
+        if self.world.node(pos) != content::CONTENT_WATER || !near {
+            return true;
+        }
+        info!("{name} scooped up water at {under:?}");
+        self.world.set_node(pos, world::CONTENT_AIR, 0);
+        self.broadcast_node(under, &build_removenode(under));
+        let full = Stack::new(content::ITEM_BUCKET_WATER, 1);
+        let mut dropped = false;
+        if let Some(peer) = self.peers.get_mut(&addr) {
+            if bucket.count == 1 {
+                peer.inventory.set(slot, Some(full));
+            } else {
+                peer.inventory.take_one(slot);
+                dropped = peer.inventory.add(full) > 0;
+            }
+        }
+        if dropped {
+            self.spawn_item(full, (body, [0.0; 3]));
+        }
+        self.wake_items(pos);
+        self.inventory_changed(addr);
+        true
+    }
+
+    /// A water bucket placed (the bucket mod's on_place): a water source
+    /// in the node pointed at if it can be built into (such as water),
+    /// otherwise in the one in front of it, which must be. The bucket is
+    /// left empty.
+    fn pour_water(&mut self, addr: SocketAddr, at: BucketUse) {
+        let BucketUse { slot, under, above, .. } = at;
+        let node_pos = |p: [i16; 3]| (p[0] as i32, p[1] as i32, p[2] as i32);
+        let pos = if content::buildable_to(self.world.node(node_pos(under))) { under } else { above };
+        if !content::buildable_to(self.world.node(node_pos(pos))) {
+            self.resend_node(addr, pos);
+            return;
+        }
+        let name = self.peers.get(&addr).map(|p| p.display_name().to_string()).unwrap_or_default();
+        info!("{name} poured water at {pos:?}");
+        self.edit_event(&name, "placed", content::CONTENT_WATER);
+        self.world.set_node(node_pos(pos), content::CONTENT_WATER, 0);
+        self.broadcast_node(pos, &build_addnode(pos, content::CONTENT_WATER, 0));
+        if let Some(peer) = self.peers.get_mut(&addr) {
+            peer.inventory.set(slot, Some(Stack::new(content::ITEM_BUCKET_EMPTY, 1)));
+        }
+        self.inventory_changed(addr);
+    }
+
     fn use_item(&mut self, addr: SocketAddr, slot: usize) {
         let Some(peer) = self.peers.get_mut(&addr) else {
             return;
@@ -3473,6 +3552,16 @@ fn look_dir(pitch: f32, yaw: f32) -> [f32; 3] {
     let p = (-pitch).to_radians();
     let y = (yaw + 90.0).to_radians();
     [p.cos() * y.cos(), p.sin(), p.cos() * y.sin()]
+}
+
+/// A bucket used or placed: the hotbar slot holding it, what it pointed at,
+/// and where the player's body is (nodes).
+#[derive(Clone, Copy)]
+struct BucketUse {
+    slot: usize,
+    under: [i16; 3],
+    above: [i16; 3],
+    body: [f32; 3],
 }
 
 /// Where a player puts a door: what they pointed at, where they look, and

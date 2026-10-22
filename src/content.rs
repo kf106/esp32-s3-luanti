@@ -79,6 +79,9 @@ pub enum Kind {
     /// A trapdoor (doors.rs), closed or open: a panel (nodebox) turned by
     /// facedir, opened and closed with a right-click.
     Trapdoor,
+    /// Water: see-through, swum in, built into, not pointed at (except
+    /// with a bucket). Light passes, dimming, as through leaves.
+    Liquid,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -122,6 +125,10 @@ pub const CONTENT_STEEL_BLOCK: u16 = 37;
 pub const CONTENT_GLASS: u16 = 38;
 pub const CONTENT_LADDER_WOOD: u16 = 39;
 pub const CONTENT_LADDER_STEEL: u16 = 40;
+/// Water (minetest_game's water_source and water_flowing), after the
+/// stairs, doors and trapdoors.
+pub const CONTENT_WATER: u16 = 98;
+pub const CONTENT_WATER_FLOWING: u16 = 99;
 /// Health an apple gives (minetest_game's item_eat(2)).
 pub const APPLE_HP: u16 = 2;
 /// Leaves give a sapling one time in this many (minetest_game's rarity).
@@ -140,6 +147,9 @@ pub const ITEM_STEEL_INGOT: u16 = 0x1003;
 pub const ITEM_DOOR_WOOD: u16 = 0x1004;
 pub const ITEM_DOOR_STEEL: u16 = 0x1005;
 pub const ITEM_DOOR_GLASS: u16 = 0x1006;
+/// minetest_game's buckets.
+pub const ITEM_BUCKET_EMPTY: u16 = 0x1007;
+pub const ITEM_BUCKET_WATER: u16 = 0x1008;
 /// Tools have ids from 0x2000 up.
 pub const TOOL_PICK_WOOD: u16 = 0x2000;
 pub const TOOL_PICK_STONE: u16 = 0x2001;
@@ -789,7 +799,34 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Trapdoor,
     },
+    // minetest_game's water (CC BY-SA 3.0, see media/LICENSE-items.txt).
+    // Still water only, so far: the flowing node is there for the client,
+    // which draws a source's edges by it.
+    Node {
+        id: CONTENT_WATER,
+        name: "esp:water_source",
+        description: "Water Source",
+        tiles: [WATER_SOURCE_TILE; 6],
+        groups: &[("water", 3), ("liquid", 3), ("cools_lava", 1)],
+        drop: CONTENT_WATER,
+        drop_count: 0,
+        kind: Kind::Liquid,
+    },
+    Node {
+        id: CONTENT_WATER_FLOWING,
+        name: "esp:water_flowing",
+        description: "Flowing Water",
+        tiles: ["default_water.png"; 6],
+        groups: &[("water", 3), ("liquid", 3), ("not_in_creative_inventory", 1), ("cools_lava", 1)],
+        drop: CONTENT_WATER_FLOWING,
+        drop_count: 0,
+        kind: Kind::Liquid,
+    },
 ];
+
+/// minetest_game's water textures: 16 frames one above another.
+const WATER_SOURCE_TILE: &str = "default_water_source_animated.png";
+const WATER_FLOWING_TILE: &str = "default_water_flowing_animated.png";
 
 // Saplings, from leaves (one time in SAPLING_RARITY), as minetest_game's
 // aspen and pine saplings, with their pictures (CC BY-SA 3.0, see
@@ -955,6 +992,22 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Glass Door",
         image: "doors_item_glass.png",
         groups: &[("cracky", 3), ("oddly_breakable_by_hand", 3)],
+    },
+    // minetest_game's buckets (bucket mod; CC BY-SA 3.0, see
+    // media/LICENSE-items.txt).
+    CraftItem {
+        id: ITEM_BUCKET_EMPTY,
+        name: "esp:bucket_empty",
+        description: "Empty Bucket",
+        image: "bucket.png",
+        groups: &[("tool", 1)],
+    },
+    CraftItem {
+        id: ITEM_BUCKET_WATER,
+        name: "esp:bucket_water",
+        description: "Water Bucket",
+        image: "bucket_water.png",
+        groups: &[("tool", 1), ("water_bucket", 1)],
     },
 ];
 
@@ -1289,7 +1342,18 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid))
+}
+
+/// Whether a node is water (or another liquid).
+pub fn is_liquid(id: u16) -> bool {
+    def(id).is_some_and(|n| n.kind == Kind::Liquid)
+}
+
+/// Whether placing a node can replace this one (builtin's buildable_to):
+/// air, an apple mark, or water.
+pub fn buildable_to(id: u16) -> bool {
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid))
 }
 
 /// Whether direct sunlight carries on down through a node at full
@@ -1450,7 +1514,14 @@ pub fn is_item(id: u16) -> bool {
 /// How many of an item fit in one inventory slot: 99 (Luanti's default),
 /// or 1 for tools.
 pub fn stack_max(id: u16) -> u16 {
-    if is_tool(id) { 1 } else { 99 }
+    // A full bucket doesn't stack (minetest_game's stack_max = 1).
+    if is_tool(id) || id == ITEM_BUCKET_WATER { 1 } else { 99 }
+}
+
+/// Whether an item points at liquids, as buckets do: then the client
+/// points at water rather than through it.
+fn liquids_pointable(id: u16) -> bool {
+    matches!(id, ITEM_BUCKET_EMPTY | ITEM_BUCKET_WATER)
 }
 
 /// Whether an item can be placed as a node.
@@ -1642,6 +1713,15 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("doors_trapdoor_side.png", include_bytes!("../media/doors_trapdoor_side.png")),
     ("doors_trapdoor_steel.png", include_bytes!("../media/doors_trapdoor_steel.png")),
     ("doors_trapdoor_steel_side.png", include_bytes!("../media/doors_trapdoor_steel_side.png")),
+    // minetest_game's water and buckets (see media/LICENSE-items.txt).
+    ("default_water_source_animated.png", include_bytes!("../media/default_water_source_animated.png")),
+    ("default_water_flowing_animated.png", include_bytes!("../media/default_water_flowing_animated.png")),
+    ("default_water.png", include_bytes!("../media/default_water.png")),
+    ("default_water_footstep.1.ogg", include_bytes!("../media/default_water_footstep.1.ogg")),
+    ("default_water_footstep.2.ogg", include_bytes!("../media/default_water_footstep.2.ogg")),
+    ("default_water_footstep.3.ogg", include_bytes!("../media/default_water_footstep.3.ogg")),
+    ("bucket.png", include_bytes!("../media/bucket.png")),
+    ("bucket_water.png", include_bytes!("../media/bucket_water.png")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -1670,6 +1750,7 @@ struct Item<'a> {
     groups: &'a [(&'a str, i16)],
     /// Left-click uses it (an apple is eaten) instead of digging.
     usable: bool,
+    liquids_pointable: bool,
 }
 
 /// Serialised ToolCapabilities (version 5, protocol >= 38).
@@ -1776,6 +1857,13 @@ fn sounds_of(id: u16) -> Sounds {
         id if doors::trapdoor_of(id).is_some() => sounds_of(CONTENT_STEEL_BLOCK),
         id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_GLASS) => sounds_of(CONTENT_GLASS),
         id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_STEEL) => sounds_of(CONTENT_STEEL_BLOCK),
+        // minetest_game's node_sound_water_defaults.
+        CONTENT_WATER | CONTENT_WATER_FLOWING => Sounds {
+            footstep: ("default_water_footstep", 0.2),
+            dig: ("default_dig_dig_immediate", 0.5),
+            dug: ("default_dug_node", 0.25),
+            place: ("default_place_node_hard", 1.0),
+        },
         CONTENT_STEEL_BLOCK | CONTENT_LADDER_STEEL => Sounds {
             footstep: ("default_metal_footstep", 0.2),
             dig: ("default_dig_metal", 0.5),
@@ -1814,7 +1902,7 @@ fn serialize_item(item: &Item) -> Vec<u8> {
     }
     w.i16(item.stack_max as i16)
         .u8(item.usable as u8)
-        .u8(0) // liquids_pointable
+        .u8(item.liquids_pointable as u8)
         .bytes16(&item.tool_capabilities)
         .u16(item.groups.len() as u16);
     for (group, rating) in item.groups {
@@ -1854,6 +1942,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
         stack_max: 99,
         groups: &[],
         usable: false,
+        liquids_pointable: false,
     }];
     for n in NODES {
         items.push(Item {
@@ -1880,6 +1969,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             stack_max: stack_max(n.id),
             groups: n.groups,
             usable: n.kind == Kind::Apple,
+            liquids_pointable: false,
         });
     }
     for c in CRAFTITEMS {
@@ -1895,7 +1985,9 @@ pub fn itemdef_bytes() -> Vec<u8> {
             place_sound: ("", 1.0),
             stack_max: stack_max(c.id),
             groups: c.groups,
-            usable: false,
+            // The empty bucket is used (left-click) to scoop water.
+            usable: c.id == ITEM_BUCKET_EMPTY,
+            liquids_pointable: liquids_pointable(c.id),
         });
     }
     for t in TOOLS {
@@ -1912,6 +2004,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             stack_max: stack_max(t.id),
             groups: t.groups,
             usable: false,
+            liquids_pointable: false,
         });
     }
 
@@ -1943,6 +2036,14 @@ const NDT_SIGNLIKE: u8 = 8;
 const NDT_GLASSLIKE_FRAMED_OPTIONAL: u8 = 15;
 const NODEBOX_FIXED: u8 = 1;
 const NDT_NODEBOX: u8 = 12;
+const NDT_LIQUID: u8 = 2;
+const NDT_FLOWINGLIQUID: u8 = 3;
+const CPT2_FLOWINGLIQUID: u8 = 2;
+const ALPHAMODE_BLEND: u8 = 0;
+const LIQUID_FLOWING: u8 = 1;
+const LIQUID_SOURCE: u8 = 2;
+/// minetest_game's water colour under the surface: ARGB.
+const WATER_POST_EFFECT: u32 = 0x671E_3C5A;
 const TILE_FLAG_HAS_ALIGN_STYLE: u16 = 1 << 5;
 const ALIGN_STYLE_WORLD: u8 = 1;
 const TILE_FLAG_TILEABLE_HORIZONTAL: u16 = 1 << 1;
@@ -1966,6 +2067,8 @@ fn animation_length(tile: &str) -> Option<f32> {
     match tile {
         TORCH_TILE => Some(TORCH_FRAMES_LENGTH),
         FURNACE_ACTIVE_TILE => Some(1.5),
+        WATER_SOURCE_TILE => Some(2.0),
+        WATER_FLOWING_TILE => Some(0.5),
         _ => None,
     }
 }
@@ -2077,6 +2180,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let door = doors::door_of(n.id).map(|(d, _)| d);
     let hidden = n.kind == Kind::DoorHidden;
     let trapdoor = doors::trapdoor_of(n.id);
+    let liquid = n.kind == Kind::Liquid;
+    let flowing = n.id == CONTENT_WATER_FLOWING;
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -2092,6 +2197,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else if sapling || mark {
         w.u8(CPT_LIGHT).u8(0);
+    } else if liquid {
+        w.u8(CPT_LIGHT).u8(if flowing { CPT2_FLOWINGLIQUID } else { 0 });
     } else if shaped.is_some() || door.is_some() || hidden || trapdoor.is_some() {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else {
@@ -2113,6 +2220,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Door => (NDT_MESH, doors::mesh_of(n.id)),
         Kind::DoorHidden => (NDT_AIRLIKE, ""),
         Kind::Trapdoor => (NDT_NODEBOX, ""),
+        Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
+        Kind::Liquid => (NDT_LIQUID, ""),
     };
     w.u8(drawtype).string16(mesh).f32(1.0); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
@@ -2132,7 +2241,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         TILE_FLAG_BACKFACE_CULLING
     };
     w.u8(6);
-    for t in n.tiles {
+    for (i, t) in n.tiles.iter().copied().enumerate() {
+        // minetest_game's water: the first tile drawn from both sides, the
+        // rest from the front.
+        let flags = if liquid { if i == 0 { 0 } else { TILE_FLAG_BACKFACE_CULLING } } else { flags };
         match animation_length(t) {
             Some(length) => animated_tile(&mut w, t, flags, length),
             // Stairs of stone and the like continue their block's texture
@@ -2147,23 +2259,29 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         tile(&mut w, "", flags); // overlay tiles
     }
     w.u8(6);
-    for _ in 0..6 {
-        tile(&mut w, "", flags); // special tiles
+    for i in 0..6 {
+        // Flowing water's two surfaces (top, then sides), which the client
+        // draws flowing liquids with.
+        match i {
+            0 if flowing => animated_tile(&mut w, WATER_FLOWING_TILE, 0, 0.5),
+            1 if flowing => animated_tile(&mut w, WATER_FLOWING_TILE, TILE_FLAG_BACKFACE_CULLING, 0.5),
+            _ => tile(&mut w, "", flags), // special tiles
+        }
     }
     w.u8(255) // legacy alpha: opaque
         .u8(255)
         .u8(255)
         .u8(255) // colour
         .string16("") // palette
-        .u8(0) // waving
+        .u8(if liquid { 3 } else { 0 }) // waving: liquids ripple
         .u8(0) // connect_sides
         .u16(0) // connects_to
-        .u32(0) // post_effect_color (ARGB)
+        .u32(if liquid { WATER_POST_EFFECT } else { 0 }) // post_effect_color (ARGB)
         .u8(0); // leveled
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some()) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid) as u8) // light_propagates
         .u8((torch || sapling || mark || glass || ladder || doorway) as u8) // sunlight_propagates
         .u8(light_source(n.id));
 
@@ -2174,22 +2292,33 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // The hidden door node is walkable, as minetest_game's (falling nodes
     // stop on it), though its collision box is tiny.
     w.u8((walkable(n.id) || hidden) as u8) // walkable
-        .u8(if mark || hidden { 0 } else { POINTABLE })
-        .u8(!(mark || hidden) as u8) // diggable
+        .u8(if mark || hidden || liquid { 0 } else { POINTABLE })
+        .u8(!(mark || hidden || liquid) as u8) // diggable
         .u8(ladder as u8) // climbable
-        .u8(mark as u8) // buildable_to
+        .u8((mark || liquid) as u8) // buildable_to
         .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor) as u8) // rightclickable
         .u32(0); // damage_per_second
 
     // liquid
-    w.u8(0) // liquid_type: none
-        .string16("")
-        .string16("")
-        .u8(0) // viscosity
-        .u8(1) // renewable
-        .u8(8) // range
-        .u8(0) // drowning
-        .u8(0); // floodable
+    if liquid {
+        w.u8(if flowing { LIQUID_FLOWING } else { LIQUID_SOURCE })
+            .string16("esp:water_flowing")
+            .string16("esp:water_source")
+            .u8(1) // viscosity
+            .u8(1) // renewable
+            .u8(8) // range
+            .u8(1) // drowning
+            .u8(0); // floodable
+    } else {
+        w.u8(0) // liquid_type: none
+            .string16("")
+            .string16("")
+            .u8(0) // viscosity
+            .u8(1) // renewable
+            .u8(8) // range
+            .u8(0) // drowning
+            .u8(0); // floodable
+    }
 
     match (shaped, trapdoor) {
         (Some((shape, _)), _) => fixed_nodebox(&mut w, shape.boxes()), // node_box
@@ -2241,9 +2370,16 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // that it went (minetest_game's node_dig_prediction = "").
     w.string16(if doors::is_locked(n.id) { "" } else { "air" }) // node_dig_prediction
         .u8(LEVELED_MAX)
-        .u8(if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() { ALPHAMODE_CLIP } else { ALPHAMODE_OPAQUE })
-        .u8(0) // move_resistance
-        .u8(0) // liquid_move_physics
+        .u8(if liquid {
+            ALPHAMODE_BLEND
+        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() {
+            ALPHAMODE_CLIP
+        } else {
+            ALPHAMODE_OPAQUE
+        })
+        // Swimming: water slows you as its viscosity says.
+        .u8(liquid as u8) // move_resistance
+        .u8(liquid as u8) // liquid_move_physics
         .u8(0); // post_effect_color_shaded
     w.into_inner()
 }
@@ -2324,5 +2460,26 @@ impl Media {
 
     pub fn get(&self, name: &str) -> Option<&MediaFile> {
         self.files.iter().find(|f| f.name == name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Nodes are listed in id order without gaps, so `def` finds a node by
+    /// indexing (ids 125 to 127 are Luanti's own, so the list must stop
+    /// short of them, or skip them).
+    #[test]
+    fn node_ids_in_order() {
+        for (i, n) in NODES.iter().enumerate() {
+            assert_eq!(n.id as usize, i, "{} is out of place", n.name);
+        }
+        assert!(NODES.len() <= 125);
+        assert!(is_liquid(CONTENT_WATER) && passes_light(CONTENT_WATER) && !passes_sunlight(CONTENT_WATER));
+        assert!(buildable_to(CONTENT_WATER) && buildable_to(crate::world::CONTENT_AIR) && !buildable_to(CONTENT_STONE));
+        assert!(!walkable(CONTENT_WATER));
+        assert_eq!(stack_max(ITEM_BUCKET_WATER), 1);
+        assert_eq!(stack_max(ITEM_BUCKET_EMPTY), 99);
     }
 }

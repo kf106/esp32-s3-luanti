@@ -88,6 +88,13 @@ pub const RECIPES: &[Recipe] = &[
     // ingots 1.
     Recipe { width: 3, pattern: &[G("wood"); 6], output: crate::doors::FIRST_TRAPDOOR, count: 2 },
     Recipe { width: 2, pattern: &[I(ITEM_STEEL_INGOT); 4], output: crate::doors::FIRST_TRAPDOOR + 2, count: 1 },
+    // A bucket: three steel ingots in a V (bucket mod).
+    Recipe {
+        width: 3,
+        pattern: &[I(ITEM_STEEL_INGOT), E, I(ITEM_STEEL_INGOT), E, I(ITEM_STEEL_INGOT), E],
+        output: ITEM_BUCKET_EMPTY,
+        count: 1,
+    },
     // A ring of stone (furnace.lua).
     Recipe {
         width: 3,

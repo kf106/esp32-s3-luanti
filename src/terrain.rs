@@ -185,9 +185,21 @@ pub fn column(x: i32, z: i32) -> Column {
     } else {
         Biome::Grassland
     };
-    let entrance = noise2(fx / 90.0, fz / 90.0, SEED_ENTRANCE) > 0.55;
+    // No cave mouths under water.
+    let entrance = height > WATER_LEVEL && noise2(fx / 90.0, fz / 90.0, SEED_ENTRANCE) > 0.55;
     let cave_top = if entrance { height } else { height - 4 };
     Column { height, biome, cave_top }
+}
+
+/// Lakes and ponds fill low ground with still water up to this height
+/// (Luanti's default water_level). About an eighth of the land is under
+/// it, mostly a few nodes deep.
+pub const WATER_LEVEL: i32 = 1;
+
+/// Whether the generated node at height y is lake water: above the ground
+/// and not above the water level.
+pub fn is_lake(y: i32, col: &Column) -> bool {
+    y > col.height && y <= WATER_LEVEL
 }
 
 /// The layered node at height y, before caves and ores.
@@ -195,6 +207,14 @@ fn layer(y: i32, col: &Column) -> u16 {
     let depth = col.height - y; // 0 at the surface
     if depth < 0 {
         return CONTENT_AIR;
+    }
+    // Lake beds and shores are sand, as Minetest Game's beaches.
+    if col.height <= WATER_LEVEL && col.biome != Biome::Desert {
+        return match depth {
+            0..=1 => CONTENT_SAND,
+            2..=3 => CONTENT_DIRT,
+            _ => CONTENT_STONE,
+        };
     }
     match col.biome {
         Biome::Grassland => match depth {
@@ -486,7 +506,8 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
     let z = cz * TREE_CELL + ((h >> 8) % TREE_CELL as u32) as i32;
     let col = column(x, z);
     // At a cave entrance the ground may be hollowed out.
-    if col.cave_top >= col.height || col.height >= TREE_LINE {
+    // Nor in lakes or on their sandy shores.
+    if col.cave_top >= col.height || col.height >= TREE_LINE || col.height <= WATER_LEVEL {
         return None;
     }
     let kind = match col.biome {
