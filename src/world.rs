@@ -119,7 +119,9 @@ impl BlockColumn {
         let open = || {
             let col = &self.columns[i];
             if y <= terrain::WATER_LEVEL {
-                content::CONTENT_WATER
+                terrain::lake_node(y, col)
+            } else if y == terrain::WATER_LEVEL + 1 && col.height < terrain::WATER_LEVEL {
+                terrain::lily_on(x, z, col).unwrap_or(CONTENT_AIR)
             } else if y == col.height + 1 {
                 terrain::plant_on(x, z, col).unwrap_or(CONTENT_AIR)
             } else {
@@ -536,7 +538,7 @@ impl World {
     fn touches_water(&self, p: NodePos) -> bool {
         [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
             .iter()
-            .any(|d| farming::is_water(self.node((p.0 + d.0, p.1 + d.1, p.2 + d.2))))
+            .any(|d| content::group_of(self.node((p.0 + d.0, p.1 + d.1, p.2 + d.2)), "cools_lava") > 0)
     }
 
     /// Lava that touched water when it was noted and still does. The

@@ -5,6 +5,7 @@
 //! Each crafting uses up one item from every filled cell.
 
 use crate::content::{self, *};
+use crate::colours;
 use crate::farming;
 use crate::fences;
 use crate::plants;
@@ -69,12 +70,57 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 3, pattern: &[I(CONTENT_STONE); 9], output: CONTENT_STONE_BLOCK, count: 9 },
     Recipe { width: 2, pattern: &[I(CONTENT_SANDSTONE); 4], output: CONTENT_SANDSTONE_BRICK, count: 4 },
     Recipe { width: 3, pattern: &[I(CONTENT_SANDSTONE); 9], output: CONTENT_SANDSTONE_BLOCK, count: 9 },
+    // The same for desert stone and the desert and silver sandstones, which
+    // come from four sand as sandstone does (crafting.lua).
+    Recipe { width: 2, pattern: &[I(CONTENT_DESERT_STONE); 4], output: CONTENT_DESERT_STONE_BRICK, count: 4 },
+    Recipe { width: 3, pattern: &[I(CONTENT_DESERT_STONE); 9], output: CONTENT_DESERT_STONE_BLOCK, count: 9 },
+    Recipe { width: 2, pattern: &[I(CONTENT_DESERT_SAND); 4], output: CONTENT_DESERT_SANDSTONE, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_DESERT_SANDSTONE)], output: CONTENT_DESERT_SAND, count: 4 },
+    Recipe { width: 2, pattern: &[I(CONTENT_DESERT_SANDSTONE); 4], output: CONTENT_DESERT_SANDSTONE_BRICK, count: 4 },
+    Recipe { width: 3, pattern: &[I(CONTENT_DESERT_SANDSTONE); 9], output: CONTENT_DESERT_SANDSTONE_BLOCK, count: 9 },
+    Recipe { width: 2, pattern: &[I(CONTENT_SILVER_SAND); 4], output: CONTENT_SILVER_SANDSTONE, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_SILVER_SANDSTONE)], output: CONTENT_SILVER_SAND, count: 4 },
+    Recipe { width: 2, pattern: &[I(CONTENT_SILVER_SANDSTONE); 4], output: CONTENT_SILVER_SANDSTONE_BRICK, count: 4 },
+    Recipe { width: 3, pattern: &[I(CONTENT_SILVER_SANDSTONE); 9], output: CONTENT_SILVER_SANDSTONE_BLOCK, count: 9 },
+    // Clay: four lumps to a block, and back; four bricks to a brick block,
+    // and back.
+    Recipe { width: 2, pattern: &[I(ITEM_CLAY_LUMP); 4], output: CONTENT_CLAY, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_CLAY)], output: ITEM_CLAY_LUMP, count: 4 },
+    Recipe { width: 2, pattern: &[I(ITEM_CLAY_BRICK); 4], output: CONTENT_BRICK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_BRICK)], output: ITEM_CLAY_BRICK, count: 4 },
+    // Snow: nine layers make a block, a block nine layers.
+    Recipe { width: 3, pattern: &[I(CONTENT_SNOW_LAYER); 9], output: CONTENT_SNOW_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_SNOW_BLOCK)], output: CONTENT_SNOW_LAYER, count: 9 },
+    // Obsidian: nine shards, and back; bricks and blocks.
+    Recipe { width: 3, pattern: &[I(ITEM_OBSIDIAN_SHARD); 9], output: CONTENT_OBSIDIAN, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_OBSIDIAN)], output: ITEM_OBSIDIAN_SHARD, count: 9 },
+    Recipe { width: 2, pattern: &[I(CONTENT_OBSIDIAN); 4], output: CONTENT_OBSIDIAN_BRICK, count: 4 },
+    Recipe { width: 3, pattern: &[I(CONTENT_OBSIDIAN); 9], output: CONTENT_OBSIDIAN_BLOCK, count: 9 },
     // Nine lumps or ingots to a block, and back (crafting.lua,
     // craftitems.lua).
     Recipe { width: 3, pattern: &[I(ITEM_COAL_LUMP); 9], output: CONTENT_COAL_BLOCK, count: 1 },
     Recipe { width: 1, pattern: &[I(CONTENT_COAL_BLOCK)], output: ITEM_COAL_LUMP, count: 9 },
     Recipe { width: 3, pattern: &[I(ITEM_STEEL_INGOT); 9], output: CONTENT_STEEL_BLOCK, count: 1 },
     Recipe { width: 1, pattern: &[I(CONTENT_STEEL_BLOCK)], output: ITEM_STEEL_INGOT, count: 9 },
+    Recipe { width: 3, pattern: &[I(ITEM_COPPER_INGOT); 9], output: CONTENT_COPPER_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_COPPER_BLOCK)], output: ITEM_COPPER_INGOT, count: 9 },
+    Recipe { width: 3, pattern: &[I(ITEM_TIN_INGOT); 9], output: CONTENT_TIN_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_TIN_BLOCK)], output: ITEM_TIN_INGOT, count: 9 },
+    Recipe { width: 3, pattern: &[I(ITEM_BRONZE_INGOT); 9], output: CONTENT_BRONZE_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_BRONZE_BLOCK)], output: ITEM_BRONZE_INGOT, count: 9 },
+    Recipe { width: 3, pattern: &[I(ITEM_GOLD_INGOT); 9], output: CONTENT_GOLD_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_GOLD_BLOCK)], output: ITEM_GOLD_INGOT, count: 9 },
+    Recipe { width: 3, pattern: &[I(ITEM_DIAMOND); 9], output: CONTENT_DIAMOND_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_DIAMOND_BLOCK)], output: ITEM_DIAMOND, count: 9 },
+    Recipe { width: 3, pattern: &[I(ITEM_MESE_CRYSTAL); 9], output: CONTENT_MESE_BLOCK, count: 1 },
+    Recipe { width: 1, pattern: &[I(CONTENT_MESE_BLOCK)], output: ITEM_MESE_CRYSTAL, count: 9 },
+    // Nine mese fragments make a crystal, and a crystal breaks into nine.
+    Recipe { width: 3, pattern: &[I(ITEM_MESE_FRAGMENT); 9], output: ITEM_MESE_CRYSTAL, count: 1 },
+    Recipe { width: 1, pattern: &[I(ITEM_MESE_CRYSTAL)], output: ITEM_MESE_FRAGMENT, count: 9 },
+    // A mese lamp: glass over a mese crystal.
+    Recipe { width: 1, pattern: &[I(CONTENT_GLASS), I(ITEM_MESE_CRYSTAL)], output: CONTENT_MESE_LAMP, count: 1 },
+    // Bronze: eight copper ingots round a tin one make nine.
+    Recipe { width: 3, pattern: &ring(I(ITEM_COPPER_INGOT), I(ITEM_TIN_INGOT)), output: ITEM_BRONZE_INGOT, count: 9 },
     // Ladders: an H of sticks makes 5, of steel ingots 15.
     Recipe { width: 3, pattern: &ladder(G("stick")), output: CONTENT_LADDER_WOOD, count: 5 },
     Recipe { width: 3, pattern: &ladder(I(ITEM_STEEL_INGOT)), output: CONTENT_LADDER_STEEL, count: 15 },
@@ -91,6 +137,19 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &shovel(I(ITEM_STEEL_INGOT)), output: TOOL_SHOVEL_STEEL, count: 1 },
     Recipe { width: 2, pattern: &axe(I(ITEM_STEEL_INGOT)), output: TOOL_AXE_STEEL, count: 1 },
     Recipe { width: 1, pattern: &sword(I(ITEM_STEEL_INGOT)), output: TOOL_SWORD_STEEL, count: 1 },
+    // Bronze, mese and diamond tools, the same shapes.
+    Recipe { width: 3, pattern: &pick(I(ITEM_BRONZE_INGOT)), output: TOOL_PICK_BRONZE, count: 1 },
+    Recipe { width: 1, pattern: &shovel(I(ITEM_BRONZE_INGOT)), output: TOOL_SHOVEL_BRONZE, count: 1 },
+    Recipe { width: 2, pattern: &axe(I(ITEM_BRONZE_INGOT)), output: TOOL_AXE_BRONZE, count: 1 },
+    Recipe { width: 1, pattern: &sword(I(ITEM_BRONZE_INGOT)), output: TOOL_SWORD_BRONZE, count: 1 },
+    Recipe { width: 3, pattern: &pick(I(ITEM_MESE_CRYSTAL)), output: TOOL_PICK_MESE, count: 1 },
+    Recipe { width: 1, pattern: &shovel(I(ITEM_MESE_CRYSTAL)), output: TOOL_SHOVEL_MESE, count: 1 },
+    Recipe { width: 2, pattern: &axe(I(ITEM_MESE_CRYSTAL)), output: TOOL_AXE_MESE, count: 1 },
+    Recipe { width: 1, pattern: &sword(I(ITEM_MESE_CRYSTAL)), output: TOOL_SWORD_MESE, count: 1 },
+    Recipe { width: 3, pattern: &pick(I(ITEM_DIAMOND)), output: TOOL_PICK_DIAMOND, count: 1 },
+    Recipe { width: 1, pattern: &shovel(I(ITEM_DIAMOND)), output: TOOL_SHOVEL_DIAMOND, count: 1 },
+    Recipe { width: 2, pattern: &axe(I(ITEM_DIAMOND)), output: TOOL_AXE_DIAMOND, count: 1 },
+    Recipe { width: 1, pattern: &sword(I(ITEM_DIAMOND)), output: TOOL_SWORD_DIAMOND, count: 1 },
     // Chests: a ring of planks, with a steel ingot in the middle for a
     // locked one (chests.lua).
     Recipe { width: 3, pattern: &ring(G("wood"), E), output: CONTENT_CHEST, count: 1 },
@@ -113,11 +172,11 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(ITEM_COTTON); 2], output: ITEM_STRING, count: 2 },
     Recipe { width: 3, pattern: &[I(ITEM_WHEAT); 9], output: farming::STRAW, count: 3 },
     Recipe { width: 1, pattern: &[I(farming::STRAW)], output: ITEM_WHEAT, count: 3 },
-    // Beds (beds.lua): three wool on three planks; the fancy bed has a
-    // stick on top at the right.
+    // Beds (beds.lua): three wool (of any colour) on three planks; the
+    // fancy bed has a stick on top at the right.
     Recipe {
         width: 3,
-        pattern: &[I(farming::WOOL_WHITE), I(farming::WOOL_WHITE), I(farming::WOOL_WHITE), G("wood"), G("wood"), G("wood")],
+        pattern: &[G("wool"), G("wool"), G("wool"), G("wood"), G("wood"), G("wood")],
         output: crate::beds::BED_BOTTOM,
         count: 1,
     },
@@ -127,9 +186,9 @@ pub const RECIPES: &[Recipe] = &[
             E,
             E,
             I(ITEM_STICK),
-            I(farming::WOOL_WHITE),
-            I(farming::WOOL_WHITE),
-            I(farming::WOOL_WHITE),
+            G("wool"),
+            G("wool"),
+            G("wool"),
             G("wood"),
             G("wood"),
             G("wood"),
@@ -157,6 +216,18 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 3, pattern: &gate(CONTENT_BIRCH_WOOD), output: fences::GATE_BIRCH, count: 1 },
     Recipe { width: 3, pattern: &gate(CONTENT_JUNGLE_WOOD), output: fences::GATE_JUNGLE, count: 1 },
     Recipe { width: 3, pattern: &gate(CONTENT_ACACIA_WOOD), output: fences::GATE_ACACIA, count: 1 },
+    // A flower gives four of its dye; coal four black, blueberries two
+    // violet (dye/init.lua).
+    Recipe { width: 1, pattern: &[I(colours::FIRST_FLOWER + 0)], output: colours::dye(colours::FLOWERS[0].2), count: 4 },
+    Recipe { width: 1, pattern: &[I(colours::FIRST_FLOWER + 1)], output: colours::dye(colours::FLOWERS[1].2), count: 4 },
+    Recipe { width: 1, pattern: &[I(colours::FIRST_FLOWER + 2)], output: colours::dye(colours::FLOWERS[2].2), count: 4 },
+    Recipe { width: 1, pattern: &[I(colours::FIRST_FLOWER + 3)], output: colours::dye(colours::FLOWERS[3].2), count: 4 },
+    Recipe { width: 1, pattern: &[I(colours::FIRST_FLOWER + 4)], output: colours::dye(colours::FLOWERS[4].2), count: 4 },
+    Recipe { width: 1, pattern: &[I(colours::FIRST_FLOWER + 5)], output: colours::dye(colours::FLOWERS[5].2), count: 4 },
+    Recipe { width: 1, pattern: &[I(colours::FIRST_FLOWER + 6)], output: colours::dye(colours::FLOWERS[6].2), count: 4 },
+    Recipe { width: 1, pattern: &[I(colours::FIRST_FLOWER + 7)], output: colours::dye(colours::FLOWERS[7].2), count: 4 },
+    Recipe { width: 1, pattern: &[I(ITEM_COAL_LUMP)], output: colours::dye(colours::BLACK), count: 4 },
+    Recipe { width: 1, pattern: &[I(ITEM_BLUEBERRIES)], output: colours::dye(colours::VIOLET), count: 2 },
     // A bucket: three steel ingots in a V (bucket mod).
     Recipe {
         width: 3,
@@ -178,9 +249,15 @@ pub const RECIPES: &[Recipe] = &[
 pub fn cook_result(id: u16) -> Option<(u16, f32)> {
     match id {
         ITEM_IRON_LUMP => Some((ITEM_STEEL_INGOT, 3.0)),
+        ITEM_COPPER_LUMP => Some((ITEM_COPPER_INGOT, 3.0)),
+        ITEM_TIN_LUMP => Some((ITEM_TIN_INGOT, 3.0)),
+        ITEM_GOLD_LUMP => Some((ITEM_GOLD_INGOT, 3.0)),
         CONTENT_COBBLE => Some((CONTENT_STONE, 3.0)),
+        CONTENT_DESERT_COBBLE => Some((CONTENT_DESERT_STONE, 3.0)),
         // group:sand: glass.
-        CONTENT_SAND => Some((CONTENT_GLASS, 3.0)),
+        CONTENT_SAND | CONTENT_DESERT_SAND | CONTENT_SILVER_SAND => Some((CONTENT_GLASS, 3.0)),
+        ITEM_CLAY_LUMP => Some((ITEM_CLAY_BRICK, 3.0)),
+        ITEM_OBSIDIAN_SHARD => Some((CONTENT_OBSIDIAN_GLASS, 3.0)),
         // farming: flour bakes into bread, slowly.
         ITEM_FLOUR => Some((ITEM_BREAD, 15.0)),
         _ => None,
@@ -285,6 +362,42 @@ pub const SHAPELESS: &[Shapeless] = &[
     Shapeless { items: &[I(CONTENT_CHEST), I(ITEM_STEEL_INGOT)], output: CONTENT_CHEST_LOCKED, count: 1 },
     // Four wheat, anyhow, make flour (farming/init.lua).
     Shapeless { items: &[I(ITEM_WHEAT); 4], output: ITEM_FLOUR, count: 1 },
+    // Two dyes, anyhow, make two of a third (dye/init.lua's dye_recipes).
+    Shapeless { items: &[I(colours::dye(colours::RED)), I(colours::dye(colours::BLUE))], output: colours::dye(colours::VIOLET), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::YELLOW)), I(colours::dye(colours::RED))], output: colours::dye(colours::ORANGE), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::YELLOW)), I(colours::dye(colours::BLUE))], output: colours::dye(colours::GREEN), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::YELLOW)), I(colours::dye(colours::VIOLET))], output: colours::dye(colours::DARK_GREY), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::BLUE)), I(colours::dye(colours::ORANGE))], output: colours::dye(colours::DARK_GREY), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::CYAN)), I(colours::dye(colours::YELLOW))], output: colours::dye(colours::GREEN), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::CYAN)), I(colours::dye(colours::MAGENTA))], output: colours::dye(colours::BLUE), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::YELLOW)), I(colours::dye(colours::MAGENTA))], output: colours::dye(colours::RED), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::RED)), I(colours::dye(colours::GREEN))], output: colours::dye(colours::BROWN), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::MAGENTA)), I(colours::dye(colours::BLUE))], output: colours::dye(colours::VIOLET), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::GREEN)), I(colours::dye(colours::BLUE))], output: colours::dye(colours::CYAN), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::PINK)), I(colours::dye(colours::VIOLET))], output: colours::dye(colours::MAGENTA), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::WHITE)), I(colours::dye(colours::BLACK))], output: colours::dye(colours::GREY), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::GREY)), I(colours::dye(colours::BLACK))], output: colours::dye(colours::DARK_GREY), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::GREEN)), I(colours::dye(colours::BLACK))], output: colours::dye(colours::DARK_GREEN), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::ORANGE)), I(colours::dye(colours::BLACK))], output: colours::dye(colours::BROWN), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::WHITE)), I(colours::dye(colours::RED))], output: colours::dye(colours::PINK), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::WHITE)), I(colours::dye(colours::DARK_GREY))], output: colours::dye(colours::GREY), count: 2 },
+    Shapeless { items: &[I(colours::dye(colours::WHITE)), I(colours::dye(colours::DARK_GREEN))], output: colours::dye(colours::GREEN), count: 2 },
+    // Any wool and a dye: wool of the dye's colour (wool/init.lua).
+    Shapeless { items: &[I(colours::dye(colours::WHITE)), G("wool")], output: colours::wool(colours::WHITE), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::GREY)), G("wool")], output: colours::wool(colours::GREY), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::DARK_GREY)), G("wool")], output: colours::wool(colours::DARK_GREY), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::BLACK)), G("wool")], output: colours::wool(colours::BLACK), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::VIOLET)), G("wool")], output: colours::wool(colours::VIOLET), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::BLUE)), G("wool")], output: colours::wool(colours::BLUE), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::CYAN)), G("wool")], output: colours::wool(colours::CYAN), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::DARK_GREEN)), G("wool")], output: colours::wool(colours::DARK_GREEN), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::GREEN)), G("wool")], output: colours::wool(colours::GREEN), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::YELLOW)), G("wool")], output: colours::wool(colours::YELLOW), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::BROWN)), G("wool")], output: colours::wool(colours::BROWN), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::ORANGE)), G("wool")], output: colours::wool(colours::ORANGE), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::RED)), G("wool")], output: colours::wool(colours::RED), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::MAGENTA)), G("wool")], output: colours::wool(colours::MAGENTA), count: 1 },
+    Shapeless { items: &[I(colours::dye(colours::PINK)), G("wool")], output: colours::wool(colours::PINK), count: 1 },
 ];
 
 impl Shapeless {
@@ -563,11 +676,75 @@ mod tests {
     }
 
     #[test]
+    fn ores() {
+        let (cu, sn) = (ITEM_COPPER_INGOT, ITEM_TIN_INGOT);
+        let mut bronze: Vec<(usize, u16, u16)> = (0..9).filter(|&i| i != 4).map(|i| (i, cu, 1)).collect();
+        bronze.push((4, sn, 1));
+        assert_eq!(result(&grid(&bronze)), Some((ITEM_BRONZE_INGOT, 9)));
+        let d = ITEM_DIAMOND;
+        assert_eq!(result(&grid(&[(0, d, 1), (1, d, 1), (2, d, 1), (4, ITEM_STICK, 1), (7, ITEM_STICK, 1)])), Some((TOOL_PICK_DIAMOND, 1)));
+        assert_eq!(result(&grid(&[(4, ITEM_MESE_CRYSTAL, 1)])), Some((ITEM_MESE_FRAGMENT, 9)));
+        let blocks: Vec<(usize, u16, u16)> = (0..9).map(|i| (i, ITEM_GOLD_INGOT, 1)).collect();
+        assert_eq!(result(&grid(&blocks)), Some((CONTENT_GOLD_BLOCK, 1)));
+        assert_eq!(cook_result(ITEM_TIN_LUMP), Some((ITEM_TIN_INGOT, 3.0)));
+        // Digging: a diamond block wants a mese or diamond pickaxe; a steel
+        // one does nothing. Diamond ore gives a diamond.
+        let caps = |t: u16| &content::TOOLS.iter().find(|x| x.id == t).unwrap().caps;
+        assert!(content::dig_params(CONTENT_DIAMOND_BLOCK, caps(TOOL_PICK_STEEL), 0).is_none());
+        assert!(content::dig_params(CONTENT_DIAMOND_BLOCK, caps(TOOL_PICK_DIAMOND), 0).is_some());
+        assert!(content::dig_params(CONTENT_DIAMOND_ORE, caps(TOOL_PICK_STEEL), 0).is_some());
+        assert!(content::dig_params(CONTENT_DIAMOND_ORE, caps(TOOL_PICK_STONE), 0).is_none());
+        assert_eq!(content::drop_of(CONTENT_DIAMOND_ORE), Some((ITEM_DIAMOND, 1)));
+    }
+
+    #[test]
+    fn ground_blocks() {
+        let four = |id: u16| -> Vec<(usize, u16, u16)> { [0, 1, 3, 4].iter().map(|&i| (i, id, 1)).collect() };
+        assert_eq!(result(&grid(&four(ITEM_CLAY_LUMP))), Some((CONTENT_CLAY, 1)));
+        assert_eq!(result(&grid(&four(ITEM_CLAY_BRICK))), Some((CONTENT_BRICK, 1)));
+        assert_eq!(result(&grid(&four(CONTENT_DESERT_SAND))), Some((CONTENT_DESERT_SANDSTONE, 1)));
+        assert_eq!(result(&grid(&four(CONTENT_DESERT_STONE))), Some((CONTENT_DESERT_STONE_BRICK, 4)));
+        let nine: Vec<(usize, u16, u16)> = (0..9).map(|i| (i, CONTENT_SNOW_LAYER, 1)).collect();
+        assert_eq!(result(&grid(&nine)), Some((CONTENT_SNOW_BLOCK, 1)));
+        assert_eq!(cook_result(ITEM_CLAY_LUMP), Some((ITEM_CLAY_BRICK, 3.0)));
+        assert_eq!(cook_result(CONTENT_SILVER_SAND), Some((CONTENT_GLASS, 3.0)));
+        assert_eq!(cook_result(CONTENT_DESERT_COBBLE), Some((CONTENT_DESERT_STONE, 3.0)));
+        assert_eq!(cook_result(ITEM_OBSIDIAN_SHARD), Some((CONTENT_OBSIDIAN_GLASS, 3.0)));
+        // Desert cobblestone is stone for tools and furnaces.
+        let c = CONTENT_DESERT_COBBLE;
+        assert_eq!(result(&grid(&[(0, c, 1), (1, c, 1), (2, c, 1), (4, ITEM_STICK, 1), (7, ITEM_STICK, 1)])), Some((TOOL_PICK_STONE, 1)));
+        assert_eq!(content::drop_of(CONTENT_CLAY), Some((ITEM_CLAY_LUMP, 4)));
+        assert_eq!(burn_time(crate::stairs::BUILDING.first_stair()), 0.0);
+    }
+
+    #[test]
+    fn dyes_and_wool() {
+        assert_eq!(result(&grid(&[(4, colours::flower(0), 1)])), Some((colours::dye(colours::RED), 4)));
+        assert_eq!(result(&grid(&[(0, ITEM_COAL_LUMP, 1)])), Some((colours::dye(colours::BLACK), 4)));
+        // Red and blue, anywhere: violet.
+        let mix = [(0, colours::dye(colours::BLUE), 1), (8, colours::dye(colours::RED), 1)];
+        assert_eq!(result(&grid(&mix)), Some((colours::dye(colours::VIOLET), 2)));
+        // White wool and pink dye: pink wool; that and blue dye: blue wool.
+        let pink = [(3, farming::WOOL_WHITE, 1), (5, colours::dye(colours::PINK), 1)];
+        assert_eq!(result(&grid(&pink)), Some((colours::wool(colours::PINK), 1)));
+        let blue = [(3, colours::wool(colours::PINK), 1), (1, colours::dye(colours::BLUE), 1)];
+        assert_eq!(result(&grid(&blue)), Some((colours::wool(colours::BLUE), 1)));
+        // A bed from mixed wool.
+        let (w, a) = (colours::wool(colours::RED), CONTENT_APPLE_WOOD);
+        let bed = [(3, w, 1), (4, farming::WOOL_WHITE, 1), (5, w, 1), (6, a, 1), (7, a, 1), (8, a, 1)];
+        assert_eq!(result(&grid(&bed)), Some((crate::beds::BED_BOTTOM, 1)));
+    }
+
+    #[test]
     fn uses_one_of_each() {
         let mut g = grid(&[(0, ITEM_COAL_LUMP, 3), (3, ITEM_STICK, 1)]);
         assert_eq!(craft(&mut g), Some((CONTENT_TORCH, 4)));
         assert_eq!(g[0], Some(Stack::new(ITEM_COAL_LUMP, 2)));
         assert_eq!(g[3], None);
-        assert_eq!(craft(&mut g), None);
+        // Coal lumps alone make black dye.
+        assert_eq!(craft(&mut g), Some((colours::dye(colours::BLACK), 4)));
+        assert_eq!(g[0], Some(Stack::new(ITEM_COAL_LUMP, 1)));
+        let mut empty = grid(&[]);
+        assert_eq!(craft(&mut empty), None);
     }
 }

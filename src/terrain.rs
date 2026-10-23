@@ -8,13 +8,18 @@
 //! The noise is gradient (Perlin) noise built from integer hashing and
 //! plain + and *, so it gives identical results on any machine.
 
+use crate::colours;
 use crate::farming;
 use crate::plants;
 use crate::content::{
     self, CONTENT_ACACIA_LEAVES, CONTENT_ACACIA_TREE, CONTENT_APPLE, CONTENT_APPLE_LEAVES, CONTENT_APPLE_TREE, CONTENT_BIRCH_LEAVES,
     CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_DRY_DIRT, CONTENT_DRY_GRASS, CONTENT_FIR_NEEDLES, CONTENT_FIR_TREE, CONTENT_GRASS,
-    CONTENT_IRON, CONTENT_JUNGLE_LEAVES, CONTENT_JUNGLE_TREE, CONTENT_LAVA, CONTENT_LITTER, CONTENT_SAND, CONTENT_SANDSTONE, CONTENT_SNOW,
+    CONTENT_COPPER, CONTENT_DIAMOND_ORE, CONTENT_GOLD, CONTENT_IRON, CONTENT_JUNGLE_LEAVES, CONTENT_MESE_BLOCK, CONTENT_MESE_ORE, CONTENT_TIN, CONTENT_JUNGLE_TREE, CONTENT_LAVA, CONTENT_LITTER, CONTENT_SAND, CONTENT_SNOW,
     CONTENT_STONE,
+};
+use crate::content::{
+    CONTENT_CLAY, CONTENT_CONIFEROUS_LITTER, CONTENT_DESERT_SAND, CONTENT_DESERT_STONE, CONTENT_GRAVEL, CONTENT_ICE, CONTENT_PERMAFROST,
+    CONTENT_PERMAFROST_MOSS, CONTENT_PERMAFROST_STONES, CONTENT_SILVER_SAND, CONTENT_SNOW_LAYER, CONTENT_WATER,
 };
 use crate::world::CONTENT_AIR;
 
@@ -44,6 +49,7 @@ const SEED_LAVA: u32 = 0xB7C8_D9EA;
 const SEED_HUMIDITY: u32 = 0xC3D4_E5F6;
 const SEED_SEABED: u32 = 0x4A5B_6C7D;
 const SEED_SHORE: u32 = 0x8E9F_A0B1;
+const SEED_FLOWERS: u32 = 0xC2D3_E4F5;
 
 /// Deep caves are flooded with lava up to this height, in about half the
 /// land (where the "lava" noise is positive). Between flooded and dry
@@ -62,8 +68,10 @@ const CAVE_WIDTH: f32 = 0.006;
 /// Snow covers everything at or above this height.
 const SNOW_LINE: i32 = 36;
 /// Where hot land turns from savanna to rainforest (wetter) or desert
-/// (drier).
+/// (drier), and cold land from tundra to fir forest or cold desert.
 const HUMID: f32 = 0.1;
+/// Desert stone goes down to here under deserts.
+const DESERT_STONE_BOTTOM: i32 = -256;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Biome {
@@ -74,6 +82,11 @@ pub enum Biome {
     Savanna,
     /// Hot and wet: jungle (minetest_game's rainforest).
     Rainforest,
+    /// Cold and in between: permafrost, moss and stones, no trees
+    /// (minetest_game's tundra).
+    Tundra,
+    /// Cold and dry: silver sand (minetest_game's cold desert).
+    ColdDesert,
 }
 
 /// What is known about a column of nodes before looking at caves and ores.
@@ -87,6 +100,8 @@ pub struct Column {
     pub cave_top: i32,
     /// What deep caves (at or below LAVA_LEVEL) hold here.
     pub deep: Deep,
+    /// Tundra here is mossy rather than stony.
+    pub mossy: bool,
 }
 
 /// What fills caves at or below LAVA_LEVEL.
@@ -224,8 +239,20 @@ pub fn column(x: i32, z: i32) -> Column {
     let temperature = fbm2(fx / 800.0, fz / 800.0, 2, SEED_TEMPERATURE);
     // The hot lands are desert where it's dry, rainforest where it's wet,
     // and savanna in between.
-    let biome = if height >= SNOW_LINE || temperature < -0.18 {
+    // The cold lands are snowy fir forest (taiga) where it's wet, cold
+    // desert where it's dry, and tundra in between; mountain tops are
+    // snowy anywhere.
+    let biome = if height >= SNOW_LINE {
         Biome::Snow
+    } else if temperature < -0.18 {
+        let humidity = fbm2(fx / 700.0, fz / 700.0, 2, SEED_HUMIDITY);
+        if humidity > HUMID {
+            Biome::Snow
+        } else if humidity < -HUMID {
+            Biome::ColdDesert
+        } else {
+            Biome::Tundra
+        }
     } else if temperature > 0.18 {
         let humidity = fbm2(fx / 700.0, fz / 700.0, 2, SEED_HUMIDITY);
         if humidity > HUMID {
@@ -249,7 +276,8 @@ pub fn column(x: i32, z: i32) -> Column {
     } else {
         Deep::Air
     };
-    Column { height, biome, cave_top, deep }
+    let mossy = biome == Biome::Tundra && noise2(fx / 60.0, fz / 60.0, SEED_SHORE ^ 7) > 0.0;
+    Column { height, biome, cave_top, deep, mossy }
 }
 
 /// Lakes and ponds fill low ground with still water up to this height
@@ -272,6 +300,14 @@ fn layer(y: i32, col: &Column) -> u16 {
             _ => CONTENT_STONE,
         };
     }
+    // The tundra's lakes have gravel beaches (minetest_game's
+    // tundra_beach).
+    if col.height <= WATER_LEVEL && col.biome == Biome::Tundra {
+        return match depth {
+            0..=1 => CONTENT_GRAVEL,
+            _ => CONTENT_STONE,
+        };
+    }
     // Lake beds and shores are sand, as Minetest Game's beaches.
     if col.height <= WATER_LEVEL && col.biome != Biome::Desert {
         return match depth {
@@ -281,6 +317,13 @@ fn layer(y: i32, col: &Column) -> u16 {
         };
     }
     match col.biome {
+        // Under the firs, coniferous litter (minetest_game's coniferous
+        // forest).
+        Biome::Grassland if col.height >= FIR_LINE => match depth {
+            0 => CONTENT_CONIFEROUS_LITTER,
+            1..=3 => CONTENT_DIRT,
+            _ => CONTENT_STONE,
+        },
         Biome::Grassland => match depth {
             0 => CONTENT_GRASS,
             1..=3 => CONTENT_DIRT,
@@ -303,9 +346,21 @@ fn layer(y: i32, col: &Column) -> u16 {
             1..=3 => CONTENT_DIRT,
             _ => CONTENT_STONE,
         },
+        // minetest_game's desert: desert sand, and desert stone down to
+        // -256 (its desert_ocean biome's bottom), without ores.
         Biome::Desert => match depth {
-            0..=2 => CONTENT_SAND,
-            3..=6 => CONTENT_SANDSTONE,
+            0..=2 => CONTENT_DESERT_SAND,
+            _ if y > DESERT_STONE_BOTTOM => CONTENT_DESERT_STONE,
+            _ => CONTENT_STONE,
+        },
+        Biome::Tundra => match depth {
+            0 if col.mossy => CONTENT_PERMAFROST_MOSS,
+            0 => CONTENT_PERMAFROST_STONES,
+            1..=2 => CONTENT_PERMAFROST,
+            _ => CONTENT_STONE,
+        },
+        Biome::ColdDesert => match depth {
+            0..=1 => CONTENT_SILVER_SAND,
             _ => CONTENT_STONE,
         },
     }
@@ -383,10 +438,20 @@ fn ore_at(x: i32, y: i32, z: i32) -> Option<u16> {
     let (cx, cy, cz) = (x.div_euclid(ORE_CELL), y.div_euclid(ORE_CELL), z.div_euclid(ORE_CELL));
     let h = hash(cx, cy, cz, SEED_ORE);
     // Coal anywhere, in half the cells (about 1 stone node in 60). Iron
-    // only below y = 0, and rarer.
+    // only below y = 0, and rarer. The other ores, added later, take cells
+    // that had none, each only from the depth where minetest_game starts
+    // scattering it, at about its density there: copper and tin below
+    // -64, gold below -256, mese below -512, diamond below -1024, and
+    // mese blocks below -2048.
     let ore = match h % 100 {
         0..=49 => CONTENT_COAL,
         50..=64 if y < 0 => CONTENT_IRON,
+        65..=76 if y < -64 => CONTENT_COPPER,
+        77..=84 if y < -64 => CONTENT_TIN,
+        85..=90 if y < -256 => CONTENT_GOLD,
+        91..=95 if y < -512 => CONTENT_MESE_ORE,
+        96..=98 if y < -1024 => CONTENT_DIAMOND_ORE,
+        99 if y < -2048 => CONTENT_MESE_BLOCK,
         _ => return None,
     };
     // Cluster centre, 1..6 within the cell, so the 3x3x3 around it fits.
@@ -424,6 +489,9 @@ pub fn finish(x: i32, y: i32, z: i32, col: &Column, is_cave: impl FnOnce() -> bo
         }
     }
     if base == CONTENT_STONE {
+        if y < col.height - 4 && gravel_at(x, y, z) {
+            return CONTENT_GRAVEL;
+        }
         if let Some(ore) = ore_at(x, y, z) {
             return ore;
         }
@@ -436,6 +504,48 @@ pub fn finish(x: i32, y: i32, z: i32, col: &Column, is_cave: impl FnOnce() -> bo
     base
 }
 
+/// Gravel blobs underground: cells of GRAVEL_CELL nodes, one in four
+/// with a rough ball of gravel inside, kept clear of its edges so a node
+/// depends only on its own cell (minetest_game's gravel blob ore).
+const GRAVEL_CELL: i32 = 16;
+
+fn gravel_at(x: i32, y: i32, z: i32) -> bool {
+    let (cx, cy, cz) = (x.div_euclid(GRAVEL_CELL), y.div_euclid(GRAVEL_CELL), z.div_euclid(GRAVEL_CELL));
+    let h = hash(cx, cy, cz, SEED_SEABED ^ 5);
+    if h % 4 != 0 {
+        return false;
+    }
+    let centre = |shift: u32| 4 + ((h >> shift) % 8) as i32;
+    let (dx, dy, dz) = (
+        x - (cx * GRAVEL_CELL + centre(4)),
+        y - (cy * GRAVEL_CELL + centre(8)),
+        z - (cz * GRAVEL_CELL + centre(12)),
+    );
+    let r2 = 4 + ((h >> 16) % 6) as i32;
+    dx * dx + dy * dy + dz * dz <= r2 + (hash(x, y, z, SEED_SEABED ^ 6) % 3) as i32
+}
+
+/// The water of a lake at height y (at most WATER_LEVEL): frozen at the
+/// top in the cold lands.
+pub fn lake_node(y: i32, col: &Column) -> u16 {
+    if y == WATER_LEVEL && matches!(col.biome, Biome::Snow | Biome::Tundra | Biome::ColdDesert) {
+        CONTENT_ICE
+    } else {
+        CONTENT_WATER
+    }
+}
+
+/// A waterlily on the water over a column, if one floats there: on the
+/// shallow swampy lakes of the rainforest and savanna (minetest_game's
+/// waterlily decoration), in patches.
+pub fn lily_on(x: i32, z: i32, col: &Column) -> Option<u16> {
+    if col.height != WATER_LEVEL - 1 || !matches!(col.biome, Biome::Rainforest | Biome::Savanna) {
+        return None;
+    }
+    let h = hash(x, 0x111, z, SEED_FLOWERS);
+    (h % 3 == 0 && noise2(x as f32 / 100.0, z as f32 / 100.0, SEED_FLOWERS ^ 0xF) > -0.1).then_some(colours::WATERLILY)
+}
+
 /// Kelp grows on lake beds this deep or deeper.
 pub const KELP_TOP: i32 = -5;
 
@@ -443,10 +553,22 @@ pub const KELP_TOP: i32 = -5;
 /// decorations): corals in warm water 2 to 8 nodes deep, kelp in cool
 /// water 6 or more deep, in patches.
 fn seabed(x: i32, z: i32, col: &Column) -> Option<u16> {
-    if col.height > -2 {
+    if col.height > 0 {
         return None;
     }
     let h = hash(x, 0x5EA, z, SEED_SEABED);
+    // Clay in the shallows, gravel further out, in patches (minetest_game's
+    // clay and gravel blobs on beaches and lake beds).
+    let shallow = col.height >= -3;
+    if col.biome != Biome::Desert && shallow && noise2(x as f32 / 40.0, z as f32 / 40.0, SEED_SEABED ^ 3) > 0.35 {
+        return Some(CONTENT_CLAY);
+    }
+    if !shallow && noise2(x as f32 / 60.0, z as f32 / 60.0, SEED_SEABED ^ 4) > 0.4 {
+        return Some(CONTENT_GRAVEL);
+    }
+    if col.height > -2 {
+        return None;
+    }
     let warm = matches!(col.biome, Biome::Desert | Biome::Savanna | Biome::Rainforest);
     if warm && col.height >= -8 {
         if noise2(x as f32 / 50.0, z as f32 / 50.0, SEED_SEABED) < 0.15 || h % 3 != 0 {
@@ -766,6 +888,8 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
         Biome::Grassland => TreeKind::Birch,
         Biome::Rainforest => TreeKind::Jungle,
         Biome::Savanna => TreeKind::Acacia,
+        // No trees on the tundra or in the cold desert.
+        Biome::Tundra | Biome::ColdDesert => return None,
     };
     // A few percent of patches in the open, most of them in a wood. The
     // rainforest is jungle almost everywhere; the savanna has scattered
@@ -825,6 +949,15 @@ pub fn plant_on(x: i32, z: i32, col: &Column) -> Option<u16> {
         let patch = noise2(x as f32 / 16.0, z as f32 / 16.0, SEED_SHORE) > 0.1;
         return (patch && h % 3 == 0).then(|| plants::MARRAM[((h >> 8) % 3) as usize]);
     }
+    // Snow lies on the snowy lands (minetest_game's taiga dust), and in
+    // patches on the tundra.
+    if col.cave_top < col.height && col.height > WATER_LEVEL {
+        match col.biome {
+            Biome::Snow => return Some(CONTENT_SNOW_LAYER),
+            Biome::Tundra if noise2(x as f32 / 30.0, z as f32 / 30.0, SEED_SHORE ^ 9) > 0.3 => return Some(CONTENT_SNOW_LAYER),
+            _ => {}
+        }
+    }
     let grasses = match col.biome {
         // Ferns under the firs (minetest_game's coniferous forest).
         Biome::Grassland if col.height >= FIR_LINE => [plants::FERN[0], plants::FERN[1], plants::FERN[2], plants::FERN[2], plants::FERN[1]],
@@ -837,6 +970,19 @@ pub fn plant_on(x: i32, z: i32, col: &Column) -> Option<u16> {
         return None;
     }
     let h = hash(x, 0x6A55, z, SEED_GRASS);
+    // Flowers on the grassland, each kind in its own patches (minetest_game's
+    // flower decorations); mushrooms in the woods, birch and fir.
+    if col.biome == Biome::Grassland && (h >> 12) % 24 == 0 {
+        if col.height < FIR_LINE {
+            let k = (h >> 18) % colours::FLOWERS.len() as u32;
+            if noise2(x as f32 / 200.0, z as f32 / 200.0, SEED_FLOWERS.wrapping_add(k)) > 0.3 {
+                return Some(colours::flower(k as usize));
+            }
+        }
+        if (h >> 18) % 4 == 0 && fbm2(x as f32 / 220.0, z as f32 / 220.0, 2, SEED_FOREST) > 0.1 {
+            return Some(if (h >> 20) % 2 == 0 { colours::MUSHROOM_BROWN } else { colours::MUSHROOM_RED });
+        }
+    }
     // Wild cotton on grassland and savanna (where minetest_game grows it).
     if col.biome != Biome::Rainforest && noise2(x as f32 / 60.0, z as f32 / 60.0, SEED_COTTON) > 0.55 && h % 16 == 0 {
         return Some(farming::COTTON_WILD);

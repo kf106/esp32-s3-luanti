@@ -119,7 +119,10 @@ http://creativecommons.org/licenses/by-sa/3.0/
 
 -----------------------
 
-From mods/wool/textures: wool_white.png, by Cisoun. Licence, from the wool mod's license.txt:
+From mods/wool/textures: wool_white.png, wool_grey.png, wool_dark_grey.png, wool_black.png,
+wool_violet.png, wool_blue.png, wool_cyan.png, wool_dark_green.png, wool_green.png,
+wool_yellow.png, wool_brown.png, wool_orange.png, wool_red.png, wool_magenta.png and
+wool_pink.png, by Cisoun. Licence, from the wool mod's license.txt:
 
 Licenses of media (textures)
 ----------------------------

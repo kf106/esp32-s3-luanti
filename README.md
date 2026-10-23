@@ -47,26 +47,28 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **Accounts:** SRP-6a password login, the same scheme the real server uses. New players register on first connect, and passwords are never stored or sent.
 - **World generation:**
   - rolling hills and mountains;
-  - grassland, desert, snow, savanna and rainforest biomes (the hot lands are desert where dry, rainforest where wet, and savanna in between);
+  - Minetest Game's biomes: grassland, with coniferous forest in the hills; desert (desert sand over desert stone), savanna and rainforest in the hot lands, from dry to wet; cold desert (silver sand), tundra (permafrost, moss and stones, gravel beaches) and snowy fir forest in the cold lands, from dry to wet; snow on the mountain tops. Snow lies on the snowy lands and in patches on the tundra, and cold lakes freeze over;
+  - gravel in blobs underground, and clay and gravel on lake beds;
   - caves with entrances; below height -64, in about half the land, they are flooded with lava, sealed off from the dry ones by solid stone;
-  - coal and iron ore;
+  - Minetest Game's ores, deeper for the better ones, at about its densities: coal everywhere, iron below 0, copper and tin below -64, gold below -256, mese below -512, diamond below -1024, and the odd mese block below -2048;
   - birch woods with apple trees in the lowlands and fir forests in the hills and snow, with clearings and the odd lone tree; dense jungle in the rainforest, with jungle grass on a floor of leaf litter; scattered flat-topped acacias in the savanna's dry grass. Leaves cast shade.
 - **Trees, as in Minetest Game:** chop a tree's trunk away and its leaves fall within a few seconds (leaves you placed yourself never do). Leaves give a sapling one time in 20, dug or fallen. Plant a sapling on dirt, grass, savanna dirt or leaf litter in the open and it grows into a birch, fir, apple, jungle or acacia tree after 5 to 25 minutes, in daylight.
 - **Apples and health:** apple trees carry apples. Pick one (punch it) and eat it (left-click with it) for 2 HP; health only comes back by eating, as in Minetest Game. A picked apple grows again in the same place after 5 to 25 minutes while the tree's leaves are there; apples fall with the leaves when the tree is chopped.
 - **World edge:** the world ends about 31,000 nodes from the centre in every direction, at an invisible wall, as in Luanti.
 - **World storage:** the world is generated on demand from a fixed seed. Only the changes players make are stored, as an append-only log on the SD card. Writing to the card is slow, so changes are appended once a second, and an inventory is saved within 5 s of changing (and when its player leaves): a power cut loses at most that much. Saving after every dig once held the server up so much that a player digging fast was disconnected.
-- **Digging and building:** changes appear for every player at once.
+- **Digging and building:** changes appear for every player at once. Sand (and, as in Minetest Game, gravel and the other sands) with nothing under it falls, under gravity, until it lands; what was stacked on it follows. Where it can't settle (on a torch, say) it drops as an item.
 - **Survival inventory:** 32 slots, with stacks you can rearrange in the inventory window. New players start with 20 torches.
-- **Crafting:** Minetest Game's 3×3 crafting grid in the inventory window, with its recipes and rules. Stone gives cobblestone, and ores give coal and iron lumps.
+- **Crafting:** Minetest Game's 3×3 crafting grid in the inventory window, with its recipes and rules. Stone gives cobblestone, and ores give coal, iron, copper, tin and gold lumps, mese crystals and diamonds.
   - a tree trunk makes 4 planks (apple, birch, fir, jungle or acacia); planks make 4 sticks;
   - a coal lump above a stick makes 4 torches;
-  - 4 sand make sandstone, and sandstone makes 4 sand;
+  - 4 sand make sandstone, and sandstone makes 4 sand; the same for desert sand and silver sand;
+  - bricks and blocks from desert stone and from each sandstone; 4 clay lumps make clay, 4 clay bricks (clay lumps smelted) a brick block, 9 snow a snow block, 9 obsidian shards obsidian, and back; obsidian bricks and blocks from obsidian, obsidian glass from smelted shards. Gravel sometimes gives flint;
   - wooden and stone pickaxes, shovels, axes and swords, in Minetest Game's shapes (planks for wood, stone or cobblestone for stone);
   - a furnace from 8 stone or cobblestone in a ring;
   - a chest from 8 planks in a ring; a locked chest with a steel ingot in the middle, or from a chest and a steel ingot;
-  - building blocks: 4 stone make 4 stone bricks and 9 make 9 stone blocks, and the same for sandstone; 9 coal lumps or steel ingots make a coal or steel block, and back;
+  - building blocks: 4 stone make 4 stone bricks and 9 make 9 stone blocks, and the same for sandstone; 9 coal lumps, steel, copper, tin, bronze or gold ingots, mese crystals or diamonds make a block of each, and back; 8 copper ingots round a tin one make 9 bronze ingots; a mese crystal breaks into 9 fragments, and 9 fragments make a crystal;
   - ladders: an H of sticks makes 5 wooden ladders, of steel ingots 15 steel ones.
-- **Stairs, slabs and corner stairs:** Minetest Game's, of each kind of planks, stone, cobblestone, sandstone, and stone and sandstone bricks and blocks.
+- **Stairs, slabs and corner stairs:** Minetest Game's, of each kind of planks, stone, cobblestone, each sandstone, desert stone and cobblestone, their bricks and blocks, brick, obsidian (and its bricks and blocks), ice, snow blocks, and the steel, copper, tin, bronze and gold blocks.
   - 6 blocks in a staircase (rising to the right) make 8 stairs, and 3 in a row make 6 slabs. 4 stairs in a square give 3 blocks back, and 2 slabs one above the other give 1.
   - Corner stairs: 6 blocks in a staircase shape with the middle left empty (one on top in the middle, one either side below, a full row underneath) make 7 inner corners; 4 as an upside-down T make 6 outer corners. They place like stairs, so which way a corner turns depends on where you stand.
   - Stairs face away from you. Placed against the underside of a block, or the upper half of its side, they go upside down. A slab placed on top of the same kind of slab joins it into a full block (or under it, if it is upside down), as in older Minetest Game; on a different slab it takes that slab's way up.
@@ -77,6 +79,11 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. Water flows as in Luanti: dig beside or under a lake and it runs in, up to 8 nodes across flat ground, getting shallower as it goes, and falls down any hole; take the source away and the flow drains. Two sources with a gap between make a third, so a lake never runs dry. Water washes torches out. It spreads a node a second; the server looks at up to 1,000 places a second, so a flood into a big cave takes a while. Where more than 8 nodes in a map block change at once, the block is sent again whole rather than node by node, to spare the radio; while water is moving the log says how much every 10 s ("Liquids: ...").
 - **Drowning:** as in Luanti, with your head in water (or lava) you lose a breath every 2 s, and with all 10 gone 1 HP every 2 s. Out of it, a breath comes back every half second. Luanti's bubbles show above the hotbar while your breath isn't full.
 - **Lava:** Minetest Game's lava, in deep caves (see above) or poured from a bucket. It flows like water, but creeps (its depth changes a level at a time), never makes new sources, and burns 8 HP a second while you stand in it. Lava touching water cools: a lava source into obsidian (a steel pickaxe digs it), flowing lava into stone, with a hiss. It glows in the dark but lights nothing around it: the client draws lava bright by itself, and the server spends no time spreading its light. So that what players see stays the same, a change to lava is always sent as its whole map block, never node by node.
+- **Flowers, dyes and wool, as in Minetest Game:**
+  - Eight flowers grow in patches on the grassland (red rose, orange tulip, yellow and white dandelions, green chrysanthemum, blue geranium, viola, black tulip), mushrooms in the woods, and waterlilies on the swampy lakes of the rainforest and savanna. A waterlily goes back only on still water.
+  - A brown mushroom heals 1 HP; a red one costs 5.
+  - A flower makes 4 dye of its colour, a coal lump 4 black, blueberries 2 violet; two dyes mix into two of another (red and blue make violet, white and red pink, and so on: all 19 of Minetest Game's mixes), for all 15 colours.
+  - Any wool with a dye makes wool of that colour. Beds take any colour of wool.
 - **Other plants, as in Minetest Game:**
   - **Cactus** grows in the desert, with the odd large one with arms; **papyrus** on the swampy shores of the rainforest and savanna. Planted ones grow a node at a time, up to 4 tall, in daylight: cactus on sand, papyrus on dirt with water within 3 nodes. Digging papyrus takes the papyrus above it too. Five cactus in a plus make a large cactus seedling, which grows into a large cactus on sand.
   - **Bushes:** plain and blueberry bushes in the grassland, fir bushes among the firs and in the snow, acacia bushes on the savanna. Their leaves give a bush sapling one time in 5, their stems a plank. Pick blueberries for 2 HP each; the bush bears again 5 to 25 minutes later.
@@ -89,10 +96,11 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
   - 4 wheat make flour, which bakes into bread in the furnace (15 s); bread heals 5. 9 wheat make 3 straw blocks, and back. 4 cotton make white wool, 2 make 2 string.
 - **Beds:** Minetest Game's simple bed (three white wool over three planks) and fancy bed (the same with a stick at the top right). A bed is two nodes long and points the way you look as you place it. Right-click it at night to lie down; a window shows how many players are in bed, and when everyone online is, the night is skipped to the morning (05:31). Once more than half are in bed, anyone lying down can force the night skip. Leave Bed (or Escape) gets you up again. Using a bed, by day or night, makes it where you respawn after dying; respawn points are kept in `world/beds_spawns`. A bed can't be dug while someone lies in it.
 - **Buckets:** three steel ingots in a V make an empty bucket. Left-click water or lava with it to fill it; right-click to pour it out again, wherever you like. A lava bucket burns in a furnace for 60 s and leaves the empty bucket in the output.
-- **Glass:** smelt sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
-  - steel pickaxes, shovels, axes and swords from steel ingots.
+- **Glass:** smelt any sand in the furnace. Turn on "connected glass" in Luanti's settings for Minetest Game's joined-up panes.
+  - steel, bronze, mese and diamond pickaxes, shovels, axes and swords, from steel or bronze ingots, mese crystals or diamonds, with Minetest Game's digging times and wear. A diamond block needs a mese or diamond pickaxe; mese and diamond ore a steel one or better.
+  - a mese lamp from glass over a mese crystal: a bright light.
 - **Furnace:** Minetest Game's, placed facing you. Right-click opens it, with slots for what to smelt, fuel, and a 2×2 output.
-  - It smelts iron lumps into steel ingots, cobblestone into stone and sand into glass, 3 seconds each, and bakes flour into bread in 15.
+  - It smelts iron, copper, tin and gold lumps into ingots, cobblestone into stone (desert cobblestone into desert stone), sand into glass, clay lumps into bricks and obsidian shards into obsidian glass, 3 seconds each, and bakes flour into bread in 15.
   - Fuel: lava buckets burn for 60 s, coal lumps 40 s, chests 30 s, trunks 22 to 38 s, wooden doors 14 s, beds 12 to 13 s, wooden trapdoors, fences and gates 5 to 9 s, fence rails 3 to 7 s, straw 3 s, planks 5 to 9 s, leaves, grass, torches and wooden tools a few seconds, sticks, wheat, cotton and string 1 s. A piece of fuel that is alight burns to the end.
   - It burns whether or not anyone has it open. While lit, its front shows the fire, it glows, the window's flame and arrow fill up, and you hear it.
   - Only fuel goes in the fuel slot, and nothing into the output. Empty it before digging it (with a stone pickaxe). Its contents are kept on the SD card in `world/furnaces.txt`.
@@ -128,7 +136,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- Much of Minetest Game is still missing: copper, tin, gold, mese and diamond (so no bronze, mese or diamond tools), gravel, clay and the other desert and snow blocks, falling sand and gravel, flowers, dyes and coloured wool, signs, bookshelves, TNT and fire, bones, boats, carts, keys, walls, glass panes, dungeons, weather and creative mode.
+- Much of Minetest Game is still missing: mese posts, mossy cobblestone and cave ice (they come with dungeons and caves), signs, bookshelves, TNT and fire, bones, boats, carts, keys, walls, glass panes, dungeons, weather and creative mode.
 - No admin commands.
 - No Lua mods: the game content is built in.
 - One world per SD card.
@@ -286,6 +294,8 @@ src/farming.rs     farming: soil, seeds, crops, hoes
 src/beds.rs        beds, sleeping and respawn points
 src/fences.rs      fences, fence rails and fence gates
 src/plants.rs      cactus, papyrus, bushes, ferns, marram grass, kelp, corals
+src/falling.rs     falling sand and gravel
+src/colours.rs     flowers, dyes and wool
 src/liquids.rs     flowing water and lava
 src/player.rs      saved player state
 src/skins.rs       player skins
@@ -342,7 +352,7 @@ place, before and after a change.
 The code is released under the [MIT licence](LICENSE).
 
 The media in `media/` have their own licences:
-- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Also the doors, gate, farming and bed media (`doors_*`, `door_*.b3d`, `default_fence_overlay.png`, `default_fence_rail_overlay.png`, `farming_*`, `default_grass_*.png`, `wool_white.png`, `beds_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt`, `media/LICENSE-items.txt`, `media/LICENSE-doors.txt`, `media/LICENSE-farming.txt` and `media/LICENSE-beds.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
+- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Also the doors, gate, farming and bed media (`doors_*`, `door_*.b3d`, `default_fence_overlay.png`, `default_fence_rail_overlay.png`, `farming_*`, `default_grass_*.png`, `wool_*.png`, `beds_*.png`), and the flower and dye pictures (`flowers_*.png`, `dye_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt`, `media/LICENSE-items.txt`, `media/LICENSE-doors.txt`, `media/LICENSE-farming.txt`, `media/LICENSE-beds.txt` and `media/LICENSE-flowers.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
 - **Sounds from Minetest Game** (`default_*.ogg`, `player_damage.ogg`): CC BY-SA 3.0, CC BY 3.0 or CC0, with credits in `media/LICENSE-sounds.txt`.
 - **The skins `esp_skin_wizard.png`, `esp_skin_elf.png`, `esp_skin_borgo.png` and `esp_skin_strider.png`:** made by Keir Finlow-Bates, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 - **The other `esp_*.png` textures:** made for this project and covered by the MIT licence.

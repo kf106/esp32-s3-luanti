@@ -68,9 +68,37 @@ impl Set {
     }
 }
 
+/// The building blocks added after those: minetest_game's desert and
+/// silver sandstones and stones, brick, obsidian, ice, snow and the metal
+/// blocks.
+pub const BUILDING_MATERIALS: [Material; 21] = [
+    Material { base: CONTENT_DESERT_STONE, world_aligned: true },
+    Material { base: CONTENT_DESERT_COBBLE, world_aligned: true },
+    Material { base: CONTENT_DESERT_STONE_BRICK, world_aligned: false },
+    Material { base: CONTENT_DESERT_STONE_BLOCK, world_aligned: true },
+    Material { base: CONTENT_DESERT_SANDSTONE, world_aligned: true },
+    Material { base: CONTENT_DESERT_SANDSTONE_BRICK, world_aligned: false },
+    Material { base: CONTENT_DESERT_SANDSTONE_BLOCK, world_aligned: true },
+    Material { base: CONTENT_SILVER_SANDSTONE, world_aligned: true },
+    Material { base: CONTENT_SILVER_SANDSTONE_BRICK, world_aligned: false },
+    Material { base: CONTENT_SILVER_SANDSTONE_BLOCK, world_aligned: true },
+    Material { base: CONTENT_BRICK, world_aligned: false },
+    Material { base: CONTENT_OBSIDIAN, world_aligned: true },
+    Material { base: CONTENT_OBSIDIAN_BRICK, world_aligned: false },
+    Material { base: CONTENT_OBSIDIAN_BLOCK, world_aligned: true },
+    Material { base: CONTENT_ICE, world_aligned: true },
+    Material { base: CONTENT_SNOW_BLOCK, world_aligned: true },
+    Material { base: CONTENT_STEEL_BLOCK, world_aligned: true },
+    Material { base: CONTENT_COPPER_BLOCK, world_aligned: true },
+    Material { base: CONTENT_TIN_BLOCK, world_aligned: true },
+    Material { base: CONTENT_BRONZE_BLOCK, world_aligned: true },
+    Material { base: CONTENT_GOLD_BLOCK, world_aligned: true },
+];
+
 pub const EARLY: Set = Set { first: 41, materials: &MATERIALS };
 pub const LATER: Set = Set { first: crate::fences::RAIL_ACACIA + 1, materials: &LATER_MATERIALS };
-const SETS: [Set; 2] = [EARLY, LATER];
+pub const BUILDING: Set = Set { first: CONTENT_OBSIDIAN_GLASS + 1, materials: &BUILDING_MATERIALS };
+const SETS: [Set; 3] = [EARLY, LATER, BUILDING];
 
 pub const FIRST_STAIR: u16 = EARLY.first_stair();
 pub const FIRST_SLAB: u16 = EARLY.first_slab();
@@ -294,6 +322,9 @@ mod tests {
         assert_eq!(shaped(Shape::Slab, CONTENT_ACACIA_WOOD), Some(178));
         assert!(matches!(shape_of(182), Some((Shape::Outer, m)) if m.base == CONTENT_ACACIA_WOOD));
         assert!(shape_of(183).is_none() && shape_of(174).is_none());
+        assert_eq!(BUILDING.first, 248);
+        assert_eq!(BUILDING.end(), 332);
+        assert_eq!(shaped(Shape::Outer, CONTENT_GOLD_BLOCK), Some(331));
     }
 
     #[test]

@@ -79,17 +79,19 @@ pub fn is_dry_grass(id: u16) -> bool {
 /// dug (minetest_game's attached_node).
 pub fn is_attached_plant(id: u16) -> bool {
     crop_of(id).is_some() || is_grass(id) || is_dry_grass(id) || id == COTTON_WILD || id == JUNGLEGRASS || crate::plants::is_small_plant(id)
+        || crate::colours::is_flower(id)
+        || crate::colours::is_mushroom(id)
 }
 
 pub fn is_soil(id: u16) -> bool {
     matches!(id, SOIL | SOIL_WET)
 }
 
-/// What a hoe makes of a node: dirt, grass and rainforest litter become
+/// What a hoe makes of a node: dirt, grass and forest litter become
 /// dry soil (their "soil" definition in farming/nodes.lua). Savanna dirt
 /// makes minetest_game's dry soil, which we don't have.
 pub fn hoed(id: u16) -> Option<u16> {
-    matches!(id, CONTENT_DIRT | CONTENT_GRASS | CONTENT_LITTER).then_some(SOIL)
+    matches!(id, CONTENT_DIRT | CONTENT_GRASS | CONTENT_LITTER | CONTENT_CONIFEROUS_LITTER).then_some(SOIL)
 }
 
 /// How many uses a hoe has (farming/hoes.lua's max_uses).
@@ -200,9 +202,12 @@ pub fn drops(id: u16, rng: &mut Rng) -> Vec<(u16, u16)> {
     if is_dry_grass(id) {
         return vec![(DRY_GRASS[0], 1)];
     }
-    // So do ferns and marram grass.
+    // So do ferns and marram grass; flowers and mushrooms give themselves.
     if let Some(item) = crate::plants::small_plant_drop(id) {
         return vec![(item, 1)];
+    }
+    if crate::colours::is_flower(id) || crate::colours::is_mushroom(id) {
+        return vec![(id, 1)];
     }
     match id {
         JUNGLEGRASS => vec![(if rng.one_in(8) { SEED_COTTON } else { JUNGLEGRASS }, 1)],

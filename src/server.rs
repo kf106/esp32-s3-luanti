@@ -20,6 +20,7 @@ use crate::skins::{self, Skins};
 use crate::srp;
 use crate::beds;
 use crate::doors::{self, Door};
+use crate::falling::{self, Falling};
 use crate::farming;
 use crate::fences;
 use crate::plants;
@@ -27,6 +28,7 @@ use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
 use crate::clock::{self, Clock};
+use crate::colours;
 use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
 use crate::nature::{self, Job, Rng, Timers};
 use crate::world::{self, BlockPos, NodePos, World};
@@ -437,6 +439,8 @@ pub struct Server {
     /// Dropped items, and when they were last moved on.
     items: Items,
     items_stepped: Instant,
+    /// Sand and gravel on their way down (falling.rs).
+    falling: Vec<Falling>,
     /// When the furnaces' timers last ran.
     furnaces_stepped: Instant,
     /// The time of day, kept over restarts.
@@ -802,6 +806,7 @@ impl Server {
             heap_check_timed: false,
             heap_damaged: false,
             items_stepped: Instant::now(),
+            falling: Vec::new(),
             furnaces_stepped: Instant::now(),
             next_sound_id: 1,
             last_activity: Instant::now(),
@@ -1901,6 +1906,8 @@ impl Server {
                 }
                 // Items resting on the dug node fall.
                 self.wake_items(node_pos(under));
+                // Sand or gravel that stood on it comes loose.
+                self.check_falling((under[0] as i32, under[1] as i32 + 1, under[2] as i32));
                 // Torches hanging on the dug node, and saplings standing on
                 // it, fall off and drop as items, as builtin's attached
                 // nodes do.
@@ -2002,6 +2009,23 @@ impl Server {
                     let place = DoorPlace { under, above, look: look_dir(pitch, yaw), slot };
                     if in_reach(above) {
                         self.place_door(from, door, place);
+                    }
+                    return;
+                }
+                // A waterlily goes on still water (its on_place), and
+                // nowhere else.
+                if wielded.is_some_and(|s| slot < HOTBAR_SIZE && s.id == colours::WATERLILY) {
+                    let free = content::buildable_to(self.world.node(node_pos(above))) && !content::is_liquid(self.world.node(node_pos(above)));
+                    if self.world.node(node_pos(under)) == content::CONTENT_WATER && free && in_reach(above) {
+                        let param2 = (self.rng.next() % 4) as u8;
+                        let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
+                        info!("{name} placed a waterlily at {above:?}");
+                        if let Some(peer) = self.peers.get_mut(&from) {
+                            peer.inventory.take_one(slot);
+                        }
+                        self.inventory_changed(from);
+                        self.world.set_node(node_pos(above), colours::WATERLILY, param2);
+                        self.broadcast_node(above, &build_addnode(above, colours::WATERLILY, param2));
                     }
                     return;
                 }
@@ -2118,6 +2142,8 @@ impl Server {
                 }
                 self.inventory_changed(from);
                 self.world.set_node(node_pos(above), node, param2);
+                // Sand or gravel put over nothing falls.
+                self.check_falling(node_pos(above));
                 self.broadcast_node(above, &build_addnode(above, node, param2));
                 // Built into lava: the client lit the block up as the lava
                 // went; send it again with the server's light.
@@ -2697,6 +2723,10 @@ impl Server {
         if farming::is_attached_plant(id) || farming::is_soil(id) {
             return farming::drops(id, &mut self.rng);
         }
+        // Gravel gives flint one time in 16 (minetest_game's drop table).
+        if id == content::CONTENT_GRAVEL && self.rng.one_in(16) {
+            return vec![(content::ITEM_FLINT, 1)];
+        }
         match content::drop_of(id) {
             Some((leaf, 1)) if content::is_leaves(id) => vec![(nature::leaf_drop(leaf, &mut self.rng), 1)],
             other => other.into_iter().collect(),
@@ -3056,18 +3086,25 @@ impl Server {
         let Some(peer) = self.peers.get_mut(&addr) else {
             return;
         };
-        // Food: an apple heals 2, bread 5 (minetest_game's item_eat).
+        // Food: an apple heals 2, bread 5 (minetest_game's item_eat); a
+        // red mushroom hurts.
         let food = peer.inventory.get(slot).filter(|_| slot < HOTBAR_SIZE).and_then(|s| match s.id {
-            id if content::is_apple(id) => Some((id, content::APPLE_HP)),
-            content::ITEM_BREAD => Some((content::ITEM_BREAD, content::BREAD_HP)),
-            content::ITEM_BLUEBERRIES => Some((content::ITEM_BLUEBERRIES, plants::BLUEBERRY_HP)),
-            _ => None,
+            id if content::is_apple(id) => Some((id, content::APPLE_HP as i32)),
+            content::ITEM_BREAD => Some((content::ITEM_BREAD, content::BREAD_HP as i32)),
+            content::ITEM_BLUEBERRIES => Some((content::ITEM_BLUEBERRIES, plants::BLUEBERRY_HP as i32)),
+            id => colours::mushroom_hp(id).map(|hp| (id, hp)),
         });
         let Some((food, heals)) = food else {
             return;
         };
         peer.inventory.take_one(slot);
-        peer.hp = (peer.hp + heals).min(PLAYER_MAX_HP);
+        if heals < 0 {
+            info!("{} ate {}", peer.display_name(), content::description_of(food));
+            self.inventory_changed(addr);
+            self.hurt(addr, (-heals) as u16, "was poisoned");
+            return;
+        }
+        peer.hp = (peer.hp + heals as u16).min(PLAYER_MAX_HP);
         let (hp, name) = (peer.hp, peer.display_name().to_string());
         peer.save(&self.players);
         info!("{name} ate {}: {hp} HP", content::description_of(food));
@@ -3402,6 +3439,78 @@ impl Server {
     fn wake_items(&mut self, node: (i32, i32, i32)) {
         for id in self.items.wake_near([node.0, node.1, node.2]) {
             self.send_item_position(id);
+        }
+    }
+
+    /// builtin's check_for_falling: sand or gravel at `pos` with nothing
+    /// under it comes loose, and so in turn does any stacked on it. The
+    /// world loses it at once; players keep seeing it as it falls.
+    fn check_falling(&mut self, mut pos: NodePos) {
+        loop {
+            let id = self.world.node(pos);
+            if !falling::falls(id) || !falling::falls_into(self.world.node((pos.0, pos.1 - 1, pos.2))) {
+                return;
+            }
+            let param2 = self.world.param2(pos);
+            self.world.set_node(pos, world::CONTENT_AIR, 0);
+            self.falling.push(Falling::new(id, param2, pos));
+            let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+            self.wake_items(pos);
+            self.drop_attached(p16);
+            pos.1 += 1;
+        }
+    }
+
+    /// Move falling sand and gravel on: shown a node lower as it goes, set
+    /// in the world where it lands (or dropped as an item where it can't
+    /// be).
+    fn step_falling(&mut self, dt: f32) {
+        let mut falling = std::mem::take(&mut self.falling);
+        falling.retain_mut(|f| {
+            let world = &self.world;
+            let step = falling::step(f, dt, &|p| world.node(p));
+            let shown = |p: NodePos| [p.0 as i16, p.1 as i16, p.2 as i16];
+            match step {
+                falling::Step::Same => true,
+                falling::Step::Moved { from } => {
+                    self.show_world_node(from);
+                    let at = shown(f.pos);
+                    self.broadcast_node(at, &build_addnode(at, f.id, f.param2));
+                    true
+                }
+                falling::Step::Landed => {
+                    let at = shown(f.pos);
+                    self.world.set_node(f.pos, f.id, f.param2);
+                    self.broadcast_node(at, &build_addnode(at, f.id, f.param2));
+                    let (sound, gain) = content::place_sound(f.id);
+                    self.play_sound_near(-1, sound, gain, at.map(|v| v as f32 * 10.0), HEARING);
+                    false
+                }
+                falling::Step::Dropped => {
+                    self.show_world_node(f.pos);
+                    let at = shown(f.pos);
+                    self.spawn_item(Stack::new(f.id, 1), (at.map(|v| v as f32), [0.0; 3]));
+                    false
+                }
+                falling::Step::Lost => {
+                    self.show_world_node(f.pos);
+                    false
+                }
+            }
+        });
+        // Anything that came loose meanwhile was added to self.falling.
+        falling.append(&mut self.falling);
+        self.falling = falling;
+    }
+
+    /// Show players what the world holds at a node again.
+    fn show_world_node(&mut self, pos: NodePos) {
+        let at = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        let id = self.world.node(pos);
+        if id == world::CONTENT_AIR {
+            self.broadcast_node(at, &build_removenode(at));
+        } else {
+            self.broadcast_node(at, &build_addnode(at, id, self.world.param2(pos)));
         }
     }
 
@@ -4413,6 +4522,7 @@ impl Server {
             let dt = now.duration_since(self.items_stepped).as_secs_f32();
             self.items_stepped = now;
             self.step_items(dt);
+            self.step_falling(dt);
         }
         if self.items.save_if_due() {
             self.note("items saved", 0);

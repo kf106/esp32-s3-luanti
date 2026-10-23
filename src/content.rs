@@ -15,6 +15,7 @@ use crate::messages::Writer;
 use crate::sha1::sha1;
 use crate::beds;
 use crate::doors;
+use crate::colours;
 use crate::farming;
 use crate::fences;
 use crate::plants;
@@ -112,6 +113,12 @@ pub enum Kind {
     /// Kelp and corals: a block with a plant growing out of its top
     /// (plantlike_rooted), drawn through the water above.
     Rooted,
+    /// A mese lamp: a see-through block (glasslike) that gives light.
+    Lamp,
+    /// A layer of snow: a quarter of a node thick, built over, washed away.
+    SnowLayer,
+    /// A waterlily: a thin pad lying on water, built over, washed away.
+    Lily,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -176,6 +183,50 @@ pub const CONTENT_ACACIA_SAPLING: u16 = 157;
 pub const CONTENT_DRY_DIRT: u16 = 158;
 pub const CONTENT_DRY_GRASS: u16 = 159;
 pub const CONTENT_LITTER: u16 = 160;
+/// minetest_game's other ores and their blocks, after the plants.
+pub const CONTENT_COPPER: u16 = 211;
+pub const CONTENT_TIN: u16 = 212;
+pub const CONTENT_GOLD: u16 = 213;
+pub const CONTENT_MESE_ORE: u16 = 214;
+pub const CONTENT_DIAMOND_ORE: u16 = 215;
+pub const CONTENT_COPPER_BLOCK: u16 = 216;
+pub const CONTENT_TIN_BLOCK: u16 = 217;
+pub const CONTENT_BRONZE_BLOCK: u16 = 218;
+pub const CONTENT_GOLD_BLOCK: u16 = 219;
+pub const CONTENT_MESE_BLOCK: u16 = 220;
+pub const CONTENT_DIAMOND_BLOCK: u16 = 221;
+pub const CONTENT_MESE_LAMP: u16 = 222;
+/// minetest_game's other ground and building blocks, after the mese lamp.
+pub const CONTENT_GRAVEL: u16 = 223;
+pub const CONTENT_CLAY: u16 = 224;
+pub const CONTENT_BRICK: u16 = 225;
+pub const CONTENT_DESERT_SAND: u16 = 226;
+pub const CONTENT_DESERT_STONE: u16 = 227;
+pub const CONTENT_DESERT_COBBLE: u16 = 228;
+pub const CONTENT_DESERT_STONE_BRICK: u16 = 229;
+pub const CONTENT_DESERT_STONE_BLOCK: u16 = 230;
+pub const CONTENT_DESERT_SANDSTONE: u16 = 231;
+pub const CONTENT_DESERT_SANDSTONE_BRICK: u16 = 232;
+pub const CONTENT_DESERT_SANDSTONE_BLOCK: u16 = 233;
+pub const CONTENT_SILVER_SAND: u16 = 234;
+pub const CONTENT_SILVER_SANDSTONE: u16 = 235;
+pub const CONTENT_SILVER_SANDSTONE_BRICK: u16 = 236;
+pub const CONTENT_SILVER_SANDSTONE_BLOCK: u16 = 237;
+pub const CONTENT_SNOW_LAYER: u16 = 238;
+pub const CONTENT_SNOW_BLOCK: u16 = 239;
+pub const CONTENT_ICE: u16 = 240;
+pub const CONTENT_PERMAFROST: u16 = 241;
+pub const CONTENT_PERMAFROST_MOSS: u16 = 242;
+pub const CONTENT_PERMAFROST_STONES: u16 = 243;
+pub const CONTENT_CONIFEROUS_LITTER: u16 = 244;
+pub const CONTENT_OBSIDIAN_BRICK: u16 = 245;
+pub const CONTENT_OBSIDIAN_BLOCK: u16 = 246;
+pub const CONTENT_OBSIDIAN_GLASS: u16 = 247;
+/// Light a mese lamp gives (minetest_game's LIGHT_MAX, 14, less one as
+/// for torches: the lit area, and the work, stay smaller).
+pub const MESE_LAMP_LIGHT: u8 = 13;
+/// Light a mese block gives (minetest_game's light_source 3).
+pub const MESE_LIGHT: u8 = 3;
 /// Light lava glows with (minetest_game's LIGHT_MAX - 1). Only the client
 /// uses it, to draw lava bright: the server spreads no light from lava.
 const LAVA_GLOW: u8 = 13;
@@ -210,6 +261,20 @@ pub const ITEM_COTTON: u16 = 0x100C;
 pub const ITEM_STRING: u16 = 0x100D;
 pub const ITEM_BUCKET_LAVA: u16 = 0x100E;
 pub const ITEM_BLUEBERRIES: u16 = 0x100F;
+pub const ITEM_COPPER_LUMP: u16 = 0x1010;
+pub const ITEM_TIN_LUMP: u16 = 0x1011;
+pub const ITEM_GOLD_LUMP: u16 = 0x1012;
+pub const ITEM_MESE_CRYSTAL: u16 = 0x1013;
+pub const ITEM_MESE_FRAGMENT: u16 = 0x1014;
+pub const ITEM_DIAMOND: u16 = 0x1015;
+pub const ITEM_COPPER_INGOT: u16 = 0x1016;
+pub const ITEM_TIN_INGOT: u16 = 0x1017;
+pub const ITEM_BRONZE_INGOT: u16 = 0x1018;
+pub const ITEM_GOLD_INGOT: u16 = 0x1019;
+pub const ITEM_FLINT: u16 = 0x101A;
+pub const ITEM_CLAY_LUMP: u16 = 0x101B;
+pub const ITEM_CLAY_BRICK: u16 = 0x101C;
+pub const ITEM_OBSIDIAN_SHARD: u16 = 0x101D;
 /// Health bread gives (minetest_game's item_eat(5)).
 pub const BREAD_HP: u16 = 5;
 /// Tools have ids from 0x2000 up.
@@ -228,6 +293,18 @@ pub const TOOL_SWORD_STEEL: u16 = 0x200B;
 pub const TOOL_HOE_WOOD: u16 = 0x200C;
 pub const TOOL_HOE_STONE: u16 = 0x200D;
 pub const TOOL_HOE_STEEL: u16 = 0x200E;
+pub const TOOL_PICK_BRONZE: u16 = 0x200F;
+pub const TOOL_SHOVEL_BRONZE: u16 = 0x2010;
+pub const TOOL_AXE_BRONZE: u16 = 0x2011;
+pub const TOOL_SWORD_BRONZE: u16 = 0x2012;
+pub const TOOL_PICK_MESE: u16 = 0x2013;
+pub const TOOL_SHOVEL_MESE: u16 = 0x2014;
+pub const TOOL_AXE_MESE: u16 = 0x2015;
+pub const TOOL_SWORD_MESE: u16 = 0x2016;
+pub const TOOL_PICK_DIAMOND: u16 = 0x2017;
+pub const TOOL_SHOVEL_DIAMOND: u16 = 0x2018;
+pub const TOOL_AXE_DIAMOND: u16 = 0x2019;
+pub const TOOL_SWORD_DIAMOND: u16 = 0x201A;
 /// Light given off by a torch (minetest_game: LIGHT_MAX - 1 = 13; 12 is
 /// slightly gentler and keeps the lit area, and the work, smaller).
 pub const TORCH_LIGHT: u8 = 12;
@@ -343,7 +420,7 @@ pub const NODES: &[Node] = &[
         name: "esp:sand",
         description: "Sand",
         tiles: ["esp_sand.png"; 6],
-        groups: &[("crumbly", 3), ("sand", 1)],
+        groups: &[("crumbly", 3), ("sand", 1), ("falling_node", 1)],
         drop: CONTENT_SAND,
         drop_count: 1,
         kind: Kind::Solid,
@@ -1741,6 +1818,754 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Sapling,
     },
+    // minetest_game's copper, tin, gold, mese and diamond ores, and the
+    // metal and mineral blocks (CC BY-SA 3.0, see media/LICENSE-items.txt).
+    Node {
+        id: CONTENT_COPPER,
+        name: "esp:stone_with_copper",
+        description: "Copper Ore",
+        tiles: ["esp_stone.png^default_mineral_copper.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: ITEM_COPPER_LUMP,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_TIN,
+        name: "esp:stone_with_tin",
+        description: "Tin Ore",
+        tiles: ["esp_stone.png^default_mineral_tin.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: ITEM_TIN_LUMP,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_GOLD,
+        name: "esp:stone_with_gold",
+        description: "Gold Ore",
+        tiles: ["esp_stone.png^default_mineral_gold.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: ITEM_GOLD_LUMP,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_MESE_ORE,
+        name: "esp:stone_with_mese",
+        description: "Mese Ore",
+        tiles: ["esp_stone.png^default_mineral_mese.png"; 6],
+        groups: &[("cracky", 1)],
+        drop: ITEM_MESE_CRYSTAL,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DIAMOND_ORE,
+        name: "esp:stone_with_diamond",
+        description: "Diamond Ore",
+        tiles: ["esp_stone.png^default_mineral_diamond.png"; 6],
+        groups: &[("cracky", 1)],
+        drop: ITEM_DIAMOND,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_COPPER_BLOCK,
+        name: "esp:copperblock",
+        description: "Copper Block",
+        tiles: ["default_copper_block.png"; 6],
+        groups: &[("cracky", 1), ("level", 2)],
+        drop: CONTENT_COPPER_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_TIN_BLOCK,
+        name: "esp:tinblock",
+        description: "Tin Block",
+        tiles: ["default_tin_block.png"; 6],
+        groups: &[("cracky", 1), ("level", 2)],
+        drop: CONTENT_TIN_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_BRONZE_BLOCK,
+        name: "esp:bronzeblock",
+        description: "Bronze Block",
+        tiles: ["default_bronze_block.png"; 6],
+        groups: &[("cracky", 1), ("level", 2)],
+        drop: CONTENT_BRONZE_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_GOLD_BLOCK,
+        name: "esp:goldblock",
+        description: "Gold Block",
+        tiles: ["default_gold_block.png"; 6],
+        groups: &[("cracky", 1)],
+        drop: CONTENT_GOLD_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_MESE_BLOCK,
+        name: "esp:mese",
+        description: "Mese Block",
+        tiles: ["default_mese_block.png"; 6],
+        groups: &[("cracky", 1), ("level", 2)],
+        drop: CONTENT_MESE_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DIAMOND_BLOCK,
+        name: "esp:diamondblock",
+        description: "Diamond Block",
+        tiles: ["default_diamond_block.png"; 6],
+        groups: &[("cracky", 1), ("level", 3)],
+        drop: CONTENT_DIAMOND_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_MESE_LAMP,
+        name: "esp:meselamp",
+        description: "Mese Lamp",
+        tiles: ["default_meselamp.png"; 6],
+        groups: &[("cracky", 3), ("oddly_breakable_by_hand", 3)],
+        drop: CONTENT_MESE_LAMP,
+        drop_count: 1,
+        kind: Kind::Lamp,
+    },
+    // minetest_game's gravel, clay, brick, desert and silver sands and
+    // stones, snow, ice, permafrost, coniferous litter and obsidian
+    // building blocks (CC BY-SA 3.0, see media/LICENSE-items.txt).
+    Node {
+        id: CONTENT_GRAVEL,
+        name: "esp:gravel",
+        description: "Gravel",
+        tiles: ["default_gravel.png"; 6],
+        groups: &[("crumbly", 2), ("falling_node", 1)],
+        drop: CONTENT_GRAVEL,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_CLAY,
+        name: "esp:clay",
+        description: "Clay",
+        tiles: ["default_clay.png"; 6],
+        groups: &[("crumbly", 3)],
+        drop: ITEM_CLAY_LUMP,
+        drop_count: 4,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_BRICK,
+        name: "esp:brick",
+        description: "Brick Block",
+        tiles: ["default_brick.png"; 6],
+        groups: &[("cracky", 3)],
+        drop: CONTENT_BRICK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DESERT_SAND,
+        name: "esp:desert_sand",
+        description: "Desert Sand",
+        tiles: ["default_desert_sand.png"; 6],
+        groups: &[("crumbly", 3), ("falling_node", 1), ("sand", 1)],
+        drop: CONTENT_DESERT_SAND,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DESERT_STONE,
+        name: "esp:desert_stone",
+        description: "Desert Stone",
+        tiles: ["default_desert_stone.png"; 6],
+        groups: &[("cracky", 3), ("stone", 1)],
+        drop: CONTENT_DESERT_COBBLE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DESERT_COBBLE,
+        name: "esp:desert_cobble",
+        description: "Desert Cobblestone",
+        tiles: ["default_desert_cobble.png"; 6],
+        groups: &[("cracky", 3), ("stone", 2)],
+        drop: CONTENT_DESERT_COBBLE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DESERT_STONE_BRICK,
+        name: "esp:desert_stonebrick",
+        description: "Desert Stone Brick",
+        tiles: ["default_desert_stone_brick.png"; 6],
+        groups: &[("cracky", 2), ("stone", 1)],
+        drop: CONTENT_DESERT_STONE_BRICK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DESERT_STONE_BLOCK,
+        name: "esp:desert_stone_block",
+        description: "Desert Stone Block",
+        tiles: ["default_desert_stone_block.png"; 6],
+        groups: &[("cracky", 2), ("stone", 1)],
+        drop: CONTENT_DESERT_STONE_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DESERT_SANDSTONE,
+        name: "esp:desert_sandstone",
+        description: "Desert Sandstone",
+        tiles: ["default_desert_sandstone.png"; 6],
+        groups: &[("crumbly", 1), ("cracky", 3)],
+        drop: CONTENT_DESERT_SANDSTONE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DESERT_SANDSTONE_BRICK,
+        name: "esp:desert_sandstone_brick",
+        description: "Desert Sandstone Brick",
+        tiles: ["default_desert_sandstone_brick.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: CONTENT_DESERT_SANDSTONE_BRICK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DESERT_SANDSTONE_BLOCK,
+        name: "esp:desert_sandstone_block",
+        description: "Desert Sandstone Block",
+        tiles: ["default_desert_sandstone_block.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: CONTENT_DESERT_SANDSTONE_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_SILVER_SAND,
+        name: "esp:silver_sand",
+        description: "Silver Sand",
+        tiles: ["default_silver_sand.png"; 6],
+        groups: &[("crumbly", 3), ("falling_node", 1), ("sand", 1)],
+        drop: CONTENT_SILVER_SAND,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_SILVER_SANDSTONE,
+        name: "esp:silver_sandstone",
+        description: "Silver Sandstone",
+        tiles: ["default_silver_sandstone.png"; 6],
+        groups: &[("crumbly", 1), ("cracky", 3)],
+        drop: CONTENT_SILVER_SANDSTONE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_SILVER_SANDSTONE_BRICK,
+        name: "esp:silver_sandstone_brick",
+        description: "Silver Sandstone Brick",
+        tiles: ["default_silver_sandstone_brick.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: CONTENT_SILVER_SANDSTONE_BRICK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_SILVER_SANDSTONE_BLOCK,
+        name: "esp:silver_sandstone_block",
+        description: "Silver Sandstone Block",
+        tiles: ["default_silver_sandstone_block.png"; 6],
+        groups: &[("cracky", 2)],
+        drop: CONTENT_SILVER_SANDSTONE_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_SNOW_LAYER,
+        name: "esp:snow",
+        description: "Snow",
+        tiles: ["esp_snow.png"; 6],
+        groups: &[("crumbly", 3), ("falling_node", 1), ("snowy", 1), ("cools_lava", 1)],
+        drop: CONTENT_SNOW_LAYER,
+        drop_count: 1,
+        kind: Kind::SnowLayer,
+    },
+    Node {
+        id: CONTENT_SNOW_BLOCK,
+        name: "esp:snowblock",
+        description: "Snow Block",
+        tiles: ["esp_snow.png"; 6],
+        groups: &[("crumbly", 3), ("cools_lava", 1), ("snowy", 1)],
+        drop: CONTENT_SNOW_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_ICE,
+        name: "esp:ice",
+        description: "Ice",
+        tiles: ["default_ice.png"; 6],
+        groups: &[("cracky", 3), ("cools_lava", 1), ("slippery", 3)],
+        drop: CONTENT_ICE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_PERMAFROST,
+        name: "esp:permafrost",
+        description: "Permafrost",
+        tiles: ["default_permafrost.png"; 6],
+        groups: &[("cracky", 3)],
+        drop: CONTENT_PERMAFROST,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_PERMAFROST_MOSS,
+        name: "esp:permafrost_with_moss",
+        description: "Permafrost with Moss",
+        tiles: [
+            "default_moss.png",
+            "default_permafrost.png",
+            "default_permafrost.png^default_moss_side.png",
+            "default_permafrost.png^default_moss_side.png",
+            "default_permafrost.png^default_moss_side.png",
+            "default_permafrost.png^default_moss_side.png",
+        ],
+        groups: &[("cracky", 3)],
+        drop: CONTENT_PERMAFROST_MOSS,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_PERMAFROST_STONES,
+        name: "esp:permafrost_with_stones",
+        description: "Permafrost with Stones",
+        tiles: [
+            "default_permafrost.png^default_stones.png",
+            "default_permafrost.png",
+            "default_permafrost.png^default_stones_side.png",
+            "default_permafrost.png^default_stones_side.png",
+            "default_permafrost.png^default_stones_side.png",
+            "default_permafrost.png^default_stones_side.png",
+        ],
+        groups: &[("cracky", 3)],
+        drop: CONTENT_PERMAFROST_STONES,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_CONIFEROUS_LITTER,
+        name: "esp:dirt_with_coniferous_litter",
+        description: "Dirt with Coniferous Litter",
+        tiles: [
+            "default_coniferous_litter.png",
+            "esp_dirt.png",
+            "esp_dirt.png^default_coniferous_litter_side.png",
+            "esp_dirt.png^default_coniferous_litter_side.png",
+            "esp_dirt.png^default_coniferous_litter_side.png",
+            "esp_dirt.png^default_coniferous_litter_side.png",
+        ],
+        groups: &[("crumbly", 3), ("soil", 1)],
+        drop: CONTENT_DIRT,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_OBSIDIAN_BRICK,
+        name: "esp:obsidianbrick",
+        description: "Obsidian Brick",
+        tiles: ["default_obsidian_brick.png"; 6],
+        groups: &[("cracky", 1), ("level", 2)],
+        drop: CONTENT_OBSIDIAN_BRICK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_OBSIDIAN_BLOCK,
+        name: "esp:obsidian_block",
+        description: "Obsidian Block",
+        tiles: ["default_obsidian_block.png"; 6],
+        groups: &[("cracky", 1), ("level", 2)],
+        drop: CONTENT_OBSIDIAN_BLOCK,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_OBSIDIAN_GLASS,
+        name: "esp:obsidian_glass",
+        description: "Obsidian Glass",
+        tiles: [
+            "default_obsidian_glass.png",
+            "default_obsidian_glass_detail.png",
+            "default_obsidian_glass_detail.png",
+            "default_obsidian_glass_detail.png",
+            "default_obsidian_glass_detail.png",
+            "default_obsidian_glass_detail.png",
+        ],
+        groups: &[("cracky", 3)],
+        drop: CONTENT_OBSIDIAN_GLASS,
+        drop_count: 1,
+        kind: Kind::Glass,
+    },
+    shaped!(stairs::BUILDING.first_stair() + 0, "stair_desert_stone", "Desert Stone Stair", "default_desert_stone.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 1, "stair_desert_cobble", "Desert Cobblestone Stair", "default_desert_cobble.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 2, "stair_desert_stonebrick", "Desert Stone Brick Stair", "default_desert_stone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 3, "stair_desert_stone_block", "Desert Stone Block Stair", "default_desert_stone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 4, "stair_desert_sandstone", "Desert Sandstone Stair", "default_desert_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 5, "stair_desert_sandstone_brick", "Desert Sandstone Brick Stair", "default_desert_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 6, "stair_desert_sandstone_block", "Desert Sandstone Block Stair", "default_desert_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 7, "stair_silver_sandstone", "Silver Sandstone Stair", "default_silver_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 8, "stair_silver_sandstone_brick", "Silver Sandstone Brick Stair", "default_silver_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 9, "stair_silver_sandstone_block", "Silver Sandstone Block Stair", "default_silver_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 10, "stair_brick", "Brick Stair", "default_brick.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 11, "stair_obsidian", "Obsidian Stair", "default_obsidian.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 12, "stair_obsidianbrick", "Obsidian Brick Stair", "default_obsidian_brick.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 13, "stair_obsidian_block", "Obsidian Block Stair", "default_obsidian_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 14, "stair_ice", "Ice Stair", "default_ice.png", &[("cracky", 3), ("cools_lava", 1), ("slippery", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 15, "stair_snowblock", "Snow Block Stair", "esp_snow.png", &[("crumbly", 3), ("cools_lava", 1), ("snowy", 1), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 16, "stair_steelblock", "Steel Block Stair", "default_steel_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 17, "stair_copperblock", "Copper Block Stair", "default_copper_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 18, "stair_tinblock", "Tin Block Stair", "default_tin_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 19, "stair_bronzeblock", "Bronze Block Stair", "default_bronze_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_stair() + 20, "stair_goldblock", "Gold Block Stair", "default_gold_block.png", &[("cracky", 1), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 0, "slab_desert_stone", "Desert Stone Slab", "default_desert_stone.png", &[("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 1, "slab_desert_cobble", "Desert Cobblestone Slab", "default_desert_cobble.png", &[("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 2, "slab_desert_stonebrick", "Desert Stone Brick Slab", "default_desert_stone_brick.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 3, "slab_desert_stone_block", "Desert Stone Block Slab", "default_desert_stone_block.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 4, "slab_desert_sandstone", "Desert Sandstone Slab", "default_desert_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 5, "slab_desert_sandstone_brick", "Desert Sandstone Brick Slab", "default_desert_sandstone_brick.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 6, "slab_desert_sandstone_block", "Desert Sandstone Block Slab", "default_desert_sandstone_block.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 7, "slab_silver_sandstone", "Silver Sandstone Slab", "default_silver_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 8, "slab_silver_sandstone_brick", "Silver Sandstone Brick Slab", "default_silver_sandstone_brick.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 9, "slab_silver_sandstone_block", "Silver Sandstone Block Slab", "default_silver_sandstone_block.png", &[("cracky", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 10, "slab_brick", "Brick Slab", "default_brick.png", &[("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 11, "slab_obsidian", "Obsidian Slab", "default_obsidian.png", &[("cracky", 1), ("level", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 12, "slab_obsidianbrick", "Obsidian Brick Slab", "default_obsidian_brick.png", &[("cracky", 1), ("level", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 13, "slab_obsidian_block", "Obsidian Block Slab", "default_obsidian_block.png", &[("cracky", 1), ("level", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 14, "slab_ice", "Ice Slab", "default_ice.png", &[("cracky", 3), ("cools_lava", 1), ("slippery", 3), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 15, "slab_snowblock", "Snow Block Slab", "esp_snow.png", &[("crumbly", 3), ("cools_lava", 1), ("snowy", 1), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 16, "slab_steelblock", "Steel Block Slab", "default_steel_block.png", &[("cracky", 1), ("level", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 17, "slab_copperblock", "Copper Block Slab", "default_copper_block.png", &[("cracky", 1), ("level", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 18, "slab_tinblock", "Tin Block Slab", "default_tin_block.png", &[("cracky", 1), ("level", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 19, "slab_bronzeblock", "Bronze Block Slab", "default_bronze_block.png", &[("cracky", 1), ("level", 2), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_slab() + 20, "slab_goldblock", "Gold Block Slab", "default_gold_block.png", &[("cracky", 1), ("slab", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 0, "stair_inner_desert_stone", "Inner Desert Stone Stair", "default_desert_stone.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 1, "stair_inner_desert_cobble", "Inner Desert Cobblestone Stair", "default_desert_cobble.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 2, "stair_inner_desert_stonebrick", "Inner Desert Stone Brick Stair", "default_desert_stone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 3, "stair_inner_desert_stone_block", "Inner Desert Stone Block Stair", "default_desert_stone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 4, "stair_inner_desert_sandstone", "Inner Desert Sandstone Stair", "default_desert_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 5, "stair_inner_desert_sandstone_brick", "Inner Desert Sandstone Brick Stair", "default_desert_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 6, "stair_inner_desert_sandstone_block", "Inner Desert Sandstone Block Stair", "default_desert_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 7, "stair_inner_silver_sandstone", "Inner Silver Sandstone Stair", "default_silver_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 8, "stair_inner_silver_sandstone_brick", "Inner Silver Sandstone Brick Stair", "default_silver_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 9, "stair_inner_silver_sandstone_block", "Inner Silver Sandstone Block Stair", "default_silver_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 10, "stair_inner_brick", "Inner Brick Stair", "default_brick.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 11, "stair_inner_obsidian", "Inner Obsidian Stair", "default_obsidian.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 12, "stair_inner_obsidianbrick", "Inner Obsidian Brick Stair", "default_obsidian_brick.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 13, "stair_inner_obsidian_block", "Inner Obsidian Block Stair", "default_obsidian_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 14, "stair_inner_ice", "Inner Ice Stair", "default_ice.png", &[("cracky", 3), ("cools_lava", 1), ("slippery", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 15, "stair_inner_snowblock", "Inner Snow Block Stair", "esp_snow.png", &[("crumbly", 3), ("cools_lava", 1), ("snowy", 1), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 16, "stair_inner_steelblock", "Inner Steel Block Stair", "default_steel_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 17, "stair_inner_copperblock", "Inner Copper Block Stair", "default_copper_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 18, "stair_inner_tinblock", "Inner Tin Block Stair", "default_tin_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 19, "stair_inner_bronzeblock", "Inner Bronze Block Stair", "default_bronze_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_inner() + 20, "stair_inner_goldblock", "Inner Gold Block Stair", "default_gold_block.png", &[("cracky", 1), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 0, "stair_outer_desert_stone", "Outer Desert Stone Stair", "default_desert_stone.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 1, "stair_outer_desert_cobble", "Outer Desert Cobblestone Stair", "default_desert_cobble.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 2, "stair_outer_desert_stonebrick", "Outer Desert Stone Brick Stair", "default_desert_stone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 3, "stair_outer_desert_stone_block", "Outer Desert Stone Block Stair", "default_desert_stone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 4, "stair_outer_desert_sandstone", "Outer Desert Sandstone Stair", "default_desert_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 5, "stair_outer_desert_sandstone_brick", "Outer Desert Sandstone Brick Stair", "default_desert_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 6, "stair_outer_desert_sandstone_block", "Outer Desert Sandstone Block Stair", "default_desert_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 7, "stair_outer_silver_sandstone", "Outer Silver Sandstone Stair", "default_silver_sandstone.png", &[("crumbly", 1), ("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 8, "stair_outer_silver_sandstone_brick", "Outer Silver Sandstone Brick Stair", "default_silver_sandstone_brick.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 9, "stair_outer_silver_sandstone_block", "Outer Silver Sandstone Block Stair", "default_silver_sandstone_block.png", &[("cracky", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 10, "stair_outer_brick", "Outer Brick Stair", "default_brick.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 11, "stair_outer_obsidian", "Outer Obsidian Stair", "default_obsidian.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 12, "stair_outer_obsidianbrick", "Outer Obsidian Brick Stair", "default_obsidian_brick.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 13, "stair_outer_obsidian_block", "Outer Obsidian Block Stair", "default_obsidian_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 14, "stair_outer_ice", "Outer Ice Stair", "default_ice.png", &[("cracky", 3), ("cools_lava", 1), ("slippery", 3), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 15, "stair_outer_snowblock", "Outer Snow Block Stair", "esp_snow.png", &[("crumbly", 3), ("cools_lava", 1), ("snowy", 1), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 16, "stair_outer_steelblock", "Outer Steel Block Stair", "default_steel_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 17, "stair_outer_copperblock", "Outer Copper Block Stair", "default_copper_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 18, "stair_outer_tinblock", "Outer Tin Block Stair", "default_tin_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 19, "stair_outer_bronzeblock", "Outer Bronze Block Stair", "default_bronze_block.png", &[("cracky", 1), ("level", 2), ("stair", 1)]),
+    shaped!(stairs::BUILDING.first_outer() + 20, "stair_outer_goldblock", "Outer Gold Block Stair", "default_gold_block.png", &[("cracky", 1), ("stair", 1)]),
+    // minetest_game's flowers, mushrooms and waterlily (colours.rs; CC BY-SA
+    // 3.0, see media/LICENSE-flowers.txt).
+    Node {
+        id: colours::FIRST_FLOWER + 0,
+        name: "esp:rose",
+        description: "Red Rose",
+        tiles: ["flowers_rose.png"; 6],
+        groups: &[("snappy", 3), ("flower", 1), ("flora", 1), ("attached_node", 1), ("color_red", 1), ("flammable", 1)],
+        drop: colours::FIRST_FLOWER + 0,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::FIRST_FLOWER + 1,
+        name: "esp:tulip",
+        description: "Orange Tulip",
+        tiles: ["flowers_tulip.png"; 6],
+        groups: &[("snappy", 3), ("flower", 1), ("flora", 1), ("attached_node", 1), ("color_orange", 1), ("flammable", 1)],
+        drop: colours::FIRST_FLOWER + 1,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::FIRST_FLOWER + 2,
+        name: "esp:dandelion_yellow",
+        description: "Yellow Dandelion",
+        tiles: ["flowers_dandelion_yellow.png"; 6],
+        groups: &[("snappy", 3), ("flower", 1), ("flora", 1), ("attached_node", 1), ("color_yellow", 1), ("flammable", 1)],
+        drop: colours::FIRST_FLOWER + 2,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::FIRST_FLOWER + 3,
+        name: "esp:chrysanthemum_green",
+        description: "Green Chrysanthemum",
+        tiles: ["flowers_chrysanthemum_green.png"; 6],
+        groups: &[("snappy", 3), ("flower", 1), ("flora", 1), ("attached_node", 1), ("color_green", 1), ("flammable", 1)],
+        drop: colours::FIRST_FLOWER + 3,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::FIRST_FLOWER + 4,
+        name: "esp:geranium",
+        description: "Blue Geranium",
+        tiles: ["flowers_geranium.png"; 6],
+        groups: &[("snappy", 3), ("flower", 1), ("flora", 1), ("attached_node", 1), ("color_blue", 1), ("flammable", 1)],
+        drop: colours::FIRST_FLOWER + 4,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::FIRST_FLOWER + 5,
+        name: "esp:viola",
+        description: "Viola",
+        tiles: ["flowers_viola.png"; 6],
+        groups: &[("snappy", 3), ("flower", 1), ("flora", 1), ("attached_node", 1), ("color_violet", 1), ("flammable", 1)],
+        drop: colours::FIRST_FLOWER + 5,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::FIRST_FLOWER + 6,
+        name: "esp:dandelion_white",
+        description: "White Dandelion",
+        tiles: ["flowers_dandelion_white.png"; 6],
+        groups: &[("snappy", 3), ("flower", 1), ("flora", 1), ("attached_node", 1), ("color_white", 1), ("flammable", 1)],
+        drop: colours::FIRST_FLOWER + 6,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::FIRST_FLOWER + 7,
+        name: "esp:tulip_black",
+        description: "Black Tulip",
+        tiles: ["flowers_tulip_black.png"; 6],
+        groups: &[("snappy", 3), ("flower", 1), ("flora", 1), ("attached_node", 1), ("color_black", 1), ("flammable", 1)],
+        drop: colours::FIRST_FLOWER + 7,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::MUSHROOM_RED,
+        name: "esp:mushroom_red",
+        description: "Red Mushroom",
+        tiles: ["flowers_mushroom_red.png"; 6],
+        groups: &[("mushroom", 1), ("snappy", 3), ("attached_node", 1), ("flammable", 1)],
+        drop: colours::MUSHROOM_RED,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::MUSHROOM_BROWN,
+        name: "esp:mushroom_brown",
+        description: "Brown Mushroom",
+        tiles: ["flowers_mushroom_brown.png"; 6],
+        groups: &[("mushroom", 1), ("food_mushroom", 1), ("snappy", 3), ("attached_node", 1), ("flammable", 1)],
+        drop: colours::MUSHROOM_BROWN,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: colours::WATERLILY,
+        name: "esp:waterlily",
+        description: "Waterlily",
+        tiles: [
+            "flowers_waterlily.png",
+            "flowers_waterlily_bottom.png",
+            "flowers_waterlily_bottom.png",
+            "flowers_waterlily_bottom.png",
+            "flowers_waterlily_bottom.png",
+            "flowers_waterlily_bottom.png",
+        ],
+        groups: &[("snappy", 3), ("flower", 1), ("flammable", 1)],
+        drop: colours::WATERLILY,
+        drop_count: 1,
+        kind: Kind::Lily,
+    },
+    // minetest_game's wool in its other 14 colours (see
+    // media/LICENSE-farming.txt; white is farming's, above).
+    Node {
+        id: colours::wool(1),
+        name: "esp:wool_grey",
+        description: "Grey Wool",
+        tiles: ["wool_grey.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_grey", 1)],
+        drop: colours::wool(1),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(2),
+        name: "esp:wool_dark_grey",
+        description: "Dark Grey Wool",
+        tiles: ["wool_dark_grey.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_dark_grey", 1)],
+        drop: colours::wool(2),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(3),
+        name: "esp:wool_black",
+        description: "Black Wool",
+        tiles: ["wool_black.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_black", 1)],
+        drop: colours::wool(3),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(4),
+        name: "esp:wool_violet",
+        description: "Violet Wool",
+        tiles: ["wool_violet.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_violet", 1)],
+        drop: colours::wool(4),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(5),
+        name: "esp:wool_blue",
+        description: "Blue Wool",
+        tiles: ["wool_blue.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_blue", 1)],
+        drop: colours::wool(5),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(6),
+        name: "esp:wool_cyan",
+        description: "Cyan Wool",
+        tiles: ["wool_cyan.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_cyan", 1)],
+        drop: colours::wool(6),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(7),
+        name: "esp:wool_dark_green",
+        description: "Dark Green Wool",
+        tiles: ["wool_dark_green.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_dark_green", 1)],
+        drop: colours::wool(7),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(8),
+        name: "esp:wool_green",
+        description: "Green Wool",
+        tiles: ["wool_green.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_green", 1)],
+        drop: colours::wool(8),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(9),
+        name: "esp:wool_yellow",
+        description: "Yellow Wool",
+        tiles: ["wool_yellow.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_yellow", 1)],
+        drop: colours::wool(9),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(10),
+        name: "esp:wool_brown",
+        description: "Brown Wool",
+        tiles: ["wool_brown.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_brown", 1)],
+        drop: colours::wool(10),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(11),
+        name: "esp:wool_orange",
+        description: "Orange Wool",
+        tiles: ["wool_orange.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_orange", 1)],
+        drop: colours::wool(11),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(12),
+        name: "esp:wool_red",
+        description: "Red Wool",
+        tiles: ["wool_red.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_red", 1)],
+        drop: colours::wool(12),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(13),
+        name: "esp:wool_magenta",
+        description: "Magenta Wool",
+        tiles: ["wool_magenta.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_magenta", 1)],
+        drop: colours::wool(13),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: colours::wool(14),
+        name: "esp:wool_pink",
+        description: "Pink Wool",
+        tiles: ["wool_pink.png"; 6],
+        groups: &[("snappy", 2), ("choppy", 2), ("oddly_breakable_by_hand", 3), ("flammable", 3), ("wool", 1), ("color_pink", 1)],
+        drop: colours::wool(14),
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -1950,6 +2775,211 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Blueberries",
         image: "default_blueberries.png",
         groups: &[("food_blueberries", 1), ("food_berry", 1)],
+    },
+    // minetest_game's dyes (mods/dye).
+    CraftItem {
+        id: colours::dye(0),
+        name: "esp:dye_white",
+        description: "White Dye",
+        image: "dye_white.png",
+        groups: &[("dye", 1), ("color_white", 1)],
+    },
+    CraftItem {
+        id: colours::dye(1),
+        name: "esp:dye_grey",
+        description: "Grey Dye",
+        image: "dye_grey.png",
+        groups: &[("dye", 1), ("color_grey", 1)],
+    },
+    CraftItem {
+        id: colours::dye(2),
+        name: "esp:dye_dark_grey",
+        description: "Dark Grey Dye",
+        image: "dye_dark_grey.png",
+        groups: &[("dye", 1), ("color_dark_grey", 1)],
+    },
+    CraftItem {
+        id: colours::dye(3),
+        name: "esp:dye_black",
+        description: "Black Dye",
+        image: "dye_black.png",
+        groups: &[("dye", 1), ("color_black", 1)],
+    },
+    CraftItem {
+        id: colours::dye(4),
+        name: "esp:dye_violet",
+        description: "Violet Dye",
+        image: "dye_violet.png",
+        groups: &[("dye", 1), ("color_violet", 1)],
+    },
+    CraftItem {
+        id: colours::dye(5),
+        name: "esp:dye_blue",
+        description: "Blue Dye",
+        image: "dye_blue.png",
+        groups: &[("dye", 1), ("color_blue", 1)],
+    },
+    CraftItem {
+        id: colours::dye(6),
+        name: "esp:dye_cyan",
+        description: "Cyan Dye",
+        image: "dye_cyan.png",
+        groups: &[("dye", 1), ("color_cyan", 1)],
+    },
+    CraftItem {
+        id: colours::dye(7),
+        name: "esp:dye_dark_green",
+        description: "Dark Green Dye",
+        image: "dye_dark_green.png",
+        groups: &[("dye", 1), ("color_dark_green", 1)],
+    },
+    CraftItem {
+        id: colours::dye(8),
+        name: "esp:dye_green",
+        description: "Green Dye",
+        image: "dye_green.png",
+        groups: &[("dye", 1), ("color_green", 1)],
+    },
+    CraftItem {
+        id: colours::dye(9),
+        name: "esp:dye_yellow",
+        description: "Yellow Dye",
+        image: "dye_yellow.png",
+        groups: &[("dye", 1), ("color_yellow", 1)],
+    },
+    CraftItem {
+        id: colours::dye(10),
+        name: "esp:dye_brown",
+        description: "Brown Dye",
+        image: "dye_brown.png",
+        groups: &[("dye", 1), ("color_brown", 1)],
+    },
+    CraftItem {
+        id: colours::dye(11),
+        name: "esp:dye_orange",
+        description: "Orange Dye",
+        image: "dye_orange.png",
+        groups: &[("dye", 1), ("color_orange", 1)],
+    },
+    CraftItem {
+        id: colours::dye(12),
+        name: "esp:dye_red",
+        description: "Red Dye",
+        image: "dye_red.png",
+        groups: &[("dye", 1), ("color_red", 1)],
+    },
+    CraftItem {
+        id: colours::dye(13),
+        name: "esp:dye_magenta",
+        description: "Magenta Dye",
+        image: "dye_magenta.png",
+        groups: &[("dye", 1), ("color_magenta", 1)],
+    },
+    CraftItem {
+        id: colours::dye(14),
+        name: "esp:dye_pink",
+        description: "Pink Dye",
+        image: "dye_pink.png",
+        groups: &[("dye", 1), ("color_pink", 1)],
+    },
+    // minetest_game's lumps, crystals and ingots (craftitems.lua).
+    CraftItem {
+        id: ITEM_FLINT,
+        name: "esp:flint",
+        description: "Flint",
+        image: "default_flint.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_CLAY_LUMP,
+        name: "esp:clay_lump",
+        description: "Clay Lump",
+        image: "default_clay_lump.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_CLAY_BRICK,
+        name: "esp:clay_brick",
+        description: "Clay Brick",
+        image: "default_clay_brick.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_OBSIDIAN_SHARD,
+        name: "esp:obsidian_shard",
+        description: "Obsidian Shard",
+        image: "default_obsidian_shard.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_COPPER_LUMP,
+        name: "esp:copper_lump",
+        description: "Copper Lump",
+        image: "default_copper_lump.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_TIN_LUMP,
+        name: "esp:tin_lump",
+        description: "Tin Lump",
+        image: "default_tin_lump.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_GOLD_LUMP,
+        name: "esp:gold_lump",
+        description: "Gold Lump",
+        image: "default_gold_lump.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_MESE_CRYSTAL,
+        name: "esp:mese_crystal",
+        description: "Mese Crystal",
+        image: "default_mese_crystal.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_MESE_FRAGMENT,
+        name: "esp:mese_crystal_fragment",
+        description: "Mese Crystal Fragment",
+        image: "default_mese_crystal_fragment.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_DIAMOND,
+        name: "esp:diamond",
+        description: "Diamond",
+        image: "default_diamond.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_COPPER_INGOT,
+        name: "esp:copper_ingot",
+        description: "Copper Ingot",
+        image: "default_copper_ingot.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_TIN_INGOT,
+        name: "esp:tin_ingot",
+        description: "Tin Ingot",
+        image: "default_tin_ingot.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_BRONZE_INGOT,
+        name: "esp:bronze_ingot",
+        description: "Bronze Ingot",
+        image: "default_bronze_ingot.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_GOLD_INGOT,
+        name: "esp:gold_ingot",
+        description: "Gold Ingot",
+        image: "default_gold_ingot.png",
+        groups: &[],
     },
     // farming's (see media/LICENSE-farming.txt).
     CraftItem {
@@ -2211,6 +3241,175 @@ pub const TOOLS: &[Tool] = &[
         },
         groups: &[("sword", 1)],
     },
+    // minetest_game's bronze, mese and diamond tools.
+    Tool {
+        id: TOOL_PICK_BRONZE,
+        name: "esp:pick_bronze",
+        description: "Bronze Pickaxe",
+        image: "default_tool_bronzepick.png",
+        wield_image: "default_tool_bronzepick.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.0,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "cracky", times: &[(1, 4.5), (2, 1.8), (3, 0.9)], uses: 20, maxlevel: 2 }],
+            fleshy: 4,
+        },
+        groups: &[("pickaxe", 1)],
+    },
+    Tool {
+        id: TOOL_SHOVEL_BRONZE,
+        name: "esp:shovel_bronze",
+        description: "Bronze Shovel",
+        image: "default_tool_bronzeshovel.png",
+        wield_image: "default_tool_bronzeshovel.png^[transformR90",
+        caps: ToolCaps {
+            full_punch_interval: 1.1,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "crumbly", times: &[(1, 1.65), (2, 1.05), (3, 0.45)], uses: 25, maxlevel: 2 }],
+            fleshy: 3,
+        },
+        groups: &[("shovel", 1)],
+    },
+    Tool {
+        id: TOOL_AXE_BRONZE,
+        name: "esp:axe_bronze",
+        description: "Bronze Axe",
+        image: "default_tool_bronzeaxe.png",
+        wield_image: "default_tool_bronzeaxe.png",
+        caps: ToolCaps {
+            full_punch_interval: 1.0,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "choppy", times: &[(1, 2.75), (2, 1.7), (3, 1.15)], uses: 20, maxlevel: 2 }],
+            fleshy: 4,
+        },
+        groups: &[("axe", 1)],
+    },
+    Tool {
+        id: TOOL_SWORD_BRONZE,
+        name: "esp:sword_bronze",
+        description: "Bronze Sword",
+        image: "default_tool_bronzesword.png",
+        wield_image: "default_tool_bronzesword.png",
+        caps: ToolCaps {
+            full_punch_interval: 0.8,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "snappy", times: &[(1, 2.75), (2, 1.3), (3, 0.375)], uses: 25, maxlevel: 2 }],
+            fleshy: 6,
+        },
+        groups: &[("sword", 1)],
+    },
+    Tool {
+        id: TOOL_PICK_MESE,
+        name: "esp:pick_mese",
+        description: "Mese Pickaxe",
+        image: "default_tool_mesepick.png",
+        wield_image: "default_tool_mesepick.png",
+        caps: ToolCaps {
+            full_punch_interval: 0.9,
+            max_drop_level: 3,
+            groupcaps: &[GroupCap { group: "cracky", times: &[(1, 2.4), (2, 1.2), (3, 0.6)], uses: 20, maxlevel: 3 }],
+            fleshy: 5,
+        },
+        groups: &[("pickaxe", 1)],
+    },
+    Tool {
+        id: TOOL_SHOVEL_MESE,
+        name: "esp:shovel_mese",
+        description: "Mese Shovel",
+        image: "default_tool_meseshovel.png",
+        wield_image: "default_tool_meseshovel.png^[transformR90",
+        caps: ToolCaps {
+            full_punch_interval: 1.0,
+            max_drop_level: 3,
+            groupcaps: &[GroupCap { group: "crumbly", times: &[(1, 1.2), (2, 0.6), (3, 0.3)], uses: 20, maxlevel: 3 }],
+            fleshy: 4,
+        },
+        groups: &[("shovel", 1)],
+    },
+    Tool {
+        id: TOOL_AXE_MESE,
+        name: "esp:axe_mese",
+        description: "Mese Axe",
+        image: "default_tool_meseaxe.png",
+        wield_image: "default_tool_meseaxe.png",
+        caps: ToolCaps {
+            full_punch_interval: 0.9,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "choppy", times: &[(1, 2.2), (2, 1.0), (3, 0.6)], uses: 20, maxlevel: 3 }],
+            fleshy: 6,
+        },
+        groups: &[("axe", 1)],
+    },
+    Tool {
+        id: TOOL_SWORD_MESE,
+        name: "esp:sword_mese",
+        description: "Mese Sword",
+        image: "default_tool_mesesword.png",
+        wield_image: "default_tool_mesesword.png",
+        caps: ToolCaps {
+            full_punch_interval: 0.7,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "snappy", times: &[(1, 2.0), (2, 1.0), (3, 0.35)], uses: 30, maxlevel: 3 }],
+            fleshy: 7,
+        },
+        groups: &[("sword", 1)],
+    },
+    Tool {
+        id: TOOL_PICK_DIAMOND,
+        name: "esp:pick_diamond",
+        description: "Diamond Pickaxe",
+        image: "default_tool_diamondpick.png",
+        wield_image: "default_tool_diamondpick.png",
+        caps: ToolCaps {
+            full_punch_interval: 0.9,
+            max_drop_level: 3,
+            groupcaps: &[GroupCap { group: "cracky", times: &[(1, 2.0), (2, 1.0), (3, 0.5)], uses: 30, maxlevel: 3 }],
+            fleshy: 5,
+        },
+        groups: &[("pickaxe", 1)],
+    },
+    Tool {
+        id: TOOL_SHOVEL_DIAMOND,
+        name: "esp:shovel_diamond",
+        description: "Diamond Shovel",
+        image: "default_tool_diamondshovel.png",
+        wield_image: "default_tool_diamondshovel.png^[transformR90",
+        caps: ToolCaps {
+            full_punch_interval: 1.0,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "crumbly", times: &[(1, 1.1), (2, 0.5), (3, 0.3)], uses: 30, maxlevel: 3 }],
+            fleshy: 4,
+        },
+        groups: &[("shovel", 1)],
+    },
+    Tool {
+        id: TOOL_AXE_DIAMOND,
+        name: "esp:axe_diamond",
+        description: "Diamond Axe",
+        image: "default_tool_diamondaxe.png",
+        wield_image: "default_tool_diamondaxe.png",
+        caps: ToolCaps {
+            full_punch_interval: 0.9,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "choppy", times: &[(1, 2.1), (2, 0.9), (3, 0.5)], uses: 30, maxlevel: 3 }],
+            fleshy: 7,
+        },
+        groups: &[("axe", 1)],
+    },
+    Tool {
+        id: TOOL_SWORD_DIAMOND,
+        name: "esp:sword_diamond",
+        description: "Diamond Sword",
+        image: "default_tool_diamondsword.png",
+        wield_image: "default_tool_diamondsword.png",
+        caps: ToolCaps {
+            full_punch_interval: 0.7,
+            max_drop_level: 1,
+            groupcaps: &[GroupCap { group: "snappy", times: &[(1, 1.9), (2, 0.9), (3, 0.3)], uses: 40, maxlevel: 3 }],
+            fleshy: 8,
+        },
+        groups: &[("sword", 1)],
+    },
     // farming's hoes (hoes.lua). They have no digging of their own: a
     // left-click uses them, to turn dirt into soil (farming.rs).
     Tool {
@@ -2348,13 +3547,15 @@ pub fn light_source(id: u16) -> u8 {
     match def(id) {
         Some(n) if n.kind == Kind::Torch => TORCH_LIGHT,
         Some(n) if n.id == CONTENT_FURNACE_ACTIVE => FURNACE_LIGHT,
+        Some(n) if n.id == CONTENT_MESE_BLOCK => MESE_LIGHT,
+        Some(n) if n.id == CONTENT_MESE_LAMP => MESE_LAMP_LIGHT,
         _ => 0,
     }
 }
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -2384,26 +3585,27 @@ pub fn damage_per_second(id: u16) -> u16 {
     if is_lava(id) { LAVA_DAMAGE } else { 0 }
 }
 
-/// Whether water washes a node away (minetest_game's floodable): torches.
+/// Whether water washes a node away (minetest_game's floodable): torches
+/// and snow.
 pub fn floodable(id: u16) -> bool {
-    is_torch(id)
+    is_torch(id) || id == CONTENT_SNOW_LAYER || id == colours::WATERLILY
 }
 
 /// Whether placing a node can replace this one (builtin's buildable_to):
 /// air, an apple mark, or water.
 pub fn buildable_to(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid | Kind::Plant))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid | Kind::Plant | Kind::SnowLayer | Kind::Lily))
 }
 
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -2871,6 +4073,129 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_coral_orange.png", include_bytes!("../media/default_coral_orange.png")),
     ("default_coral_skeleton.png", include_bytes!("../media/default_coral_skeleton.png")),
     ("default_large_cactus_seedling.png", include_bytes!("../media/default_large_cactus_seedling.png")),
+    ("default_mineral_copper.png", include_bytes!("../media/default_mineral_copper.png")),
+    ("default_meselamp.png", include_bytes!("../media/default_meselamp.png")),
+    ("flowers_rose.png", include_bytes!("../media/flowers_rose.png")),
+    ("flowers_tulip.png", include_bytes!("../media/flowers_tulip.png")),
+    ("flowers_dandelion_yellow.png", include_bytes!("../media/flowers_dandelion_yellow.png")),
+    ("flowers_chrysanthemum_green.png", include_bytes!("../media/flowers_chrysanthemum_green.png")),
+    ("flowers_geranium.png", include_bytes!("../media/flowers_geranium.png")),
+    ("flowers_viola.png", include_bytes!("../media/flowers_viola.png")),
+    ("flowers_dandelion_white.png", include_bytes!("../media/flowers_dandelion_white.png")),
+    ("flowers_tulip_black.png", include_bytes!("../media/flowers_tulip_black.png")),
+    ("flowers_mushroom_red.png", include_bytes!("../media/flowers_mushroom_red.png")),
+    ("flowers_mushroom_brown.png", include_bytes!("../media/flowers_mushroom_brown.png")),
+    ("flowers_waterlily.png", include_bytes!("../media/flowers_waterlily.png")),
+    ("flowers_waterlily_bottom.png", include_bytes!("../media/flowers_waterlily_bottom.png")),
+    ("dye_white.png", include_bytes!("../media/dye_white.png")),
+    ("dye_grey.png", include_bytes!("../media/dye_grey.png")),
+    ("dye_dark_grey.png", include_bytes!("../media/dye_dark_grey.png")),
+    ("dye_black.png", include_bytes!("../media/dye_black.png")),
+    ("dye_violet.png", include_bytes!("../media/dye_violet.png")),
+    ("dye_blue.png", include_bytes!("../media/dye_blue.png")),
+    ("dye_cyan.png", include_bytes!("../media/dye_cyan.png")),
+    ("dye_dark_green.png", include_bytes!("../media/dye_dark_green.png")),
+    ("dye_green.png", include_bytes!("../media/dye_green.png")),
+    ("dye_yellow.png", include_bytes!("../media/dye_yellow.png")),
+    ("dye_brown.png", include_bytes!("../media/dye_brown.png")),
+    ("dye_orange.png", include_bytes!("../media/dye_orange.png")),
+    ("dye_red.png", include_bytes!("../media/dye_red.png")),
+    ("dye_magenta.png", include_bytes!("../media/dye_magenta.png")),
+    ("dye_pink.png", include_bytes!("../media/dye_pink.png")),
+    ("wool_grey.png", include_bytes!("../media/wool_grey.png")),
+    ("wool_dark_grey.png", include_bytes!("../media/wool_dark_grey.png")),
+    ("wool_black.png", include_bytes!("../media/wool_black.png")),
+    ("wool_violet.png", include_bytes!("../media/wool_violet.png")),
+    ("wool_blue.png", include_bytes!("../media/wool_blue.png")),
+    ("wool_cyan.png", include_bytes!("../media/wool_cyan.png")),
+    ("wool_dark_green.png", include_bytes!("../media/wool_dark_green.png")),
+    ("wool_green.png", include_bytes!("../media/wool_green.png")),
+    ("wool_yellow.png", include_bytes!("../media/wool_yellow.png")),
+    ("wool_brown.png", include_bytes!("../media/wool_brown.png")),
+    ("wool_orange.png", include_bytes!("../media/wool_orange.png")),
+    ("wool_red.png", include_bytes!("../media/wool_red.png")),
+    ("wool_magenta.png", include_bytes!("../media/wool_magenta.png")),
+    ("wool_pink.png", include_bytes!("../media/wool_pink.png")),
+    ("default_gravel_dig.1.ogg", include_bytes!("../media/default_gravel_dig.1.ogg")),
+    ("default_gravel_dig.2.ogg", include_bytes!("../media/default_gravel_dig.2.ogg")),
+    ("default_gravel_dug.1.ogg", include_bytes!("../media/default_gravel_dug.1.ogg")),
+    ("default_gravel_dug.2.ogg", include_bytes!("../media/default_gravel_dug.2.ogg")),
+    ("default_gravel_dug.3.ogg", include_bytes!("../media/default_gravel_dug.3.ogg")),
+    ("default_gravel_footstep.1.ogg", include_bytes!("../media/default_gravel_footstep.1.ogg")),
+    ("default_gravel_footstep.2.ogg", include_bytes!("../media/default_gravel_footstep.2.ogg")),
+    ("default_gravel_footstep.3.ogg", include_bytes!("../media/default_gravel_footstep.3.ogg")),
+    ("default_gravel_footstep.4.ogg", include_bytes!("../media/default_gravel_footstep.4.ogg")),
+    ("default_ice_dig.1.ogg", include_bytes!("../media/default_ice_dig.1.ogg")),
+    ("default_ice_dig.2.ogg", include_bytes!("../media/default_ice_dig.2.ogg")),
+    ("default_ice_dig.3.ogg", include_bytes!("../media/default_ice_dig.3.ogg")),
+    ("default_ice_dug.ogg", include_bytes!("../media/default_ice_dug.ogg")),
+    ("default_ice_footstep.1.ogg", include_bytes!("../media/default_ice_footstep.1.ogg")),
+    ("default_ice_footstep.2.ogg", include_bytes!("../media/default_ice_footstep.2.ogg")),
+    ("default_ice_footstep.3.ogg", include_bytes!("../media/default_ice_footstep.3.ogg")),
+    ("default_gravel.png", include_bytes!("../media/default_gravel.png")),
+    ("default_clay.png", include_bytes!("../media/default_clay.png")),
+    ("default_brick.png", include_bytes!("../media/default_brick.png")),
+    ("default_desert_sand.png", include_bytes!("../media/default_desert_sand.png")),
+    ("default_desert_stone.png", include_bytes!("../media/default_desert_stone.png")),
+    ("default_desert_cobble.png", include_bytes!("../media/default_desert_cobble.png")),
+    ("default_desert_stone_brick.png", include_bytes!("../media/default_desert_stone_brick.png")),
+    ("default_desert_stone_block.png", include_bytes!("../media/default_desert_stone_block.png")),
+    ("default_desert_sandstone.png", include_bytes!("../media/default_desert_sandstone.png")),
+    ("default_desert_sandstone_brick.png", include_bytes!("../media/default_desert_sandstone_brick.png")),
+    ("default_desert_sandstone_block.png", include_bytes!("../media/default_desert_sandstone_block.png")),
+    ("default_silver_sand.png", include_bytes!("../media/default_silver_sand.png")),
+    ("default_silver_sandstone.png", include_bytes!("../media/default_silver_sandstone.png")),
+    ("default_silver_sandstone_brick.png", include_bytes!("../media/default_silver_sandstone_brick.png")),
+    ("default_silver_sandstone_block.png", include_bytes!("../media/default_silver_sandstone_block.png")),
+    ("default_snowball.png", include_bytes!("../media/default_snowball.png")),
+    ("default_ice.png", include_bytes!("../media/default_ice.png")),
+    ("default_permafrost.png", include_bytes!("../media/default_permafrost.png")),
+    ("default_moss.png", include_bytes!("../media/default_moss.png")),
+    ("default_moss_side.png", include_bytes!("../media/default_moss_side.png")),
+    ("default_stones.png", include_bytes!("../media/default_stones.png")),
+    ("default_stones_side.png", include_bytes!("../media/default_stones_side.png")),
+    ("default_coniferous_litter.png", include_bytes!("../media/default_coniferous_litter.png")),
+    ("default_coniferous_litter_side.png", include_bytes!("../media/default_coniferous_litter_side.png")),
+    ("default_obsidian_brick.png", include_bytes!("../media/default_obsidian_brick.png")),
+    ("default_obsidian_block.png", include_bytes!("../media/default_obsidian_block.png")),
+    ("default_obsidian_glass.png", include_bytes!("../media/default_obsidian_glass.png")),
+    ("default_obsidian_glass_detail.png", include_bytes!("../media/default_obsidian_glass_detail.png")),
+    ("default_obsidian_shard.png", include_bytes!("../media/default_obsidian_shard.png")),
+    ("default_flint.png", include_bytes!("../media/default_flint.png")),
+    ("default_clay_lump.png", include_bytes!("../media/default_clay_lump.png")),
+    ("default_clay_brick.png", include_bytes!("../media/default_clay_brick.png")),
+    ("default_mineral_tin.png", include_bytes!("../media/default_mineral_tin.png")),
+    ("default_mineral_gold.png", include_bytes!("../media/default_mineral_gold.png")),
+    ("default_mineral_mese.png", include_bytes!("../media/default_mineral_mese.png")),
+    ("default_mineral_diamond.png", include_bytes!("../media/default_mineral_diamond.png")),
+    ("default_copper_lump.png", include_bytes!("../media/default_copper_lump.png")),
+    ("default_tin_lump.png", include_bytes!("../media/default_tin_lump.png")),
+    ("default_gold_lump.png", include_bytes!("../media/default_gold_lump.png")),
+    ("default_mese_crystal.png", include_bytes!("../media/default_mese_crystal.png")),
+    ("default_mese_crystal_fragment.png", include_bytes!("../media/default_mese_crystal_fragment.png")),
+    ("default_diamond.png", include_bytes!("../media/default_diamond.png")),
+    ("default_copper_ingot.png", include_bytes!("../media/default_copper_ingot.png")),
+    ("default_tin_ingot.png", include_bytes!("../media/default_tin_ingot.png")),
+    ("default_bronze_ingot.png", include_bytes!("../media/default_bronze_ingot.png")),
+    ("default_gold_ingot.png", include_bytes!("../media/default_gold_ingot.png")),
+    ("default_copper_block.png", include_bytes!("../media/default_copper_block.png")),
+    ("default_tin_block.png", include_bytes!("../media/default_tin_block.png")),
+    ("default_bronze_block.png", include_bytes!("../media/default_bronze_block.png")),
+    ("default_gold_block.png", include_bytes!("../media/default_gold_block.png")),
+    ("default_mese_block.png", include_bytes!("../media/default_mese_block.png")),
+    ("default_diamond_block.png", include_bytes!("../media/default_diamond_block.png")),
+    ("default_tool_bronzepick.png", include_bytes!("../media/default_tool_bronzepick.png")),
+    ("default_tool_bronzeshovel.png", include_bytes!("../media/default_tool_bronzeshovel.png")),
+    ("default_tool_bronzeaxe.png", include_bytes!("../media/default_tool_bronzeaxe.png")),
+    ("default_tool_bronzesword.png", include_bytes!("../media/default_tool_bronzesword.png")),
+    ("default_tool_mesepick.png", include_bytes!("../media/default_tool_mesepick.png")),
+    ("default_tool_meseshovel.png", include_bytes!("../media/default_tool_meseshovel.png")),
+    ("default_tool_meseaxe.png", include_bytes!("../media/default_tool_meseaxe.png")),
+    ("default_tool_mesesword.png", include_bytes!("../media/default_tool_mesesword.png")),
+    ("default_tool_diamondpick.png", include_bytes!("../media/default_tool_diamondpick.png")),
+    ("default_tool_diamondshovel.png", include_bytes!("../media/default_tool_diamondshovel.png")),
+    ("default_tool_diamondaxe.png", include_bytes!("../media/default_tool_diamondaxe.png")),
+    ("default_tool_diamondsword.png", include_bytes!("../media/default_tool_diamondsword.png")),
     ("default_grass_2.png", include_bytes!("../media/default_grass_2.png")),
     ("default_grass_3.png", include_bytes!("../media/default_grass_3.png")),
     ("default_grass_4.png", include_bytes!("../media/default_grass_4.png")),
@@ -3003,6 +4328,28 @@ fn sounds_of(id: u16) -> Sounds {
         CONTENT_DIRT => dirt(("default_dirt_footstep", 0.25)),
         CONTENT_GRASS => dirt(("default_grass_footstep", 0.25)),
         CONTENT_SNOW => dirt(("default_snow_footstep", 0.2)),
+        // minetest_game's node_sound_snow_defaults, _gravel_ and _ice_.
+        CONTENT_SNOW_LAYER | CONTENT_SNOW_BLOCK => Sounds {
+            footstep: ("default_snow_footstep", 0.2),
+            dig: ("default_snow_footstep", 0.3),
+            dug: ("default_snow_footstep", 0.3),
+            place: ("default_place_node", 1.0),
+        },
+        CONTENT_GRAVEL => Sounds {
+            footstep: ("default_gravel_footstep", 0.25),
+            dig: ("default_gravel_dig", 0.35),
+            dug: ("default_gravel_dug", 1.0),
+            place: ("default_place_node", 1.0),
+        },
+        CONTENT_ICE => Sounds {
+            footstep: ("default_ice_footstep", 0.15),
+            dig: ("default_ice_dig", 0.5),
+            dug: ("default_ice_dug", 0.5),
+            place: ("default_place_node_hard", 1.0),
+        },
+        CONTENT_CLAY | CONTENT_PERMAFROST | CONTENT_PERMAFROST_STONES => dirt(("default_dirt_footstep", 0.25)),
+        CONTENT_PERMAFROST_MOSS | CONTENT_CONIFEROUS_LITTER => dirt(("default_grass_footstep", 0.25)),
+        CONTENT_DESERT_SAND | CONTENT_SILVER_SAND => sounds_of(CONTENT_SAND),
         // minetest_game's savanna grass and rainforest litter: grass steps.
         CONTENT_DRY_GRASS | CONTENT_LITTER => dirt(("default_grass_footstep", 0.4)),
         CONTENT_DRY_DIRT => dirt(("default_dirt_footstep", 0.25)),
@@ -3020,7 +4367,7 @@ fn sounds_of(id: u16) -> Sounds {
             dug: ("default_grass_footstep", 0.2),
             place: ("default_place_node", 0.25),
         },
-        farming::WOOL_WHITE => Sounds {
+        id if id == farming::WOOL_WHITE || group_of(id, "wool") > 0 => Sounds {
             footstep: ("", 1.0),
             dig: ("default_dig_dig_immediate", 0.5),
             dug: ("default_dug_node", 0.25),
@@ -3040,7 +4387,7 @@ fn sounds_of(id: u16) -> Sounds {
         id if is_chest(id) => wood,
         CONTENT_LADDER_WOOD => wood,
         // minetest_game's node_sound_glass_defaults and _metal_defaults.
-        CONTENT_GLASS => Sounds {
+        CONTENT_GLASS | CONTENT_MESE_LAMP | CONTENT_OBSIDIAN_GLASS => Sounds {
             footstep: ("default_glass_footstep", 0.3),
             dig: ("default_glass_footstep", 0.5),
             dug: ("default_break_glass", 1.0),
@@ -3065,7 +4412,7 @@ fn sounds_of(id: u16) -> Sounds {
             dug: ("default_dug_node", 0.25),
             place: ("default_place_node_hard", 1.0),
         },
-        CONTENT_STEEL_BLOCK | CONTENT_LADDER_STEEL => Sounds {
+        CONTENT_STEEL_BLOCK | CONTENT_LADDER_STEEL | CONTENT_COPPER_BLOCK | CONTENT_TIN_BLOCK | CONTENT_BRONZE_BLOCK | CONTENT_GOLD_BLOCK => Sounds {
             footstep: ("default_metal_footstep", 0.2),
             dig: ("default_dig_metal", 0.5),
             dug: ("default_dug_metal", 0.5),
@@ -3076,7 +4423,7 @@ fn sounds_of(id: u16) -> Sounds {
         // Cactus and bush stems sound like wood; kelp like sand, corals like
         // stone, but dug like plants (plants.rs).
         plants::CACTUS | plants::LARGE_CACTUS_SEEDLING | plants::BUSH_STEM | plants::ACACIA_BUSH_STEM | plants::FIR_BUSH_STEM => wood,
-        plants::PAPYRUS | plants::BUSH_LEAVES | plants::BUSH_SAPLING | plants::BLUEBERRY_LEAVES_WITH_BERRIES | plants::BLUEBERRY_LEAVES
+        colours::WATERLILY | plants::PAPYRUS | plants::BUSH_LEAVES | plants::BUSH_SAPLING | plants::BLUEBERRY_LEAVES_WITH_BERRIES | plants::BLUEBERRY_LEAVES
         | plants::BLUEBERRY_SAPLING | plants::ACACIA_BUSH_LEAVES | plants::ACACIA_BUSH_SAPLING | plants::FIR_BUSH_NEEDLES
         | plants::FIR_BUSH_SAPLING => sounds_of(CONTENT_BIRCH_LEAVES),
         plants::KELP => Sounds {
@@ -3102,6 +4449,9 @@ fn trapdoor_image(id: u16) -> &'static str {
         _ => TRAPDOOR_WOOD_CLOSED[0],
     }
 }
+
+/// A layer of snow: a quarter of a node.
+const SNOW_LAYER_BOX: [f32; 6] = [-0.5, -0.5, -0.5, 0.5, -0.25, 0.5];
 
 /// The plant growing out of kelp or a coral.
 fn rooted_plant(id: u16) -> &'static str {
@@ -3213,6 +4563,8 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Fence => fence_image(n.id),
                 Kind::Stalk | Kind::Stem => n.tiles[0],
                 Kind::Rooted => rooted_plant(n.id),
+                Kind::SnowLayer => "default_snowball.png",
+                Kind::Lily => "flowers_waterlily.png",
                 _ => "",
             },
             wield_image: match n.kind {
@@ -3225,19 +4577,23 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Fence => fence_image(n.id),
                 Kind::Stalk | Kind::Stem => n.tiles[0],
                 Kind::Rooted => rooted_plant(n.id),
+                Kind::SnowLayer => "default_snowball.png",
+                Kind::Lily => "flowers_waterlily.png",
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
             // A bed is placed as two nodes, or not at all (its on_place):
             // the client doesn't guess.
             // Nor are kelp and corals, which go into the node pointed at.
-            place_prediction: if matches!(n.kind, Kind::Bed | Kind::Rooted) { "" } else { n.name },
+            place_prediction: if matches!(n.kind, Kind::Bed | Kind::Rooted | Kind::Lily) { "" } else { n.name },
             tool_capabilities: Vec::new(),
             place_sound: sounds_of(n.id).place,
             stack_max: stack_max(n.id),
             groups: n.groups,
-            usable: n.kind == Kind::Apple,
-            liquids_pointable: false,
+            // Mushrooms are eaten.
+            usable: n.kind == Kind::Apple || colours::is_mushroom(n.id),
+            // A waterlily is put on water, pointed at.
+            liquids_pointable: n.kind == Kind::Lily,
         });
     }
     for c in CRAFTITEMS {
@@ -3301,6 +4657,7 @@ const ALPHAMODE_OPAQUE: u8 = 2;
 const ALPHAMODE_CLIP: u8 = 1;
 const NDT_MESH: u8 = 16;
 const NDT_PLANTLIKE_ROOTED: u8 = 17;
+const NDT_GLASSLIKE: u8 = 4;
 const CPT2_LEVELED: u8 = 5;
 const NDT_PLANTLIKE: u8 = 9;
 const NDT_AIRLIKE: u8 = 1;
@@ -3416,7 +4773,9 @@ const CHEST_OPEN_MESH: &str = "chest_open.obj";
 /// tufts of grass, taller wild cotton, and crops and seeds flat on the
 /// ground.
 fn farming_box(id: u16) -> [f32; 6] {
-    if plants::is_small_plant(id) {
+    if colours::is_flower(id) || colours::is_mushroom(id) {
+        colours::selection_box(id)
+    } else if plants::is_small_plant(id) {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, -0.25, 6.0 / 16.0]
     } else if farming::is_grass(id) || farming::is_dry_grass(id) {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, -5.0 / 16.0, 6.0 / 16.0]
@@ -3535,8 +4894,11 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
     } else if seed {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
-    } else if fence || stalk {
+    } else if fence || stalk || n.kind == Kind::Lamp || n.kind == Kind::SnowLayer {
         w.u8(CPT_LIGHT).u8(0);
+    } else if n.kind == Kind::Lily {
+        // Turned any way (facedir), as minetest_game places it.
+        w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else if rooted {
         // Kelp's param2 is its height, in sixteenths of a node (leveled).
         w.u8(CPT_LIGHT).u8(if n.id == plants::KELP { CPT2_LEVELED } else { 0 });
@@ -3568,6 +4930,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Gate => (NDT_MESH, fences::gate_mesh(n.id)),
         Kind::Stalk | Kind::Stem => (NDT_PLANTLIKE, ""),
         Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
+        Kind::Lamp => (NDT_GLASSLIKE, ""),
+        Kind::SnowLayer => (NDT_NODEBOX, ""),
+        Kind::Lily => (NDT_NODEBOX, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
@@ -3650,7 +5015,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily)) as u8) // light_propagates
         .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
@@ -3696,6 +5061,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         (_, Some((_, open))) => fixed_nodebox(&mut w, &[doors::trapdoor_box(open)]),
         _ if bed => fixed_nodebox(&mut w, beds::boxes(n.id)),
         _ if fence => connected_nodebox(&mut w, fence_box),
+        _ if n.kind == Kind::SnowLayer => fixed_nodebox(&mut w, &[SNOW_LAYER_BOX]),
+        _ if n.kind == Kind::Lily => fixed_nodebox(&mut w, &[colours::LILY_BOX]),
         _ => regular_nodebox(&mut w), // node_box (unused by meshes)
     }
     if let Some((_, open)) = trapdoor {
@@ -3723,6 +5090,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         fixed_nodebox(&mut w, &[farming_box(n.id)]);
     } else if bed {
         fixed_nodebox(&mut w, &[beds::selection_box(n.id)]);
+    } else if n.kind == Kind::SnowLayer {
+        fixed_nodebox(&mut w, &[SNOW_LAYER_BOX]);
+    } else if n.kind == Kind::Lily {
+        fixed_nodebox(&mut w, &[colours::LILY_SELECTION]);
     } else if stalk {
         let r = if n.kind == Kind::Stem { 7.0 / 16.0 } else { 6.0 / 16.0 };
         fixed_nodebox(&mut w, &[[-r, -0.5, -r, r, 0.5, r]]);
@@ -3750,6 +5121,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     } else if bed {
         // Left empty in beds.lua, so the node box.
         fixed_nodebox(&mut w, beds::boxes(n.id));
+    } else if n.kind == Kind::SnowLayer {
+        // A little thinner underfoot than it looks (minetest_game's snow).
+        fixed_nodebox(&mut w, &[[-0.5, -0.5, -0.5, 0.5, -7.0 / 16.0, 0.5]]);
     } else if fence {
         connected_nodebox(&mut w, &fences::FENCE_COLLISION);
     } else if let Some((_, open)) = gate {
@@ -3778,7 +5152,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
             ALPHAMODE_OPAQUE
         } else if liquid {
             ALPHAMODE_BLEND
-        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed || gate.is_some() || stalk || rooted {
+        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed || gate.is_some() || stalk || rooted || n.kind == Kind::Lily {
             ALPHAMODE_CLIP
         } else {
             ALPHAMODE_OPAQUE

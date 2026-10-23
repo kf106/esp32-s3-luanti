@@ -1,0 +1,112 @@
+Flowers and dyes: textures from Minetest Game's flowers and dye mods
+(https://github.com/luanti-org/minetest_game, mods/flowers and mods/dye), unchanged:
+
+  flowers_rose.png, flowers_tulip.png, flowers_dandelion_yellow.png,
+  flowers_chrysanthemum_green.png, flowers_geranium.png, flowers_viola.png,
+  flowers_dandelion_white.png, flowers_tulip_black.png, flowers_mushroom_red.png,
+  flowers_mushroom_brown.png, flowers_waterlily.png, flowers_waterlily_bottom.png
+  dye_*.png (15 colours)
+
+Credits, from the flowers mod's README.md:
+
+RHRhino (CC BY-SA 3.0):
+
+- `flowers_dandelion_white.png`
+- `flowers_geranium.png`
+- `flowers_rose.png`
+- `flowers_tulip.png`
+- `flowers_viola.png`
+
+Gambit (CC BY-SA 3.0):
+
+- `flowers_mushroom_brown.png`
+- `flowers_mushroom_red.png`
+- `flowers_waterlily.png`
+
+yyt16384 (CC BY-SA 3.0):
+
+- `flowers_waterlily_bottom.png` -- Derived from Gambit's texture
+
+paramat (CC BY-SA 3.0):
+
+- `flowers_dandelion_yellow.png` -- Derived from RHRhino's texture
+- `flowers_tulip_black.png` -- Derived from RHRhino's texture
+- `flowers_chrysanthemum_green.png`
+
+From the dye mod's README.md: textures by Perttu Ahola (celeron55) (CC BY-SA 3.0).
+
+Licence of the flowers mod's media, from its license.txt:
+
+Licenses of media (textures)
+----------------------------
+
+Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+Copyright (C) 2014-2016 RHRhino
+Copyright (C) 2015-2016 Gambit
+Copyright (C) 2016 yyt16384
+Copyright (C) 2017 paramat
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+ShareAlike — If you remix, transform, or build upon the material, you must distribute
+your contributions under the same license as the original.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by-sa/3.0/
+
+
+Licence of the dye mod's media, from its license.txt:
+
+Licenses of media (textures)
+----------------------------
+
+Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+Copyright (C) 2012-2016 Perttu Ahola (celeron55) <celeron55@gmail.com>
+
+You are free to:
+Share — copy and redistribute the material in any medium or format.
+Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+The licensor cannot revoke these freedoms as long as you follow the license terms.
+
+Under the following terms:
+
+Attribution — You must give appropriate credit, provide a link to the license, and
+indicate if changes were made. You may do so in any reasonable manner, but not in any way
+that suggests the licensor endorses you or your use.
+
+ShareAlike — If you remix, transform, or build upon the material, you must distribute
+your contributions under the same license as the original.
+
+No additional restrictions — You may not apply legal terms or technological measures that
+legally restrict others from doing anything the license permits.
+
+Notices:
+
+You do not have to comply with the license for elements of the material in the public
+domain or where your use is permitted by an applicable exception or limitation.
+No warranties are given. The license may not give you all of the permissions necessary
+for your intended use. For example, other rights such as publicity, privacy, or moral
+rights may limit how you use the material.
+
+For more details:
+http://creativecommons.org/licenses/by-sa/3.0/
