@@ -1,0 +1,16 @@
+# The server's code built for the PC, with tests/host/harness.rs as its
+# main: the unit tests, a set of checks, and the server itself on a UDP
+# port for the network tests. tests/run.py copies this, the sources and the
+# media into a folder outside the project (whose .cargo/config.toml would
+# otherwise make Cargo build for the ESP32) and builds it there.
+[package]
+name = "esp32-minetest-host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4"
+qrcodegen = "1.8"
+
+[profile.release]
+debug = false

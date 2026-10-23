@@ -10,3 +10,9 @@
 *.swp
 .vscode/
 .idea/
+
+# Python bytecode (tests/)
+__pycache__/
+
+# Python virtual environment for the tests
+/.venv/

@@ -19,6 +19,7 @@ use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
 use crate::beds;
+use crate::bones;
 use crate::doors::{self, Door};
 use crate::falling::{self, Falling};
 use crate::farming;
@@ -455,6 +456,8 @@ pub struct Server {
     falling: Vec<Falling>,
     /// When the furnaces' timers last ran.
     furnaces_stepped: Instant,
+    /// When bones were last checked for having become old.
+    bones_checked: Instant,
     /// The time of day, kept over restarts.
     clock: Clock,
     /// Who owns each steel door.
@@ -825,6 +828,7 @@ impl Server {
             items_stepped: Instant::now(),
             falling: Vec::new(),
             furnaces_stepped: Instant::now(),
+            bones_checked: Instant::now(),
             next_sound_id: 1,
             last_activity: Instant::now(),
             power_saving: false,
@@ -1885,7 +1889,7 @@ impl Server {
                 }
                 // A chest must be emptied first, and isn't dug while open; a
                 // locked one only by its owner.
-                if content::is_chest(current) {
+                if content::is_chest(current) || current == bones::BONES {
                     let record = self.chests.get(furnace_at);
                     let open = content::chest_pair(current).is_some_and(|(_, o)| o == current);
                     if open || record.is_some_and(|c| !c.is_empty() || !c.allows(&name)) {
@@ -2047,6 +2051,12 @@ impl Server {
                 if content::is_chest(self.world.node(node_pos(under))) && !sneaking {
                     if in_reach(under) {
                         self.open_chest(from, node_pos(under));
+                    }
+                    return;
+                }
+                if self.world.node(node_pos(under)) == bones::BONES && !sneaking {
+                    if in_reach(under) {
+                        self.open_bones(from, node_pos(under));
                     }
                     return;
                 }
@@ -2251,8 +2261,12 @@ impl Server {
                     self.door_owners.set(node_pos(above), &name);
                 }
             }
-            // Starting and stopping digging need nothing from us; the mining
-            // animation follows the dig key in TOSERVER_PLAYERPOS.
+            // Punching bones takes what is in them (their on_punch).
+            INTERACT_START_DIGGING if self.world.node(node_pos(under)) == bones::BONES && in_reach(under) => {
+                self.punch_bones(from, node_pos(under));
+            }
+            // Starting and stopping digging need nothing else from us; the
+            // mining animation follows the dig key in TOSERVER_PLAYERPOS.
             _ => {}
         }
     }
@@ -3659,6 +3673,7 @@ impl Server {
         self.send_command(from, 0, &build_health_bar_change(hp));
         if hp == 0 {
             info!("{name} died");
+            self.leave_bones(from);
             // Dead, they get up where they lie (beds' on_dieplayer).
             self.get_up(from, false);
             self.event(format!("{name} {death}"));
@@ -3795,6 +3810,11 @@ impl Server {
                 self.chests.save();
             }
             self.send_chest(pos);
+            // Bones vanish when the last thing is taken out, and the taker
+            // gets the bones block (on_metadata_inventory_take).
+            if ok && self.chests.get(pos).is_some_and(|c| c.bones && c.is_empty()) && self.world.node(pos) == bones::BONES {
+                self.remove_bones(pos, from);
+            }
         }
         if let Some((stack, motion)) = dropped {
             self.spawn_item(stack, motion);
@@ -3888,6 +3908,138 @@ impl Server {
         for pos in open {
             self.close_unwatched_lids_at(pos);
         }
+    }
+
+    /// A player died: what they carried goes into bones where they fell
+    /// (bones' register_on_dieplayer), or onto the ground if there is
+    /// nowhere to put them.
+    fn leave_bones(&mut self, addr: SocketAddr) {
+        let Some(peer) = self.peers.get_mut(&addr) else {
+            return;
+        };
+        let stacks: Vec<Stack> = peer.inventory.main.iter().chain(peer.inventory.craft.iter()).flatten().copied().collect();
+        let name = peer.display_name().to_string();
+        let feet = peer.pos_bs.map(|v| (v / 10.0).round() as i32);
+        let feet = (feet[0], feet[1], feet[2]);
+        let facing = doors::facedir_of(look_dir(0.0, peer.yaw));
+        if stacks.is_empty() {
+            info!("{name} dies at {feet:?}. No bones placed");
+            return;
+        }
+        for list in [List::Main, List::Craft, List::CraftResult] {
+            peer.inventory.list_mut(list).fill(None);
+        }
+        self.inventory_changed(addr);
+        let world = &self.world;
+        let chests = &self.chests;
+        // Not into a chest, bones or furnace that happens to be there.
+        let spot = bones::spot(feet, &|p| if chests.get(p).is_some() { content::CONTENT_STONE } else { world.node(p) });
+        let at = |p: NodePos| [p.0 as f32, p.1 as f32, p.2 as f32];
+        let Some(pos) = spot else {
+            info!("{name} dies at {feet:?}. Inventory dropped");
+            for stack in stacks.into_iter().chain([Stack::new(bones::BONES, 1)]) {
+                self.drop_from_bones(at(feet), stack);
+            }
+            return;
+        };
+        let (main, left) = bones::pack(stacks);
+        let share_at = self.clock.game_time() + bones::SHARE_TIME;
+        self.chests.insert(pos, chest::Chest { main, owner: Some(name.clone()), bones: true, share_at: Some(share_at) });
+        self.world.set_node(pos, bones::BONES, facing);
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.broadcast_node(p16, &build_addnode(p16, bones::BONES, facing));
+        self.wake_items(pos);
+        info!("{name} dies at {feet:?}. Bones placed at {pos:?}");
+        self.event(format!("{name}'s bones"));
+        for stack in left {
+            self.drop_from_bones(at(pos), stack);
+        }
+    }
+
+    /// An item thrown up out of bones (bones' drop): straight up at 5
+    /// nodes a second, and a little to one side.
+    fn drop_from_bones(&mut self, pos: [f32; 3], stack: Stack) {
+        let mut side = || (self.rng.next() % 21) as f32 / 9.0 - 10.0 / 9.0;
+        let vel = [side(), 5.0, side()];
+        self.spawn_item(stack, (pos, vel));
+    }
+
+    /// Right-clicking bones: their window (like a chest's, without the
+    /// lid). Fresh bones only for whoever died there.
+    fn open_bones(&mut self, addr: SocketAddr, pos: NodePos) {
+        let Some(name) = self.peers.get(&addr).map(|p| p.display_name().to_string()) else {
+            return;
+        };
+        let Some(record) = self.chests.get(pos).filter(|c| c.bones) else {
+            return; // bones placed by hand hold nothing
+        };
+        if !record.allows(&name) {
+            let owner = record.owner.clone().unwrap_or_default();
+            self.tell(addr, &format!("These are {owner}'s fresh bones."));
+            return;
+        }
+        if let Some(old) = self.peers.get_mut(&addr).and_then(|p| p.chest.replace(pos)) {
+            self.close_unwatched_lids_at(old);
+        }
+        info!("{name} opened the bones at {pos:?}");
+        if let Some(packet) = self.chest_packet(pos) {
+            self.send_command(addr, 0, &packet);
+        }
+        let form = chest_formspec(&chest::detached_name(pos));
+        self.send_command(addr, 0, &build_show_formspec(&form, CHEST_FORM));
+    }
+
+    /// Punching bones (their on_punch): everything that fits goes into the
+    /// player's inventory, stack by stack until one doesn't; if they are
+    /// emptied, they go too.
+    fn punch_bones(&mut self, addr: SocketAddr, pos: NodePos) {
+        let Some(peer) = self.peers.get_mut(&addr) else {
+            return;
+        };
+        let name = peer.display_name().to_string();
+        let Some(record) = self.chests.get_mut(pos).filter(|c| c.bones && c.allows(&name)) else {
+            return;
+        };
+        let mut moved = false;
+        for slot in record.main.iter_mut() {
+            let Some(stack) = *slot else {
+                continue;
+            };
+            let mut trial = peer.inventory.main;
+            if inventory::add_to(&mut trial, stack) > 0 {
+                break; // no room for this one
+            }
+            peer.inventory.main = trial;
+            *slot = None;
+            moved = true;
+        }
+        let emptied = record.is_empty();
+        if moved {
+            info!("{name} took from the bones at {pos:?}");
+            self.chests.save();
+            self.inventory_changed(addr);
+            self.send_chest(pos);
+        }
+        if emptied {
+            self.remove_bones(pos, addr);
+        }
+    }
+
+    /// Empty bones go, and whoever emptied them gets the bones block (or it
+    /// drops, if their inventory is full).
+    fn remove_bones(&mut self, pos: NodePos, taker: SocketAddr) {
+        self.close_chest_windows(pos);
+        self.chests.remove(pos);
+        self.world.set_node(pos, world::CONTENT_AIR, 0);
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.broadcast_node(p16, &build_removenode(p16));
+        let left = self.peers.get_mut(&taker).map_or(1, |p| p.inventory.add(Stack::new(bones::BONES, 1)));
+        if left > 0 {
+            self.drop_from_bones([pos.0 as f32, pos.1 as f32, pos.2 as f32], Stack::new(bones::BONES, 1));
+        } else {
+            self.inventory_changed(taker);
+        }
+        self.wake_items(pos);
     }
 
     /// Close a chest's window for everyone who has it open (it was dug).
@@ -4620,6 +4772,12 @@ impl Server {
             let dt = now.duration_since(self.furnaces_stepped).as_secs_f32();
             self.furnaces_stepped = now;
             self.step_furnaces(dt);
+        }
+        if now.duration_since(self.bones_checked) >= bones::CHECK_INTERVAL {
+            self.bones_checked = now;
+            for owner in self.chests.share_old_bones(self.clock.game_time()) {
+                info!("{owner}'s bones are old: anyone may take from them now");
+            }
         }
 
         let mut gone = Vec::new();

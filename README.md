@@ -110,6 +110,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes
 - **Torches:** they mount on floors, walls and ceilings using Minetest Game's 3D models. The server computes their light, so caves and nights are lit, and they fall off when the block they hang on is dug.
 - **Day and night:** a normal day and night cycle. Map blocks carry separate day and night light.
 - **Health:** fall damage, a health bar, death and respawn.
+- **Bones:** Minetest Game's. Die with anything on you and it all stays where you fell, in a bones block (in the nearest air if you died inside something; dropped on the ground if there is nowhere at all). Right-click to open them, or punch them to take everything that fits; once they're empty they go, and you get the bones block. At first only you can take from them; after 20 minutes of game time they become "old bones" and anyone may. Nothing can be put back in.
 - **Dropped items:**
   - `Q` drops the whole stack in your hand; `Shift+Q` drops one;
   - punch an item to pick it up;
@@ -138,7 +139,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes
 
 ## What doesn't (yet)
 
-- Much of Minetest Game is still missing: mese posts, mossy cobblestone and cave ice (they come with dungeons and caves), signs, bookshelves, TNT and fire, bones, boats, carts, keys, walls, dungeons, weather and creative mode.
+- Much of Minetest Game is still missing: mese posts, mossy cobblestone and cave ice (they come with dungeons and caves), signs, bookshelves, TNT and fire, boats, carts, keys, walls, dungeons, weather and creative mode.
 - No Lua mods: the game content is built in.
 - One world per SD card (or in the board's flash).
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
@@ -184,7 +185,7 @@ Format the card as FAT32 and insert it before powering up. Any size will do: a w
 ```
 /sd/auth/       accounts (salt and SRP verifier per player), <name>.privs (privileges, where not the default),
                 admin.txt (the administrator's name) and ipban.txt (banned players)
-/sd/world/      the world: nodes.log (every change made), furnaces.txt and chests.txt (their contents), items.txt (dropped items), doors.txt (steel doors' and trapdoors' owners),
+/sd/world/      the world: nodes.log (every change made), furnaces.txt and chests.txt (their contents, and those of bones), items.txt (dropped items), doors.txt (steel doors' and trapdoors' owners),
                 beds_spawns (where players respawn),
                 env_meta.txt (the time of day, as Luanti keeps it) and the generator version
 /sd/players/    <name>.inv (inventory) and <name>.player (position, health, skin, home)
@@ -336,7 +337,8 @@ src/items.rs       dropped items and their physics
 src/inventory.rs   inventories and inventory actions
 src/crafting.rs    crafting recipes, the craft grid, and fuel
 src/furnace.rs     furnaces, and moving items between inventories
-src/chest.rs       chests
+src/chest.rs       chests (and the contents of bones)
+src/bones.rs       bones
 src/nature.rs      leaf decay, saplings and apples
 src/clock.rs       the time of day, kept over restarts
 src/stairs.rs      stairs and slabs
@@ -360,7 +362,19 @@ src/storage.rs     safe file writes on FAT
 media/             built-in textures and models
 partitions.csv     the flash layout: firmware, and room for the game without an SD card
 tools/loadtest.py  bot players for load testing (see below)
+tests/             the tests: tests/run.py runs them all (see Testing below)
 ```
+
+## Testing
+
+The server can be tested on a PC, without the board. `tests/run.py` builds the server's code for the PC, runs the unit tests and a set of checks, verifies what the server sends at login the way the Luanti client reads it, and then runs about 20 network tests, each a scripted player (or two) on a fresh world:
+
+```
+python3 -m venv .venv && .venv/bin/pip install -r tests/requirements.txt   # once
+.venv/bin/python3 tests/run.py
+```
+
+It needs stable Rust (through rustup) and Python 3, not the ESP-IDF tools, and takes about 10 minutes. See [tests/README.md](tests/README.md) for running single tests and how it works.
 
 ## Load testing
 
@@ -407,7 +421,7 @@ place, before and after a change.
 The code is released under the [MIT licence](LICENSE).
 
 The media in `media/` have their own licences:
-- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Also the doors, gate, farming and bed media (`doors_*`, `door_*.b3d`, `default_fence_overlay.png`, `default_fence_rail_overlay.png`, `farming_*`, `default_grass_*.png`, `wool_*.png`, `beds_*.png`), the flower and dye pictures (`flowers_*.png`, `dye_*.png`), and the pane and steel bar media (`xpanes_*`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt`, `media/LICENSE-items.txt`, `media/LICENSE-doors.txt`, `media/LICENSE-farming.txt`, `media/LICENSE-beds.txt`, `media/LICENSE-flowers.txt` and `media/LICENSE-xpanes.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
+- **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Also the doors, gate, farming and bed media (`doors_*`, `door_*.b3d`, `default_fence_overlay.png`, `default_fence_rail_overlay.png`, `farming_*`, `default_grass_*.png`, `wool_*.png`, `beds_*.png`), the flower and dye pictures (`flowers_*.png`, `dye_*.png`), the pane and steel bar media (`xpanes_*`), and the bones textures (`bones_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt`, `media/LICENSE-items.txt`, `media/LICENSE-doors.txt`, `media/LICENSE-farming.txt`, `media/LICENSE-beds.txt`, `media/LICENSE-flowers.txt`, `media/LICENSE-xpanes.txt` and `media/LICENSE-bones.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.
 - **Sounds from Minetest Game** (`default_*.ogg`, `player_damage.ogg`): CC BY-SA 3.0, CC BY 3.0 or CC0, with credits in `media/LICENSE-sounds.txt`.
 - **The skins `esp_skin_wizard.png`, `esp_skin_elf.png`, `esp_skin_borgo.png` and `esp_skin_strider.png`:** made by Keir Finlow-Bates, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 - **The other `esp_*.png` textures:** made for this project and covered by the MIT licence.

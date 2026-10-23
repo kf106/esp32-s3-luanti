@@ -418,12 +418,12 @@ impl Lists<'_> {
     }
 
     /// Whether a stack may be put into a list: nothing into the craft
-    /// result, and the furnace's own rules.
-    fn may_put(place: Place, stack: &Stack) -> bool {
+    /// result or into bones, and the furnace's own rules.
+    fn may_put(&self, place: Place, stack: &Stack) -> bool {
         match place {
             Place::Own(list) => list != List::CraftResult,
             Place::Furnace(_, list) => may_put(list, stack),
-            Place::Chest(_) => true,
+            Place::Chest(pos) => !self.chests.get(pos).is_some_and(|c| c.bones),
         }
     }
 
@@ -443,8 +443,11 @@ impl Lists<'_> {
         // Whatever ends up in each slot must be allowed there: after a
         // swap, the source slot gets the destination's item.
         let swapped = new_src.is_some_and(|n| src.is_some_and(|s| n.id != s.id || n.wear != s.wear));
-        if new_dst.is_some_and(|d| !Self::may_put(to.0, &d))
-            || (swapped && new_src.is_some_and(|n| !Self::may_put(from.0, &n)))
+        // Rearranging within one chest is always allowed (bones too).
+        let inside = from.0 == to.0 && matches!(to.0, Place::Chest(_));
+        if !inside
+            && (new_dst.is_some_and(|d| !self.may_put(to.0, &d))
+                || (swapped && new_src.is_some_and(|n| !self.may_put(from.0, &n))))
         {
             return false;
         }
@@ -459,7 +462,7 @@ impl Lists<'_> {
         let Some(Some(src)) = self.get(from) else {
             return false;
         };
-        if from.0 == to || !Self::may_put(to, &src) {
+        if from.0 == to || !self.may_put(to, &src) {
             return false;
         }
         let Some(moving) = self.take(from, count) else {

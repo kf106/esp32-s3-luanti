@@ -14,6 +14,7 @@ use log::{info, warn};
 use crate::messages::Writer;
 use crate::sha1::sha1;
 use crate::beds;
+use crate::bones;
 use crate::doors;
 use crate::colours;
 use crate::farming;
@@ -123,6 +124,9 @@ pub enum Kind {
     /// A glass pane or steel bars (panes.rs): flat, or joining its
     /// neighbours.
     Pane,
+    /// Bones (bones.rs): a cube turned to face the way its player looked,
+    /// opened with a right-click.
+    Bones,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -2659,6 +2663,18 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Trapdoor,
     },
+    // minetest_game's bones (bones.rs; CC BY-SA 3.0, see
+    // media/LICENSE-bones.txt).
+    Node {
+        id: bones::BONES,
+        name: "esp:bones",
+        description: "Bones",
+        tiles: ["bones_top.png^[transform2", "bones_bottom.png", "bones_side.png", "bones_side.png", "bones_rear.png", "bones_front.png"],
+        groups: &[("dig_immediate", 2)],
+        drop: bones::BONES,
+        drop_count: 1,
+        kind: Kind::Bones,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -3722,7 +3738,7 @@ pub fn passes_sunlight(id: u16) -> bool {
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane | Kind::Bones))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -4233,6 +4249,11 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("wool_red.png", include_bytes!("../media/wool_red.png")),
     ("wool_magenta.png", include_bytes!("../media/wool_magenta.png")),
     ("wool_pink.png", include_bytes!("../media/wool_pink.png")),
+    ("bones_top.png", include_bytes!("../media/bones_top.png")),
+    ("bones_bottom.png", include_bytes!("../media/bones_bottom.png")),
+    ("bones_side.png", include_bytes!("../media/bones_side.png")),
+    ("bones_rear.png", include_bytes!("../media/bones_rear.png")),
+    ("bones_front.png", include_bytes!("../media/bones_front.png")),
     ("xpanes_bar.png", include_bytes!("../media/xpanes_bar.png")),
     ("xpanes_bar_top.png", include_bytes!("../media/xpanes_bar_top.png")),
     ("xpanes_edge.png", include_bytes!("../media/xpanes_edge.png")),
@@ -4527,6 +4548,8 @@ fn sounds_of(id: u16) -> Sounds {
         id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_STEEL || d.item == ITEM_DOOR_STEEL_BAR) => sounds_of(CONTENT_STEEL_BLOCK),
         // Glass panes sound like glass; steel bars like metal.
         panes::BAR_FLAT | panes::BAR => sounds_of(CONTENT_STEEL_BLOCK),
+        // minetest_game's node_sound_gravel_defaults.
+        bones::BONES => sounds_of(CONTENT_GRAVEL),
         id if panes::is_pane(id) => sounds_of(CONTENT_GLASS),
         // minetest_game's node_sound_water_defaults.
         // Lava: no sounds of its own in minetest_game.
@@ -5013,7 +5036,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
         w.u8(CPT_LIGHT).u8(0);
-    } else if n.kind == Kind::Furnace {
+    } else if matches!(n.kind, Kind::Furnace | Kind::Bones) {
         w.u8(0).u8(CPT2_FACEDIR);
     } else if ladder {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
@@ -5051,7 +5074,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let (drawtype, mesh) = match n.kind {
         Kind::Torch => (NDT_MESH, torch_mesh(n.id)),
         Kind::Leaves => (NDT_ALLFACES_OPTIONAL, ""),
-        Kind::Solid | Kind::Furnace | Kind::Chest => (NDT_NORMAL, ""),
+        Kind::Solid | Kind::Furnace | Kind::Chest | Kind::Bones => (NDT_NORMAL, ""),
         Kind::ChestOpen => (NDT_MESH, CHEST_OPEN_MESH),
         Kind::Glass => (NDT_GLASSLIKE_FRAMED_OPTIONAL, ""),
         Kind::Ladder => (NDT_SIGNLIKE, ""),
@@ -5175,7 +5198,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(!(mark || hidden || liquid) as u8) // diggable
         .u8(ladder as u8) // climbable
         .u8((mark || liquid || plant) as u8) // buildable_to
-        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::Gate) as u8) // rightclickable
+        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::Gate | Kind::Bones) as u8) // rightclickable
         .u32(damage_per_second(n.id) as u32); // damage_per_second
 
     // liquid

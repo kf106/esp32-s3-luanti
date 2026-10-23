@@ -6,8 +6,11 @@
 //! node metadata, and shown to the player who opens the chest as a detached
 //! inventory ("detached:esp_chest_<x>_<y>_<z>").
 //!
+//! Bones (bones.rs) are kept here too, as chests nobody can put into.
+//!
 //! Saved in one text file, rewritten when a chest's contents change:
-//!   chest <x> <y> <z> [<owner>]
+//!   chest <x> <y> <z> [<owner>]         (or "bones ...")
+//!   share <game time>                  (bones: when anyone may take)
 //!   <slot> <item string>               (one line per filled slot)
 
 use std::collections::BTreeMap;
@@ -26,13 +29,17 @@ const DETACHED_PREFIX: &str = "esp_chest_";
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chest {
     pub main: [Option<Stack>; SLOTS],
-    /// The owner of a locked chest.
+    /// The owner of a locked chest, or of fresh bones.
     pub owner: Option<String>,
+    /// Bones (bones.rs) rather than a chest.
+    pub bones: bool,
+    /// Fresh bones: the game time at which they become everyone's.
+    pub share_at: Option<u64>,
 }
 
 impl Default for Chest {
     fn default() -> Self {
-        Self { main: [None; SLOTS], owner: None }
+        Self { main: [None; SLOTS], owner: None, bones: false, share_at: None }
     }
 }
 
@@ -94,6 +101,26 @@ impl Chests {
         self.map.get_mut(&pos)
     }
 
+    /// Bones that have lain long enough become everyone's (bones' node
+    /// timer). Returns the owners whose bones did.
+    pub fn share_old_bones(&mut self, now: u64) -> Vec<String> {
+        let mut shared = Vec::new();
+        for c in self.map.values_mut().filter(|c| c.bones && c.share_at.is_some_and(|t| t <= now)) {
+            c.share_at = None;
+            shared.extend(c.owner.take());
+        }
+        if !shared.is_empty() {
+            self.save();
+        }
+        shared
+    }
+
+    /// Put a record in (new bones).
+    pub fn insert(&mut self, pos: NodePos, chest: Chest) {
+        self.map.insert(pos, chest);
+        self.save();
+    }
+
     /// The chest at `pos`, made empty if there wasn't one on record.
     pub fn get_or_add(&mut self, pos: NodePos) -> &mut Chest {
         self.map.entry(pos).or_default()
@@ -116,11 +143,14 @@ impl Chests {
 fn format(map: &BTreeMap<NodePos, Chest>) -> String {
     let mut t = String::new();
     for (pos, c) in map {
-        t.push_str(&format!("chest {} {} {}", pos.0, pos.1, pos.2));
+        t.push_str(&format!("{} {} {} {}", if c.bones { "bones" } else { "chest" }, pos.0, pos.1, pos.2));
         if let Some(owner) = &c.owner {
             t.push_str(&format!(" {owner}"));
         }
         t.push('\n');
+        if let Some(at) = c.share_at {
+            t.push_str(&format!("share {at}\n"));
+        }
         for (i, s) in c.main.iter().enumerate() {
             if let Some(s) = s {
                 t.push_str(&format!("{i} {}\n", s.item_string()));
@@ -136,13 +166,17 @@ fn parse(text: &str) -> BTreeMap<NodePos, Chest> {
     for line in text.lines() {
         let mut f = line.split_whitespace();
         match f.next() {
-            Some("chest") => {
+            Some(kind @ ("chest" | "bones")) => {
                 let v: Vec<i32> = f.by_ref().take(3).filter_map(|v| v.parse().ok()).collect();
                 current = (v.len() == 3).then(|| (v[0], v[1], v[2]));
                 if let Some(pos) = current {
-                    map.insert(pos, Chest { owner: f.next().map(str::to_string), ..Default::default() });
+                    map.insert(pos, Chest { owner: f.next().map(str::to_string), bones: kind == "bones", ..Default::default() });
                 }
             }
+            Some("share") => match (current.and_then(|p| map.get_mut(&p)), f.next().and_then(|t| t.parse().ok())) {
+                (Some(c), Some(t)) => c.share_at = Some(t),
+                _ => warn!("Skipping chest line \"{line}\""),
+            },
             Some(slot) => {
                 let slot = slot.parse::<usize>().ok();
                 let stack = Stack::parse(&f.collect::<Vec<_>>().join(" "));
@@ -169,9 +203,26 @@ mod tests {
         c.main[31] = Some(Stack::new(CONTENT_COBBLE, 99));
         map.insert((1, -2, 3), c.clone());
         map.insert((4, 5, 6), Chest::default());
+        let mut b = Chest { owner: Some("Jim".into()), bones: true, share_at: Some(1500), ..Default::default() };
+        b.main[0] = Some(Stack::new(CONTENT_DIRT, 3));
+        map.insert((7, 8, 9), b);
         assert_eq!(parse(&format(&map)), map);
         assert!(c.allows("steve") && !c.allows("Jim"));
         assert!(Chest::default().allows("Jim"));
         assert_eq!(pos_of_location(&format!("detached:{}", detached_name((1, -2, 3)))), Some((1, -2, 3)));
+    }
+
+    #[test]
+    fn bones_become_everyones() {
+        let path = std::env::temp_dir().join(format!("esp-bones-test-{}.txt", std::process::id()));
+        let mut chests = Chests::open(&path);
+        chests.insert((0, 0, 0), Chest { owner: Some("Jim".into()), bones: true, share_at: Some(1200), ..Default::default() });
+        chests.insert((1, 0, 0), Chest { owner: Some("Ann".into()), ..Default::default() });
+        assert!(chests.share_old_bones(1199).is_empty());
+        assert_eq!(chests.share_old_bones(1200), vec!["Jim".to_string()]);
+        let reread = Chests::open(&path);
+        assert!(reread.get((0, 0, 0)).is_some_and(|c| c.bones && c.owner.is_none() && c.allows("anyone")));
+        assert_eq!(reread.get((1, 0, 0)).and_then(|c| c.owner.clone()), Some("Ann".to_string()), "a locked chest stays locked");
+        let _ = std::fs::remove_file(&path);
     }
 }

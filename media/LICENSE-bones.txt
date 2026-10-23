@@ -1,0 +1,11 @@
+Bones: textures from Minetest Game's bones mod
+(https://github.com/luanti-org/minetest_game, mods/bones), unchanged:
+
+  bones_top.png, bones_bottom.png, bones_side.png, bones_rear.png, bones_front.png
+
+Credits, from the bones mod's README.md:
+
+All textures: paramat (CC BY-SA 3.0)
+
+Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0):
+https://creativecommons.org/licenses/by-sa/3.0/

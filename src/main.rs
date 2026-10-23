@@ -1,5 +1,6 @@
 mod auth;
 mod beds;
+mod bones;
 mod chest;
 mod clock;
 mod colours;
