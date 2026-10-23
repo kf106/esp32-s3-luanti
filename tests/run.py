@@ -36,6 +36,8 @@ NETWORK = [
     ("signs", {}, [], False),
     ("shelf", {}, [], False),
     ("books", {}, [], False),
+    ("vessels", {}, [], False),
+    ("keys", {}, [], False),
     ("door", {}, [], False),
     ("falling", {}, [], False),
     ("chest", {}, [], False),
@@ -123,7 +125,9 @@ def run_network(name, env, args, night, port, binary, plants):
         (WORLD / "world").mkdir(parents=True)
         (WORLD / "world" / "env_meta.txt").write_text("game_time = 0\ntime_of_day = 22000\nEnvArgsEnd\n")
         server_env["KEEP_WORLD"] = "1"
-    server = subprocess.Popen([binary], cwd=WORK, env=server_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # TEST_LOGS=1 keeps each server's log, in out/<test>.log.
+    log = open(WORK / "out" / f"{name}.log", "w") if os.environ.get("TEST_LOGS") else subprocess.DEVNULL
+    server = subprocess.Popen([binary], cwd=WORK, env=server_env, stdout=log, stderr=log)
     try:
         time.sleep(1.5)
         filled = [a.format(**plants) for a in args]

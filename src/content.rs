@@ -145,6 +145,9 @@ pub enum Kind {
     /// ceiling, walked through, with text (meta.rs) its right-click
     /// edits.
     Sign,
+    /// A bottle or glass (vessels): plantlike, walked through, standing on
+    /// the node below.
+    Vessel,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -277,6 +280,13 @@ pub const DRY_SHRUB: u16 = CONTENT_CLOUD + 1;
 /// Mist, our own: see Kind::Mist. For admins and map makers, like the
 /// cloud.
 pub const CONTENT_MIST: u16 = DRY_SHRUB + 1;
+/// The vessels mod's bottles and glass, and its shelf.
+pub const VESSELS_GLASS_BOTTLE: u16 = CONTENT_MIST + 1;
+pub const VESSELS_DRINKING_GLASS: u16 = VESSELS_GLASS_BOTTLE + 1;
+pub const VESSELS_STEEL_BOTTLE: u16 = VESSELS_GLASS_BOTTLE + 2;
+pub const VESSELS_SHELF: u16 = VESSELS_GLASS_BOTTLE + 3;
+/// A vessel's selection box (vessels' {-0.25, -0.5, -0.25, 0.25, 0.3, 0.25}).
+const VESSEL_BOX: [f32; 6] = [-0.25, -0.5, -0.25, 0.25, 0.3, 0.25];
 /// The grey veil over the view of a player in mist (ARGB).
 const MIST_POST_EFFECT: u32 = 0xA0D8DCE0;
 /// Its param2: drawn as minetest_game places it (meshoptions 4).
@@ -323,6 +333,13 @@ pub const ITEM_DOOR_STEEL_BAR: u16 = 0x102D;
 pub const ITEM_PAPER: u16 = 0x102E;
 pub const ITEM_BOOK: u16 = 0x102F;
 pub const ITEM_BOOK_WRITTEN: u16 = 0x1030;
+/// vessels' glass fragments; keys' skeleton key and key; binoculars; map's
+/// mapping kit.
+pub const ITEM_GLASS_FRAGMENTS: u16 = 0x1031;
+pub const ITEM_SKELETON_KEY: u16 = 0x1032;
+pub const ITEM_KEY: u16 = 0x1033;
+pub const ITEM_BINOCULARS: u16 = 0x1034;
+pub const ITEM_MAPPING_KIT: u16 = 0x1035;
 pub const ITEM_DOOR_GLASS: u16 = 0x1006;
 /// minetest_game's buckets.
 pub const ITEM_BUCKET_EMPTY: u16 = 0x1007;
@@ -379,6 +396,8 @@ pub const TOOL_PICK_DIAMOND: u16 = 0x2017;
 pub const TOOL_SHOVEL_DIAMOND: u16 = 0x2018;
 pub const TOOL_AXE_DIAMOND: u16 = 0x2019;
 pub const TOOL_SWORD_DIAMOND: u16 = 0x201A;
+/// The screwdriver mod's screwdriver.
+pub const TOOL_SCREWDRIVER: u16 = 0x201B;
 /// Light given off by a torch (minetest_game: LIGHT_MAX - 1 = 13; 12 is
 /// slightly gentler and keeps the lit area, and the work, smaller).
 pub const TORCH_LIGHT: u8 = 12;
@@ -2936,6 +2955,48 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Mist,
     },
+    // The vessels mod (its pictures CC BY-SA 3.0, see
+    // media/LICENSE-vessels.txt).
+    Node {
+        id: VESSELS_GLASS_BOTTLE,
+        name: "esp:glass_bottle",
+        description: "Empty Glass Bottle",
+        tiles: ["vessels_glass_bottle.png"; 6],
+        groups: &[("vessel", 1), ("dig_immediate", 3), ("attached_node", 1)],
+        drop: VESSELS_GLASS_BOTTLE,
+        drop_count: 1,
+        kind: Kind::Vessel,
+    },
+    Node {
+        id: VESSELS_DRINKING_GLASS,
+        name: "esp:drinking_glass",
+        description: "Empty Drinking Glass",
+        tiles: ["vessels_drinking_glass.png"; 6],
+        groups: &[("vessel", 1), ("dig_immediate", 3), ("attached_node", 1)],
+        drop: VESSELS_DRINKING_GLASS,
+        drop_count: 1,
+        kind: Kind::Vessel,
+    },
+    Node {
+        id: VESSELS_STEEL_BOTTLE,
+        name: "esp:steel_bottle",
+        description: "Empty Heavy Steel Bottle",
+        tiles: ["vessels_steel_bottle.png"; 6],
+        groups: &[("vessel", 1), ("dig_immediate", 3), ("attached_node", 1)],
+        drop: VESSELS_STEEL_BOTTLE,
+        drop_count: 1,
+        kind: Kind::Vessel,
+    },
+    Node {
+        id: VESSELS_SHELF,
+        name: "esp:vessels_shelf",
+        description: "Vessels Shelf",
+        tiles: ["esp_apple_wood.png", "esp_apple_wood.png", "esp_apple_wood.png", "esp_apple_wood.png", "vessels_shelf.png", "vessels_shelf.png"],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3)],
+        drop: VESSELS_SHELF,
+        drop_count: 1,
+        kind: Kind::Shelf,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -3297,6 +3358,46 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Book with Text",
         image: "default_book_written.png",
         groups: &[("book", 1), ("not_in_creative_inventory", 1), ("flammable", 3)],
+    },
+    // vessels' glass fragments (CC BY-SA 3.0, media/LICENSE-vessels.txt).
+    CraftItem {
+        id: ITEM_GLASS_FRAGMENTS,
+        name: "esp:glass_fragments",
+        description: "Glass Fragments",
+        image: "vessels_glass_fragments.png",
+        groups: &[],
+    },
+    // The keys mod (CC BY-SA 3.0, media/LICENSE-keys.txt): a skeleton key
+    // makes a key to its owner's locked chest or door (keys.rs).
+    CraftItem {
+        id: ITEM_SKELETON_KEY,
+        name: "esp:skeleton_key",
+        description: "Skeleton Key",
+        image: "keys_key_skeleton.png",
+        groups: &[],
+    },
+    CraftItem {
+        id: ITEM_KEY,
+        name: "esp:key",
+        description: "Key",
+        image: "keys_key.png",
+        groups: &[("key", 1), ("not_in_creative_inventory", 1)],
+    },
+    // binoculars and map (CC BY-SA 3.0, media/LICENSE-keys.txt): carried,
+    // they let the player zoom, or see the minimap (binoculars.rs).
+    CraftItem {
+        id: ITEM_BINOCULARS,
+        name: "esp:binoculars",
+        description: "Binoculars\nUse with 'Zoom' key",
+        image: "binoculars_binoculars.png",
+        groups: &[("tool", 1)],
+    },
+    CraftItem {
+        id: ITEM_MAPPING_KIT,
+        name: "esp:mapping_kit",
+        description: "Mapping Kit\nUse with 'Minimap' key",
+        image: "map_mapping_kit.png",
+        groups: &[("flammable", 3), ("tool", 1)],
     },
     // minetest_game's lumps, crystals and ingots (craftitems.lua).
     CraftItem {
@@ -3855,6 +3956,17 @@ pub const TOOLS: &[Tool] = &[
         caps: HAND,
         groups: &[("hoe", 1)],
     },
+    // The screwdriver mod (screwdriver.rs; its picture CC BY-SA 3.0, see
+    // media/LICENSE-keys.txt). It digs as the hand does.
+    Tool {
+        id: TOOL_SCREWDRIVER,
+        name: "esp:screwdriver",
+        description: "Screwdriver\n(left-click rotates face, right-click rotates axis)",
+        image: "screwdriver.png",
+        wield_image: "screwdriver.png",
+        caps: HAND,
+        groups: &[("tool", 1)],
+    },
 ];
 
 /// The sound a tool makes when it wears out (minetest_game's sound.breaks).
@@ -3971,7 +4083,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign | Kind::Mist))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign | Kind::Mist))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -4016,7 +4128,7 @@ pub fn buildable_to(id: u16) -> bool {
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
@@ -4055,6 +4167,25 @@ pub fn is_wallmounted(id: u16) -> bool {
     def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Ladder | Kind::Sign))
 }
 
+/// How param2 turns a node (its paramtype2), where it does: facedir or
+/// wallmounted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Turned {
+    Facedir,
+    Wallmounted,
+}
+
+pub fn turned_by(id: u16) -> Option<Turned> {
+    let n = def(id)?;
+    match n.kind {
+        Kind::Torch | Kind::Sign | Kind::Ladder | Kind::Seed => Some(Turned::Wallmounted),
+        Kind::Furnace | Kind::Bones | Kind::Shelf | Kind::Chest | Kind::ChestOpen | Kind::Shaped | Kind::Door | Kind::DoorHidden
+        | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Gate | Kind::Lily => Some(Turned::Facedir),
+        Kind::Pane if panes::is_flat(id) => Some(Turned::Facedir),
+        _ => None,
+    }
+}
+
 pub fn is_sign(id: u16) -> bool {
     def(id).is_some_and(|n| n.kind == Kind::Sign)
 }
@@ -4062,7 +4193,28 @@ pub fn is_sign(id: u16) -> bool {
 /// Nodes that keep metadata (meta.rs): signs, and bookshelves (what they
 /// hold, as shown when pointed at).
 pub fn takes_meta(id: u16) -> bool {
-    is_sign(id) || id == CONTENT_BOOKSHELF
+    is_sign(id) || shelf_of(id).is_some()
+}
+
+/// The kind of shelf a node is, if it is one.
+pub fn shelf_of(id: u16) -> Option<crate::chest::Shelf> {
+    match id {
+        CONTENT_BOOKSHELF => Some(crate::chest::Shelf::Books),
+        VESSELS_SHELF => Some(crate::chest::Shelf::Vessels),
+        _ => None,
+    }
+}
+
+/// Bottles and glasses (the vessels mod's nodes).
+pub fn is_vessel(id: u16) -> bool {
+    def(id).is_some_and(|n| n.kind == Kind::Vessel)
+}
+
+/// Nodes standing on the node below, which must be walkable, and which
+/// fall off (and drop) when it goes: saplings, plants and vessels
+/// (attached_node on a floor).
+pub fn stands_on_floor(id: u16) -> bool {
+    is_sapling(id) || is_vessel(id) || crate::farming::is_attached_plant(id)
 }
 
 pub fn is_sapling(id: u16) -> bool {
@@ -4202,7 +4354,7 @@ pub fn stack_max(id: u16) -> u16 {
     // A full bucket doesn't stack (minetest_game's stack_max = 1).
     // So doesn't a bed.
     // Nor does a book with text.
-    if is_tool(id) || matches!(id, ITEM_BUCKET_WATER | ITEM_BUCKET_LAVA | ITEM_BOOK_WRITTEN) || beds::is_bed(id) { 1 } else { 99 }
+    if is_tool(id) || matches!(id, ITEM_BUCKET_WATER | ITEM_BUCKET_LAVA | ITEM_BOOK_WRITTEN | ITEM_BINOCULARS | ITEM_MAPPING_KIT) || beds::is_bed(id) { 1 } else { 99 }
 }
 
 /// Whether an item points at liquids, as buckets do: then the client
@@ -4507,6 +4659,18 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_dry_shrub.png", include_bytes!("../media/default_dry_shrub.png")),
     ("default_sign_wood.png", include_bytes!("../media/default_sign_wood.png")),
     ("default_paper.png", include_bytes!("../media/default_paper.png")),
+    ("vessels_glass_bottle.png", include_bytes!("../media/vessels_glass_bottle.png")),
+    ("vessels_drinking_glass.png", include_bytes!("../media/vessels_drinking_glass.png")),
+    ("vessels_drinking_glass_inv.png", include_bytes!("../media/vessels_drinking_glass_inv.png")),
+    ("vessels_steel_bottle.png", include_bytes!("../media/vessels_steel_bottle.png")),
+    ("vessels_glass_fragments.png", include_bytes!("../media/vessels_glass_fragments.png")),
+    ("vessels_shelf.png", include_bytes!("../media/vessels_shelf.png")),
+    ("vessels_shelf_slot.png", include_bytes!("../media/vessels_shelf_slot.png")),
+    ("keys_key.png", include_bytes!("../media/keys_key.png")),
+    ("keys_key_skeleton.png", include_bytes!("../media/keys_key_skeleton.png")),
+    ("screwdriver.png", include_bytes!("../media/screwdriver.png")),
+    ("binoculars_binoculars.png", include_bytes!("../media/binoculars_binoculars.png")),
+    ("map_mapping_kit.png", include_bytes!("../media/map_mapping_kit.png")),
     ("default_book.png", include_bytes!("../media/default_book.png")),
     ("default_book_written.png", include_bytes!("../media/default_book_written.png")),
     ("default_bookshelf.png", include_bytes!("../media/default_bookshelf.png")),
@@ -4843,7 +5007,15 @@ fn sounds_of(id: u16) -> Sounds {
         CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD | CONTENT_APPLE_TREE | CONTENT_APPLE_WOOD
         | CONTENT_JUNGLE_TREE | CONTENT_JUNGLE_WOOD | CONTENT_ACACIA_TREE | CONTENT_ACACIA_WOOD => wood,
         id if is_chest(id) => wood,
-        CONTENT_BOOKSHELF => wood,
+        CONTENT_BOOKSHELF | VESSELS_SHELF => wood,
+        // vessels: glass, and the steel bottle node_sound_defaults.
+        VESSELS_GLASS_BOTTLE | VESSELS_DRINKING_GLASS => sounds_of(CONTENT_GLASS),
+        VESSELS_STEEL_BOTTLE => Sounds {
+            footstep: ("", 1.0),
+            dig: GROUP_DIG,
+            dug: ("default_dug_node", 0.25),
+            place: ("default_place_node_hard", 1.0),
+        },
         id if def(id).is_some_and(|n| n.kind == Kind::Post) => wood,
         SIGN_WOOD => wood,
         SIGN_STEEL => sounds_of(CONTENT_STEEL_BLOCK),
@@ -5026,6 +5198,8 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 _ if n.id == farming::GRASS[0] => "default_grass_3.png",
                 _ if n.id == farming::DRY_GRASS[0] => "default_dry_grass_3.png",
                 Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
+                _ if n.id == VESSELS_DRINKING_GLASS => "vessels_drinking_glass_inv.png",
+                Kind::Vessel => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
                 Kind::Bed => bed_image(n.id),
                 Kind::Fence => fence_image(n.id),
@@ -5043,6 +5217,8 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 _ if n.id == farming::GRASS[0] => "default_grass_3.png",
                 _ if n.id == farming::DRY_GRASS[0] => "default_dry_grass_3.png",
                 Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
+                _ if n.id == VESSELS_DRINKING_GLASS => "vessels_drinking_glass_inv.png",
+                Kind::Vessel => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
                 Kind::Bed => bed_image(n.id),
                 Kind::Fence => fence_image(n.id),
@@ -5085,7 +5261,9 @@ pub fn itemdef_bytes() -> Vec<u8> {
             // The empty bucket is used (left-click) to scoop water; bread
             // is eaten.
             // (and books, which open to be written in or read)
-            usable: matches!(c.id, ITEM_BUCKET_EMPTY | ITEM_BREAD | ITEM_BLUEBERRIES | ITEM_BOOK | ITEM_BOOK_WRITTEN),
+            // (and the skeleton key, used on a locked chest or door; and
+            // binoculars and the mapping kit, which update the player)
+            usable: matches!(c.id, ITEM_BUCKET_EMPTY | ITEM_BREAD | ITEM_BLUEBERRIES | ITEM_BOOK | ITEM_BOOK_WRITTEN | ITEM_SKELETON_KEY | ITEM_BINOCULARS | ITEM_MAPPING_KIT),
             liquids_pointable: liquids_pointable(c.id),
         });
     }
@@ -5103,7 +5281,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             stack_max: stack_max(t.id),
             groups: t.groups,
             // Hoes are used (left-click) on dirt.
-            usable: farming::hoe_uses(t.id).is_some(),
+            usable: farming::hoe_uses(t.id).is_some() || t.id == TOOL_SCREWDRIVER,
             liquids_pointable: false,
         });
     }
@@ -5341,7 +5519,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let torch = n.kind == Kind::Torch;
     let leaves = n.kind == Kind::Leaves;
     // Saplings and apples: plants, drawn as two crossed pictures.
-    let sapling = matches!(n.kind, Kind::Sapling | Kind::Apple);
+    let sapling = matches!(n.kind, Kind::Sapling | Kind::Apple | Kind::Vessel);
     let mark = n.kind == Kind::Mark;
     let chest = matches!(n.kind, Kind::Chest | Kind::ChestOpen);
     let glass = n.kind == Kind::Glass;
@@ -5421,7 +5599,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::ChestOpen => (NDT_MESH, CHEST_OPEN_MESH),
         Kind::Glass => (NDT_GLASSLIKE_FRAMED_OPTIONAL, ""),
         Kind::Ladder => (NDT_SIGNLIKE, ""),
-        Kind::Sapling | Kind::Apple => (NDT_PLANTLIKE, ""),
+        Kind::Sapling | Kind::Apple | Kind::Vessel => (NDT_PLANTLIKE, ""),
         Kind::Mark => (NDT_AIRLIKE, ""),
         Kind::Shaped => (NDT_NODEBOX, ""),
         Kind::Door => (NDT_MESH, doors::mesh_of(n.id)),
@@ -5607,6 +5785,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         open_chest_selection_box(&mut w);
     } else if ladder {
         ladder_selection_box(&mut w);
+    } else if n.kind == Kind::Vessel {
+        fixed_nodebox(&mut w, &[VESSEL_BOX]);
     } else if sapling {
         sapling_selection_box(&mut w);
     } else if door.is_some() {
@@ -5802,6 +5982,48 @@ mod tests {
         // Cloud: solid, and nothing digs it.
         assert!(walkable(CONTENT_CLOUD) && !passes_light(CONTENT_CLOUD));
         assert!(dig_params(CONTENT_CLOUD, &HAND, 0).is_none());
+    }
+
+    /// turned_by says what every node's definition sends as its
+    /// paramtype2 (the screwdriver goes by it).
+    #[test]
+    fn turned_by_matches_definitions() {
+        for n in NODES {
+            let b = serialize_node(n);
+            let mut i = 1 + 2 + u16::from_be_bytes([b[1], b[2]]) as usize;
+            let groups = u16::from_be_bytes([b[i], b[i + 1]]);
+            i += 2;
+            for _ in 0..groups {
+                i += 2 + u16::from_be_bytes([b[i], b[i + 1]]) as usize + 2;
+            }
+            let expected = match b[i + 1] {
+                CPT2_FACEDIR => Some(Turned::Facedir),
+                CPT2_WALLMOUNTED => Some(Turned::Wallmounted),
+                _ => None,
+            };
+            assert_eq!(turned_by(n.id), expected, "{}", n.name);
+        }
+    }
+
+    /// vessels: plants to look at, standing on the floor, in the shelf's
+    /// group; the drinking glass has its own inventory picture.
+    #[test]
+    fn vessels() {
+        for v in [VESSELS_GLASS_BOTTLE, VESSELS_DRINKING_GLASS, VESSELS_STEEL_BOTTLE] {
+            assert!(is_vessel(v) && stands_on_floor(v) && !walkable(v) && !buildable_to(v) && passes_sunlight(v));
+            assert_eq!(group_of(v, "vessel"), 1);
+            assert!(dig_params(v, &HAND, 0).is_some_and(|(t, _)| t < 0.5), "dig_immediate");
+        }
+        assert!(stands_on_floor(CONTENT_BIRCH_SAPLING) && !stands_on_floor(CONTENT_STONE));
+        assert_eq!(shelf_of(VESSELS_SHELF), Some(crate::chest::Shelf::Vessels));
+        assert_eq!(shelf_of(CONTENT_BOOKSHELF), Some(crate::chest::Shelf::Books));
+        assert!(takes_meta(VESSELS_SHELF) && walkable(VESSELS_SHELF));
+        let items = String::from_utf8_lossy(&itemdef_bytes()).into_owned();
+        assert!(items.contains("vessels_drinking_glass_inv.png"));
+        assert_eq!(stack_max(ITEM_BINOCULARS), 1);
+        assert_eq!(stack_max(ITEM_MAPPING_KIT), 1);
+        assert_eq!(stack_max(TOOL_SCREWDRIVER), 1);
+        assert_eq!(stack_max(ITEM_KEY), 99);
     }
 
     /// Nodes are listed in id order without gaps, so `def` finds a node by

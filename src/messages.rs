@@ -599,6 +599,8 @@ pub struct Props<'a> {
     pub glow: i8,
     pub eye_height: f32,
     pub damage_texture_modifier: &'a str,
+    /// The zoomed view, in degrees (0: no zoom): binoculars.rs.
+    pub zoom_fov: f32,
 }
 
 /// AO_CMD_SET_PROPERTIES (ObjectProperties::serialize).
@@ -643,7 +645,7 @@ pub fn properties_message(p: &Props) -> Vec<u8> {
         .u8(p.glow as u8)
         .u16(10) // breath_max
         .f32(p.eye_height)
-        .f32(0.0) // zoom_fov (0 = no zoom)
+        .f32(p.zoom_fov) // zoom_fov (0 = no zoom)
         .u8(0) // use_texture_alpha
         // >= 5.3
         .string16(p.damage_texture_modifier)
@@ -671,7 +673,7 @@ pub fn properties_message(p: &Props) -> Vec<u8> {
 /// and zoom from these. Sent again when the player changes skin, and when
 /// they lie down in a bed or get up: player_api's "lay" animation has a
 /// low, wide box and eyes 0.3 above the ground.
-pub fn player_properties_message(skin: &str, lying: bool) -> Vec<u8> {
+pub fn player_properties_message(skin: &str, lying: bool, zoom_fov: f32) -> Vec<u8> {
     let (collisionbox, eye_height) = if lying {
         ([-0.6, 0.0, -0.6, 0.6, 0.3, 0.6], 0.3)
     } else {
@@ -699,6 +701,7 @@ pub fn player_properties_message(skin: &str, lying: bool) -> Vec<u8> {
         glow: 0,
         eye_height, // player_api
         damage_texture_modifier: "^[brighten",
+        zoom_fov,
     })
 }
 
@@ -843,10 +846,12 @@ pub struct PlayerInit<'a> {
     pub anim: Animation,
     /// The skin texture.
     pub skin: &'a str,
+    /// The zoom binoculars give (binoculars.rs).
+    pub zoom_fov: f32,
 }
 
 pub fn player_init_data(p: &PlayerInit) -> Vec<u8> {
-    let PlayerInit { name, id, pos_bs, yaw, anim, skin } = *p;
+    let PlayerInit { name, id, pos_bs, yaw, anim, skin, zoom_fov } = *p;
     let mut w = Writer::plain();
     w.u8(1) // version
         .string16(name)
@@ -859,7 +864,7 @@ pub fn player_init_data(p: &PlayerInit) -> Vec<u8> {
         .u16(PLAYER_MAX_HP);
     // The same messages, in the same order, as PlayerSAO's init data.
     let messages = [
-        player_properties_message(skin, false),
+        player_properties_message(skin, false, zoom_fov),
         armor_groups_message(),
         set_animation_message(anim),
         not_attached_message(),
@@ -920,6 +925,7 @@ pub fn item_properties_message(init: &ItemInit) -> Vec<u8> {
         glow: ((init.light_source as f32 / 2.0 + 0.5).floor()) as i8,
         eye_height: 1.625,
         damage_texture_modifier: "^[brighten",
+        zoom_fov: 0.0,
     })
 }
 
@@ -1218,9 +1224,14 @@ pub fn chest_formspec(inv: &str) -> String {
     )
 }
 
-/// minetest_game's bookshelf window: its 16 slots, with a book outline in
-/// the empty ones, over the player's inventory.
-pub fn shelf_formspec(inv: &str, empty: &[bool]) -> String {
+/// minetest_game's bookshelf window (or vessels' shelf's): its 16 slots,
+/// with a book (or bottle) outline in the empty ones, over the player's
+/// inventory.
+pub fn shelf_formspec(inv: &str, empty: &[bool], kind: crate::chest::Shelf) -> String {
+    let slot = match kind {
+        crate::chest::Shelf::Books => "default_bookshelf_slot.png",
+        crate::chest::Shelf::Vessels => "vessels_shelf_slot.png",
+    };
     let at = format!("detached:{inv}");
     let mut f = format!(
         "size[8,7;]list[{at};main;0,0.3;8,2;]\
@@ -1232,7 +1243,7 @@ pub fn shelf_formspec(inv: &str, empty: &[bool]) -> String {
         f.push_str(&format!("image[{i},2.85;1,1;gui_hb_bg.png]"));
     }
     for (i, _) in empty.iter().enumerate().filter(|(_, e)| **e) {
-        f.push_str(&format!("image[{},{};1,1;default_bookshelf_slot.png]", i % 8, if i < 8 { "0.3" } else { "1.3" }));
+        f.push_str(&format!("image[{},{};1,1;{slot}]", i % 8, if i < 8 { "0.3" } else { "1.3" }));
     }
     f
 }
@@ -1509,7 +1520,7 @@ mod player_tests {
     #[test]
     fn players_are_solid_except_in_bed() {
         // AO_CMD_SET_PROPERTIES, version, hp_max (u16), then physical.
-        assert_eq!(player_properties_message("character.png", false)[4], 1);
-        assert_eq!(player_properties_message("character.png", true)[4], 0);
+        assert_eq!(player_properties_message("character.png", false, 0.0)[4], 1);
+        assert_eq!(player_properties_message("character.png", true, 0.0)[4], 0);
     }
 }

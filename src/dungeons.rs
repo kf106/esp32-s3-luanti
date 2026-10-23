@@ -1000,6 +1000,17 @@ const LOOT: &[Loot] = &[
     Loot { y: ABOVE_64, ..loot("esp:dirt", 0.6, (2, 16)) },
     Loot { y: BELOW_512, ..loot("esp:obsidian", 0.25, (1, 3)) },
     Loot { y: BELOW_512, ..loot("esp:mese", 0.15, (1, 1)) },
+    // Registered by the other mods: bucket's,
+    loot("esp:bucket_empty", 0.55, (1, 1)),
+    Loot { desert: Some(true), ..loot("esp:bucket_water", 0.45, (1, 1)) },
+    Loot { y: Some((0, 32768)), desert: Some(false), ..loot("esp:bucket_water", 0.45, (1, 1)) },
+    Loot { y: Some((-32768, -1)), desert: Some(false), ..loot("esp:bucket_lava", 0.45, (1, 1)) },
+    // farming's,
+    loot("esp:string", 0.5, (1, 8)),
+    loot("esp:wheat", 0.5, (2, 5)),
+    Loot { desert: Some(false), ..loot("esp:seed_cotton", 0.4, (1, 4)) },
+    // and vessels'.
+    loot("esp:glass_fragments", 0.35, (1, 4)),
 ];
 
 /// The items dungeon_loot can put in a chest, all known items.

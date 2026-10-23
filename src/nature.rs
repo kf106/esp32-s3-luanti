@@ -457,7 +457,6 @@ pub fn mossy_of(id: u16) -> Option<u16> {
 #[cfg(test)]
 mod moss_tests {
     use super::*;
-    use crate::content::*;
     use crate::stairs::{shape_of, Shape};
 
     #[test]

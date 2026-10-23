@@ -133,6 +133,40 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 3, pattern: &[I(crate::plants::PAPYRUS); 3], output: ITEM_PAPER, count: 1 },
     Recipe { width: 1, pattern: &[I(ITEM_PAPER); 3], output: ITEM_BOOK, count: 1 },
     Recipe { width: 3, pattern: &[G("wood"), G("wood"), G("wood"), I(ITEM_BOOK), I(ITEM_BOOK), I(ITEM_BOOK), G("wood"), G("wood"), G("wood")], output: CONTENT_BOOKSHELF, count: 1 },
+    // vessels: glass bottles (10) and steel bottles (5) from six in a
+    // bottle's shape, drinking glasses (14) from seven in a cup's; a
+    // shelf from three vessels between two rows of planks.
+    Recipe { width: 3, pattern: &bottle(I(CONTENT_GLASS)), output: VESSELS_GLASS_BOTTLE, count: 10 },
+    Recipe {
+        width: 3,
+        pattern: &[I(CONTENT_GLASS), E, I(CONTENT_GLASS), I(CONTENT_GLASS), E, I(CONTENT_GLASS), I(CONTENT_GLASS), I(CONTENT_GLASS), I(CONTENT_GLASS)],
+        output: VESSELS_DRINKING_GLASS,
+        count: 14,
+    },
+    Recipe { width: 3, pattern: &bottle(I(ITEM_STEEL_INGOT)), output: VESSELS_STEEL_BOTTLE, count: 5 },
+    Recipe { width: 3, pattern: &[G("wood"), G("wood"), G("wood"), G("vessel"), G("vessel"), G("vessel"), G("wood"), G("wood"), G("wood")], output: VESSELS_SHELF, count: 1 },
+    // keys: a gold ingot makes a skeleton key.
+    Recipe { width: 1, pattern: &[I(ITEM_GOLD_INGOT)], output: ITEM_SKELETON_KEY, count: 1 },
+    // screwdriver: a steel ingot on a stick.
+    Recipe { width: 1, pattern: &[I(ITEM_STEEL_INGOT), G("stick")], output: TOOL_SCREWDRIVER, count: 1 },
+    // binoculars: obsidian glass lenses either side of three bronze ingots.
+    Recipe {
+        width: 3,
+        pattern: &[I(CONTENT_OBSIDIAN_GLASS), E, I(CONTENT_OBSIDIAN_GLASS), I(ITEM_BRONZE_INGOT), I(ITEM_BRONZE_INGOT), I(ITEM_BRONZE_INGOT), I(CONTENT_OBSIDIAN_GLASS), E, I(CONTENT_OBSIDIAN_GLASS)],
+        output: ITEM_BINOCULARS,
+        count: 1,
+    },
+    // map: a mapping kit.
+    Recipe {
+        width: 3,
+        pattern: &[
+            I(CONTENT_GLASS), I(ITEM_PAPER), G("stick"),
+            I(ITEM_STEEL_INGOT), I(ITEM_PAPER), I(ITEM_STEEL_INGOT),
+            G("wood"), I(ITEM_PAPER), I(colours::dye(colours::BLACK)),
+        ],
+        output: ITEM_MAPPING_KIT,
+        count: 1,
+    },
     // Signs: two rows of planks or steel ingots over a stick make 3.
     Recipe { width: 3, pattern: &sign(G("wood")), output: SIGN_WOOD, count: 3 },
     Recipe { width: 3, pattern: &sign(I(ITEM_STEEL_INGOT)), output: SIGN_STEEL, count: 3 },
@@ -297,6 +331,12 @@ pub fn cook_result(id: u16) -> Option<(u16, f32)> {
         ITEM_OBSIDIAN_SHARD => Some((CONTENT_OBSIDIAN_GLASS, 3.0)),
         // farming: flour bakes into bread, slowly.
         ITEM_FLOUR => Some((ITEM_BREAD, 15.0)),
+        // vessels: fragments melt back into glass, a steel bottle into
+        // steel.
+        ITEM_GLASS_FRAGMENTS => Some((CONTENT_GLASS, 3.0)),
+        VESSELS_STEEL_BOTTLE => Some((ITEM_STEEL_INGOT, 3.0)),
+        // keys: back into gold, in 5 s.
+        ITEM_KEY | ITEM_SKELETON_KEY => Some((ITEM_GOLD_INGOT, 5.0)),
         _ => None,
     }
 }
@@ -340,7 +380,8 @@ pub fn burn_time(id: u16) -> f32 {
         ITEM_STICK => 1.0,
         SIGN_WOOD => 10.0,
         DRY_SHRUB => 2.0,
-        CONTENT_BOOKSHELF => 30.0,
+        CONTENT_BOOKSHELF | VESSELS_SHELF => 30.0,
+        ITEM_MAPPING_KIT => 5.0,
         TOOL_PICK_WOOD | TOOL_AXE_WOOD => 6.0,
         TOOL_SWORD_WOOD => 5.0,
         TOOL_SHOVEL_WOOD => 4.0,
@@ -384,6 +425,11 @@ const fn sign(m: Ingredient) -> [Ingredient; 9] {
     [m, m, m, m, m, m, E, G("stick"), E]
 }
 
+/// A bottle of `m`: two columns of two, over one in the middle.
+const fn bottle(m: Ingredient) -> [Ingredient; 9] {
+    [m, E, m, m, E, m, E, m, E]
+}
+
 /// A mese post light of `wood`.
 const fn mese_post(wood: u16) -> [Ingredient; 9] {
     [E, I(CONTENT_GLASS), E, I(ITEM_MESE_CRYSTAL), I(ITEM_MESE_CRYSTAL), I(ITEM_MESE_CRYSTAL), E, I(wood), E]
@@ -415,6 +461,9 @@ pub const SHAPELESS: &[Shapeless] = &[
     Shapeless { items: &[I(ITEM_BOOK), I(ITEM_BOOK_WRITTEN)], output: ITEM_BOOK_WRITTEN, count: 1 },
     // Four wheat, anyhow, make flour (farming/init.lua).
     Shapeless { items: &[I(ITEM_WHEAT); 4], output: ITEM_FLOUR, count: 1 },
+    // vessels: two bottles or glasses break into glass fragments.
+    Shapeless { items: &[I(VESSELS_GLASS_BOTTLE); 2], output: ITEM_GLASS_FRAGMENTS, count: 1 },
+    Shapeless { items: &[I(VESSELS_DRINKING_GLASS); 2], output: ITEM_GLASS_FRAGMENTS, count: 1 },
     // Two dyes, anyhow, make two of a third (dye/init.lua's dye_recipes).
     Shapeless { items: &[I(colours::dye(colours::RED)), I(colours::dye(colours::BLUE))], output: colours::dye(colours::VIOLET), count: 2 },
     Shapeless { items: &[I(colours::dye(colours::YELLOW)), I(colours::dye(colours::RED))], output: colours::dye(colours::ORANGE), count: 2 },
@@ -828,6 +877,52 @@ mod tests {
         assert_eq!(result(&cols(ITEM_STEEL_INGOT)), Some((ITEM_DOOR_STEEL, 1)));
         assert_eq!(result(&cols(BAR_FLAT)), Some((ITEM_DOOR_STEEL_BAR, 1)));
         assert_eq!(result(&grid(&[0, 1, 3, 4].map(|i| (i, BAR_FLAT, 1)))), Some((BAR_TRAPDOOR, 1)));
+    }
+
+    /// The vessels, keys, screwdriver, binoculars and map mods' recipes,
+    /// cooking and fuel.
+    #[test]
+    fn small_mods() {
+        // vessels' bottle: {g, "", g}, {g, "", g}, {"", g, ""}.
+        let cells = |id: u16| grid(&[0, 2, 3, 5, 7].map(|i| (i, id, 1)));
+        let mut cornered = cells(CONTENT_GLASS);
+        cornered[8] = Some(Stack::new(CONTENT_GLASS, 1));
+        assert_eq!(result(&cornered), None, "a bottle with a corner is nothing");
+        assert_eq!(result(&cells(CONTENT_GLASS)), Some((VESSELS_GLASS_BOTTLE, 10)));
+        assert_eq!(result(&cells(ITEM_STEEL_INGOT)), Some((VESSELS_STEEL_BOTTLE, 5)));
+        let cup = grid(&[0, 2, 3, 5, 6, 7, 8].map(|i| (i, CONTENT_GLASS, 1)));
+        assert_eq!(result(&cup), Some((VESSELS_DRINKING_GLASS, 14)));
+        let shelf: Vec<(usize, u16, u16)> =
+            (0..9).map(|i| (i, [CONTENT_FIR_WOOD, VESSELS_GLASS_BOTTLE, CONTENT_APPLE_WOOD][i / 3], 1)).collect();
+        assert_eq!(result(&grid(&shelf)), Some((VESSELS_SHELF, 1)));
+        let mixed: Vec<(usize, u16, u16)> = (0..9)
+            .map(|i| (i, if i == 4 { VESSELS_STEEL_BOTTLE } else if i == 5 { VESSELS_DRINKING_GLASS } else { [CONTENT_FIR_WOOD, VESSELS_GLASS_BOTTLE, CONTENT_APPLE_WOOD][i / 3] }, 1))
+            .collect();
+        assert_eq!(result(&grid(&mixed)), Some((VESSELS_SHELF, 1)), "any vessels");
+        assert_eq!(result(&grid(&[(1, VESSELS_GLASS_BOTTLE, 1), (7, VESSELS_GLASS_BOTTLE, 1)])), Some((ITEM_GLASS_FRAGMENTS, 1)));
+        assert_eq!(result(&grid(&[(0, VESSELS_DRINKING_GLASS, 1), (8, VESSELS_DRINKING_GLASS, 1)])), Some((ITEM_GLASS_FRAGMENTS, 1)));
+        assert_eq!(result(&grid(&[(0, VESSELS_DRINKING_GLASS, 1), (8, VESSELS_GLASS_BOTTLE, 1)])), None);
+        assert_eq!(cook_result(ITEM_GLASS_FRAGMENTS), Some((CONTENT_GLASS, 3.0)));
+        assert_eq!(cook_result(VESSELS_STEEL_BOTTLE), Some((ITEM_STEEL_INGOT, 3.0)));
+        assert_eq!(burn_time(VESSELS_SHELF), 30.0);
+        // keys
+        assert_eq!(result(&grid(&[(4, ITEM_GOLD_INGOT, 1)])), Some((ITEM_SKELETON_KEY, 1)));
+        assert_eq!(cook_result(ITEM_KEY), Some((ITEM_GOLD_INGOT, 5.0)));
+        assert_eq!(cook_result(ITEM_SKELETON_KEY), Some((ITEM_GOLD_INGOT, 5.0)));
+        // screwdriver
+        assert_eq!(result(&grid(&[(2, ITEM_STEEL_INGOT, 1), (5, ITEM_STICK, 1)])), Some((TOOL_SCREWDRIVER, 1)));
+        // binoculars
+        let o = CONTENT_OBSIDIAN_GLASS;
+        let b = ITEM_BRONZE_INGOT;
+        assert_eq!(result(&grid(&[(0, o, 1), (2, o, 1), (3, b, 1), (4, b, 1), (5, b, 1), (6, o, 1), (8, o, 1)])), Some((ITEM_BINOCULARS, 1)));
+        // map
+        let kit = grid(&[
+            (0, CONTENT_GLASS, 1), (1, ITEM_PAPER, 1), (2, ITEM_STICK, 1),
+            (3, ITEM_STEEL_INGOT, 1), (4, ITEM_PAPER, 1), (5, ITEM_STEEL_INGOT, 1),
+            (6, CONTENT_JUNGLE_WOOD, 1), (7, ITEM_PAPER, 1), (8, colours::dye(colours::BLACK), 1),
+        ]);
+        assert_eq!(result(&kit), Some((ITEM_MAPPING_KIT, 1)));
+        assert_eq!(burn_time(ITEM_MAPPING_KIT), 5.0);
     }
 
     #[test]

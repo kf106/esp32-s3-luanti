@@ -26,7 +26,7 @@
 //! (standing against one side), turned by facedir like other blocks.
 //!
 //! Steel doors' and trapdoors' owners are kept in `world/doors.txt`,
-//! "<x> <y> <z> <owner>".
+//! "<x> <y> <z> <owner> [<key secret>]" (keys.rs).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -220,10 +220,10 @@ pub fn placed(door: &Door, dir: u8, next_to_door: bool) -> (u16, u8, u8) {
     }
 }
 
-/// The owners of steel doors.
+/// The owners of steel doors, and the secrets of their keys.
 pub struct Owners {
     path: Option<PathBuf>,
-    map: BTreeMap<NodePos, String>,
+    map: BTreeMap<NodePos, (String, Option<String>)>,
 }
 
 impl Owners {
@@ -236,7 +236,10 @@ impl Owners {
                     let f: Vec<&str> = line.split_whitespace().collect();
                     match (f.as_slice(), parse_pos(&f)) {
                         ([_, _, _, owner], Some(pos)) => {
-                            map.insert(pos, owner.to_string());
+                            map.insert(pos, (owner.to_string(), None));
+                        }
+                        ([_, _, _, owner, secret], Some(pos)) => {
+                            map.insert(pos, (owner.to_string(), Some(secret.to_string())));
                         }
                         _ => warn!("Skipping door line \"{line}\""),
                     }
@@ -251,16 +254,40 @@ impl Owners {
     /// Whether `player` may open or dig the door at `pos`: anyone, unless
     /// it has an owner (default.can_interact_with_node, without keys).
     pub fn allows(&self, pos: NodePos, player: &str) -> bool {
-        self.map.get(&pos).map_or(true, |o| o.eq_ignore_ascii_case(player))
+        self.map.get(&pos).map_or(true, |(o, _)| o.eq_ignore_ascii_case(player))
+    }
+
+    /// The same, for a player wielding a key with `key`'s secret (or
+    /// nothing): the right key opens and digs it too.
+    pub fn allows_with(&self, pos: NodePos, player: &str, key: Option<&str>) -> bool {
+        self.allows(pos, player) || crate::keys::fits(self.secret(pos), key)
     }
 
     pub fn owner(&self, pos: NodePos) -> Option<&str> {
-        self.map.get(&pos).map(String::as_str)
+        self.map.get(&pos).map(|(o, _)| o.as_str())
+    }
+
+    /// The secret of the keys to the door at `pos`, once one has been cut.
+    pub fn secret(&self, pos: NodePos) -> Option<&str> {
+        self.map.get(&pos).and_then(|(_, s)| s.as_deref())
     }
 
     pub fn set(&mut self, pos: NodePos, owner: &str) {
-        self.map.insert(pos, owner.to_string());
+        self.map.insert(pos, (owner.to_string(), None));
         self.save();
+    }
+
+    /// Give the door at `pos` a key secret, if it has an owner and none
+    /// yet; returns its secret.
+    pub fn lock_secret(&mut self, pos: NodePos, new: String) -> Option<String> {
+        let (_, secret) = self.map.get_mut(&pos)?;
+        if secret.is_none() {
+            *secret = Some(new);
+            let s = secret.clone();
+            self.save();
+            return s;
+        }
+        secret.clone()
     }
 
     pub fn remove(&mut self, pos: NodePos) {
@@ -273,7 +300,14 @@ impl Owners {
         let Some(path) = &self.path else {
             return;
         };
-        let text: String = self.map.iter().map(|(p, o)| format!("{} {} {} {o}\n", p.0, p.1, p.2)).collect();
+        let text: String = self
+            .map
+            .iter()
+            .map(|(p, (o, secret))| match secret {
+                Some(s) => format!("{} {} {} {o} {s}\n", p.0, p.1, p.2),
+                None => format!("{} {} {} {o}\n", p.0, p.1, p.2),
+            })
+            .collect();
         if let Err(e) = storage::write(path, text.as_bytes()) {
             warn!("Saving {}: {e}", path.display());
             crate::status::problem();
@@ -340,6 +374,14 @@ mod tests {
         let again = Owners::open(&path);
         assert!(again.allows((1, -2, 3), "steve") && !again.allows((1, -2, 3), "Jim"));
         assert!(again.allows((0, 0, 0), "Jim"));
+        // A key: the secret is made once and kept.
+        assert_eq!(o.lock_secret((1, -2, 3), "00ff00ff00ff00ff".into()).as_deref(), Some("00ff00ff00ff00ff"));
+        assert_eq!(o.lock_secret((1, -2, 3), "1111222233334444".into()).as_deref(), Some("00ff00ff00ff00ff"));
+        assert_eq!(o.lock_secret((9, 9, 9), "1111222233334444".into()), None, "nobody's door takes no key");
+        let again = Owners::open(&path);
+        assert_eq!(again.secret((1, -2, 3)), Some("00ff00ff00ff00ff"));
+        assert!(again.allows_with((1, -2, 3), "Jim", Some("00ff00ff00ff00ff")) && !again.allows_with((1, -2, 3), "Jim", Some("00ff00ff00ff00fe")));
+        assert_eq!(again.owner((1, -2, 3)), Some("Steve"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

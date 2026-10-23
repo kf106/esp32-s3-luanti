@@ -1,0 +1,27 @@
+Keys, screwdriver, binoculars and mapping kit: textures from Minetest
+Game's keys, screwdriver, binoculars and map mods
+(https://github.com/luanti-org/minetest_game, mods/keys, mods/screwdriver,
+mods/binoculars and mods/map), unchanged:
+
+  keys_key.png, keys_key_skeleton.png, screwdriver.png,
+  binoculars_binoculars.png, map_mapping_kit.png
+
+Credits, from those mods' README.md files:
+
+Gambit (CC BY-SA 3.0):
+
+- keys_key.png
+- keys_key_skeleton.png
+- screwdriver.png
+
+paramat (CC BY-SA 3.0):
+
+- binoculars_binoculars.png
+- map_mapping_kit.png (compass and pen)
+
+TumeniNodes (CC BY-SA 3.0):
+
+- map_mapping_kit.png (map)
+
+Licence: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0),
+http://creativecommons.org/licenses/by-sa/3.0/

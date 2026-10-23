@@ -1,0 +1,24 @@
+Vessels: textures from Minetest Game's vessels mod
+(https://github.com/luanti-org/minetest_game, mods/vessels), unchanged:
+
+  vessels_glass_bottle.png, vessels_drinking_glass.png,
+  vessels_drinking_glass_inv.png, vessels_steel_bottle.png,
+  vessels_glass_fragments.png, vessels_shelf.png, vessels_shelf_slot.png
+
+Credits, from the vessels mod's README.md:
+
+All not listed below: Vanessa Ezekowitz (CC BY-SA 3.0).
+
+Modified by Thomas-S (CC BY-SA 3.0):
+
+- vessels_drinking_glass.png
+- vessels_drinking_glass_inv.png
+- vessels_glass_bottle.png
+- vessels_steel_bottle.png
+
+Created by Wuzzy (CC BY-SA 3.0):
+
+- vessels_shelf_slot.png (based on vessels_glass_bottle.png)
+
+Licence: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0),
+http://creativecommons.org/licenses/by-sa/3.0/

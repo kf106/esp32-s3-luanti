@@ -7,11 +7,14 @@
 //! inventory ("detached:esp_chest_<x>_<y>_<z>").
 //!
 //! Bones (bones.rs) are kept here too, as chests nobody can put into, and
-//! bookshelves, as chests of 16 slots that take only books.
+//! bookshelves and vessels shelves, as chests of 16 slots that take only
+//! books, or only vessels.
 //!
 //! Saved in one text file, rewritten when a chest's contents change:
-//!   chest <x> <y> <z> [<owner>]         (or "bones ...", "shelf ...")
+//!   chest <x> <y> <z> [<owner>]         (or "bones ...", "shelf ...",
+//!                                        "vessels ...")
 //!   share <game time>                  (bones: when anyone may take)
+//!   secret <hex>                       (a locked chest's key, keys.rs)
 //!   <slot> <item string>               (one line per filled slot)
 
 use std::collections::BTreeMap;
@@ -25,9 +28,26 @@ use crate::storage;
 use crate::world::NodePos;
 
 pub const SLOTS: usize = 32;
-/// A bookshelf's slots (minetest_game's 8 x 2 "books" list), the first
-/// of its record's.
+/// A shelf's slots (minetest_game's 8 x 2 "books" or "vessels" list), the
+/// first of its record's.
 pub const SHELF_SLOTS: usize = 16;
+
+/// The two kinds of shelf: minetest_game's bookshelf, and vessels' shelf.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shelf {
+    Books,
+    Vessels,
+}
+
+impl Shelf {
+    /// The item group it takes.
+    pub fn group(self) -> &'static str {
+        match self {
+            Shelf::Books => "book",
+            Shelf::Vessels => "vessel",
+        }
+    }
+}
 const DETACHED_PREFIX: &str = "esp_chest_";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,13 +59,16 @@ pub struct Chest {
     pub bones: bool,
     /// Fresh bones: the game time at which they become everyone's.
     pub share_at: Option<u64>,
-    /// A bookshelf rather than a chest.
-    pub shelf: bool,
+    /// A shelf rather than a chest.
+    pub shelf: Option<Shelf>,
+    /// The secret of the keys to a locked chest (keys.rs), once its owner
+    /// has made one.
+    pub secret: Option<String>,
 }
 
 impl Default for Chest {
     fn default() -> Self {
-        Self { main: [None; SLOTS], owner: None, bones: false, share_at: None, shelf: false }
+        Self { main: [None; SLOTS], owner: None, bones: false, share_at: None, shelf: None, secret: None }
     }
 }
 
@@ -61,19 +84,26 @@ impl Chest {
         self.owner.as_deref().map_or(true, |o| o.eq_ignore_ascii_case(player))
     }
 
-    /// Its slots: a bookshelf's 16, or all 32.
+    /// The same, for a player wielding a key with `key`'s secret (or
+    /// nothing): the right key opens a locked chest too.
+    pub fn allows_with(&self, player: &str, key: Option<&str>) -> bool {
+        self.allows(player) || crate::keys::fits(self.secret.as_deref(), key)
+    }
+
+    /// Its slots: a shelf's 16, or all 32.
     pub fn slots(&self) -> &[Option<Stack>] {
-        &self.main[..if self.shelf { SHELF_SLOTS } else { SLOTS }]
+        &self.main[..if self.shelf.is_some() { SHELF_SLOTS } else { SLOTS }]
     }
 
     pub fn slots_mut(&mut self) -> &mut [Option<Stack>] {
-        &mut self.main[..if self.shelf { SHELF_SLOTS } else { SLOTS }]
+        &mut self.main[..if self.shelf.is_some() { SHELF_SLOTS } else { SLOTS }]
     }
 
     /// Whether a stack may be put in (allow_metadata_inventory_put):
-    /// nothing into bones, only books onto a bookshelf.
+    /// nothing into bones, only books onto a bookshelf, only vessels onto
+    /// a vessels shelf.
     pub fn may_put(&self, stack: &Stack) -> bool {
-        !self.bones && (!self.shelf || crate::content::group_of(stack.id, "book") > 0)
+        !self.bones && self.shelf.map_or(true, |s| crate::content::group_of(stack.id, s.group()) > 0)
     }
 }
 
@@ -166,8 +196,10 @@ fn format(map: &BTreeMap<NodePos, Chest>) -> String {
     for (pos, c) in map {
         let kind = if c.bones {
             "bones"
-        } else if c.shelf {
+        } else if c.shelf == Some(Shelf::Books) {
             "shelf"
+        } else if c.shelf == Some(Shelf::Vessels) {
+            "vessels"
         } else {
             "chest"
         };
@@ -178,6 +210,9 @@ fn format(map: &BTreeMap<NodePos, Chest>) -> String {
         t.push('\n');
         if let Some(at) = c.share_at {
             t.push_str(&format!("share {at}\n"));
+        }
+        if let Some(secret) = &c.secret {
+            t.push_str(&format!("secret {secret}\n"));
         }
         for (i, s) in c.main.iter().enumerate() {
             if let Some(s) = s {
@@ -194,14 +229,23 @@ fn parse(text: &str) -> BTreeMap<NodePos, Chest> {
     for line in text.lines() {
         let mut f = line.split_whitespace();
         match f.next() {
-            Some(kind @ ("chest" | "bones" | "shelf")) => {
+            Some(kind @ ("chest" | "bones" | "shelf" | "vessels")) => {
                 let v: Vec<i32> = f.by_ref().take(3).filter_map(|v| v.parse().ok()).collect();
                 current = (v.len() == 3).then(|| (v[0], v[1], v[2]));
                 if let Some(pos) = current {
-                    let (bones, shelf) = (kind == "bones", kind == "shelf");
+                    let bones = kind == "bones";
+                    let shelf = match kind {
+                        "shelf" => Some(Shelf::Books),
+                        "vessels" => Some(Shelf::Vessels),
+                        _ => None,
+                    };
                     map.insert(pos, Chest { owner: f.next().map(str::to_string), bones, shelf, ..Default::default() });
                 }
             }
+            Some("secret") => match (current.and_then(|p| map.get_mut(&p)), f.next()) {
+                (Some(c), Some(secret)) => c.secret = Some(secret.to_string()),
+                _ => warn!("Skipping chest line \"{line}\""),
+            },
             Some("share") => match (current.and_then(|p| map.get_mut(&p)), f.next().and_then(|t| t.parse().ok())) {
                 (Some(c), Some(t)) => c.share_at = Some(t),
                 _ => warn!("Skipping chest line \"{line}\""),
@@ -229,15 +273,22 @@ mod tests {
     #[test]
     fn saving_and_owners() {
         let mut map = BTreeMap::new();
-        let mut c = Chest { owner: Some("Steve".into()), ..Default::default() };
+        let mut c = Chest { owner: Some("Steve".into()), secret: Some("0123456789abcdef".into()), ..Default::default() };
         c.main[31] = Some(Stack::new(CONTENT_COBBLE, 99));
         map.insert((1, -2, 3), c.clone());
         map.insert((4, 5, 6), Chest::default());
         let mut b = Chest { owner: Some("Jim".into()), bones: true, share_at: Some(1500), ..Default::default() };
         b.main[0] = Some(Stack::new(CONTENT_DIRT, 3));
         map.insert((7, 8, 9), b);
+        let mut v = Chest { shelf: Some(Shelf::Vessels), ..Default::default() };
+        v.main[3] = Some(Stack::new(VESSELS_GLASS_BOTTLE, 2));
+        map.insert((0, 1, 0), v.clone());
+        map.insert((0, 2, 0), Chest { shelf: Some(Shelf::Books), ..Default::default() });
         assert_eq!(parse(&format(&map)), map);
         assert!(c.allows("steve") && !c.allows("Jim"));
+        assert!(c.allows_with("Jim", Some("0123456789abcdef")) && !c.allows_with("Jim", Some("0123456789abcdee")) && !c.allows_with("Jim", None));
+        assert!(!Chest::default().allows_with("Jim", None) || Chest::default().allows("Jim"));
+        assert!(v.may_put(&Stack::new(VESSELS_STEEL_BOTTLE, 1)) && !v.may_put(&Stack::new(ITEM_BOOK, 1)) && v.slots().len() == SHELF_SLOTS);
         assert!(Chest::default().allows("Jim"));
         assert_eq!(pos_of_location(&format!("detached:{}", detached_name((1, -2, 3)))), Some((1, -2, 3)));
     }

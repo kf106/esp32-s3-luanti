@@ -19,6 +19,9 @@ use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
 use crate::beds;
+use crate::binoculars;
+use crate::keys;
+use crate::screwdriver;
 use crate::bones;
 use crate::doors::{self, Door};
 use crate::falling::{self, Falling};
@@ -300,6 +303,12 @@ struct Peer {
     /// (minetest_game's book_writers), and the tab they last chose.
     book_slot: Option<usize>,
     book_tab: u8,
+    /// The hotbar slot in hand (TOSERVER_PLAYERITEM, and each interaction).
+    wield: usize,
+    /// The zoom their properties last gave them, and whether they were
+    /// last allowed the minimap (binoculars.rs).
+    zoom_fov: f32,
+    minimap: Option<bool>,
     /// The bed they lie in, if any.
     in_bed: Option<InBed>,
     /// Already reported: nothing heard from them for LINK_QUIET, and none
@@ -359,6 +368,9 @@ impl Peer {
             chest: None,
             book_slot: None,
             book_tab: 1,
+            wield: 0,
+            zoom_fov: 0.0,
+            minimap: None,
             in_bed: None,
             quiet_reported: false,
             unacked_reported: false,
@@ -491,6 +503,10 @@ pub struct Server {
     /// When lava touching water was last looked at.
     lava_cooled: Instant,
     moss_checked: Instant,
+    /// When players were last checked for binoculars, and for a mapping
+    /// kit.
+    zoom_checked: Instant,
+    map_checked: Instant,
     /// When breath was last lost underwater, and last regained.
     drowned_at: Instant,
     breathed_at: Instant,
@@ -831,6 +847,8 @@ impl Server {
             liquids_flowed: Instant::now(),
             lava_cooled: Instant::now(),
             moss_checked: Instant::now(),
+            zoom_checked: Instant::now(),
+            map_checked: Instant::now(),
             drowned_at: Instant::now(),
             breathed_at: Instant::now(),
             liquid_changes: 0,
@@ -1159,9 +1177,13 @@ impl Server {
             TOSERVER_DELETEDBLOCKS => self.on_deleted_blocks(from, payload),
             // The client confirms blocks it has meshed; we don't need that yet.
             TOSERVER_GOTBLOCKS => {}
-            // The hotbar slot in hand. Digging and placing say which slot
-            // they use, so the server needn't keep it.
-            TOSERVER_PLAYERITEM => {}
+            // The hotbar slot in hand (digging and placing say it too):
+            // a key in hand opens what it fits.
+            TOSERVER_PLAYERITEM => {
+                if let (Some(peer), [a, b, ..]) = (self.peers.get_mut(&from), payload) {
+                    peer.wield = u16::from_be_bytes([*a, *b]) as usize;
+                }
+            }
             TOSERVER_INVENTORY_FIELDS => self.on_inventory_fields(from, payload),
             TOSERVER_NODEMETA_FIELDS => self.on_nodemeta_fields(from, payload),
             TOSERVER_CHAT_MESSAGE => self.on_chat(from, payload),
@@ -1642,6 +1664,8 @@ impl Server {
             peer.saved = saved;
             peer.saved_at = Instant::now();
             peer.inventory = self.inventories.load(peer.display_name());
+            peer.zoom_fov = binoculars::zoom_fov(&peer.inventory.main);
+            peer.minimap = None;
             let items: u32 = peer.inventory.main.iter().flatten().map(|s| s.count as u32).sum();
             info!("{} has {items} items", peer.display_name());
         }
@@ -1653,6 +1677,8 @@ impl Server {
         self.send_inventory(from);
         self.send_inventory_formspec(from);
         self.add_player_object(from);
+        // The minimap only with a mapping kit (map's on_joinplayer).
+        self.update_minimap(from);
         self.send_command(from, 0, &build_health_bar(hp));
         self.send_command(from, 0, &build_hp(hp, false));
         self.send_command(from, 0, &build_breath(PLAYER_MAX_BREATH));
@@ -1684,6 +1710,7 @@ impl Server {
             yaw: peer.yaw,
             anim: peer.anim,
             skin: &self.skin_texture(&peer.skin),
+            zoom_fov: peer.zoom_fov,
         });
 
         // The client's own object must be in its first object packet: from
@@ -1699,6 +1726,7 @@ impl Server {
                     yaw: p.yaw,
                     anim: p.anim,
                     skin: &self.skin_texture(&p.skin),
+                    zoom_fov: p.zoom_fov,
                 })));
                 others.push(*addr);
             }
@@ -1854,8 +1882,41 @@ impl Server {
             }
             return;
         }
+        if let Some(peer) = self.peers.get_mut(&from) {
+            peer.wield = msg.item as usize;
+        }
         if msg.action == INTERACT_USE {
             if !dead {
+                // Screwdriver, skeleton key, binoculars and mapping kit
+                // (their on_use).
+                let slot = msg.item as usize;
+                let item = self.peers.get(&from).and_then(|p| p.inventory.get(slot)).filter(|_| slot < HOTBAR_SIZE).map(|s| s.id);
+                let near = |p: [i16; 3]| (0..3).map(|i| (p[i] as f32 - body[i]).powi(2)).sum::<f32>().sqrt() <= MAX_INTERACT_DISTANCE;
+                match (item, &msg.pointed) {
+                    (Some(content::TOOL_SCREWDRIVER), Pointed::Node { under, .. }) => {
+                        if near(*under) {
+                            self.screwdrive(from, slot, *under, screwdriver::Mode::Face);
+                        }
+                        return;
+                    }
+                    (Some(content::TOOL_SCREWDRIVER), _) => return,
+                    (Some(content::ITEM_SKELETON_KEY), Pointed::Node { under, .. }) => {
+                        if near(*under) {
+                            self.cut_key(from, slot, *under);
+                        }
+                        return;
+                    }
+                    (Some(content::ITEM_SKELETON_KEY), _) => return,
+                    (Some(content::ITEM_BINOCULARS), _) => {
+                        self.update_zoom(from);
+                        return;
+                    }
+                    (Some(content::ITEM_MAPPING_KIT), _) => {
+                        self.update_minimap(from);
+                        return;
+                    }
+                    _ => {}
+                }
                 // An empty bucket scoops up the water it points at.
                 let scooped = match msg.pointed {
                     Pointed::Node { under, above } => {
@@ -1920,12 +1981,13 @@ impl Server {
                     return;
                 }
                 // A chest must be emptied first, and isn't dug while open; a
-                // locked one only by its owner.
-                if content::is_chest(current) || current == bones::BONES || current == content::CONTENT_BOOKSHELF {
+                // locked one only by its owner, or with its key.
+                if content::is_chest(current) || current == bones::BONES || content::shelf_of(current).is_some() {
                     self.fill_dungeon_chest(furnace_at);
-                    let record = self.chests.get(furnace_at);
                     let open = content::chest_pair(current).is_some_and(|(_, o)| o == current);
-                    if open || record.is_some_and(|c| !c.is_empty() || !c.allows(&name)) {
+                    let key = self.wielded_key(from);
+                    let record = self.chests.get(furnace_at);
+                    if open || record.is_some_and(|c| !c.is_empty() || !c.allows_with(&name, key.as_deref())) {
                         info!("{name}: can't dig the chest at {under:?} (open, not empty, or not theirs)");
                         self.resend_node(from, under);
                         return;
@@ -1935,7 +1997,8 @@ impl Server {
                 }
                 // A steel door or trapdoor only by its owner.
                 if doors::is_door(current) || doors::is_trapdoor(current) {
-                    if !self.door_owners.allows(furnace_at, &name) {
+                    let key = self.wielded_key(from);
+                    if !self.door_owners.allows_with(furnace_at, &name, key.as_deref()) {
                         info!("{name}: can't dig the locked door at {under:?}");
                         self.resend_node(from, under);
                         return;
@@ -2087,7 +2150,7 @@ impl Server {
                     }
                     return;
                 }
-                if self.world.node(node_pos(under)) == content::CONTENT_BOOKSHELF && !sneaking {
+                if content::shelf_of(self.world.node(node_pos(under))).is_some() && !sneaking {
                     if in_reach(under) {
                         self.open_shelf(from, node_pos(under));
                     }
@@ -2124,6 +2187,23 @@ impl Server {
                 // node. An empty slot predicts nothing.
                 let slot = msg.item as usize;
                 let wielded = self.peers.get(&from).and_then(|p| p.inventory.get(slot));
+                // The screwdriver turns the node about its axis (its
+                // on_place).
+                if wielded.is_some_and(|s| slot < HOTBAR_SIZE && s.id == content::TOOL_SCREWDRIVER) {
+                    if in_reach(under) {
+                        self.screwdrive(from, slot, under, screwdriver::Mode::Axis);
+                    }
+                    return;
+                }
+                // A key, sneaking, on a steel door or trapdoor: opens or
+                // shuts it if it fits (its on_key_use). Placed, it is
+                // nothing.
+                if wielded.is_some_and(|s| slot < HOTBAR_SIZE && content::group_of(s.id, "key") == 1) {
+                    if doors::is_locked(target) && in_reach(under) {
+                        self.toggle_door(from, node_pos(under));
+                    }
+                    return;
+                }
                 // A water bucket pours out a water source.
                 if wielded.is_some_and(|s| slot < HOTBAR_SIZE && matches!(s.id, content::ITEM_BUCKET_WATER | content::ITEM_BUCKET_LAVA)) {
                     if in_reach(above) {
@@ -2219,7 +2299,7 @@ impl Server {
                     // A seed goes on soil, directly on top (farming's
                     // place_seed).
                     farming::is_soil(support) && above[1] == under[1] + 1
-                } else if content::is_sapling(id) || farming::is_attached_plant(id) {
+                } else if content::stands_on_floor(id) {
                     content::walkable(self.world.node(below))
                 } else {
                     support != world::CONTENT_AIR
@@ -2228,7 +2308,7 @@ impl Server {
                 // Torches and ladders face what they were placed against.
                 let param2 = if content::is_wallmounted(id) {
                     content::wallmounted_param2(under, above)
-                } else if content::is_furnace(id) || content::is_chest(id) || id == content::CONTENT_BOOKSHELF || doors::is_trapdoor(id) || fences::is_gate(id) || panes::is_flat(id) {
+                } else if content::is_furnace(id) || content::is_chest(id) || content::shelf_of(id).is_some() || doors::is_trapdoor(id) || fences::is_gate(id) || panes::is_flat(id) {
                     content::facedir_param2(above, body)
                 } else if stairs::shape_of(id).is_some() {
                     // Stairs and slabs: the way the player looks decides
@@ -2276,9 +2356,9 @@ impl Server {
                 self.broadcast_node(above, &build_addnode(above, node, param2));
                 // A pane, or a pane beside it, takes its new shape.
                 self.update_panes_near(node_pos(above));
-                // A bookshelf starts empty (its on_construct).
-                if node == content::CONTENT_BOOKSHELF {
-                    self.chests.get_or_add(node_pos(above)).shelf = true;
+                // A shelf starts empty (its on_construct).
+                if let Some(kind) = content::shelf_of(node) {
+                    self.chests.get_or_add(node_pos(above)).shelf = Some(kind);
                     self.chests.save();
                     self.update_shelf(node_pos(above));
                 }
@@ -2328,7 +2408,8 @@ impl Server {
     /// on_rightclick), with its sound. A steel one only for its owner.
     fn toggle_door(&mut self, from: SocketAddr, pos: NodePos) {
         let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
-        if !self.door_owners.allows(pos, &name) {
+        let key = self.wielded_key(from);
+        if !self.door_owners.allows_with(pos, &name, key.as_deref()) {
             let owner = self.door_owners.owner(pos).unwrap_or_default().to_string();
             self.tell(from, &format!("This door is locked; it belongs to {owner}."));
             return;
@@ -2477,7 +2558,7 @@ impl Server {
         peer.pos_bs = pos_bs;
         peer.yaw = yaw;
         peer.anim = Animation::new(ANIM_LAY, 0.0);
-        let (id, name, pitch, skin) = (peer.id, peer.display_name().to_string(), peer.pitch, peer.skin.clone());
+        let (id, name, pitch, skin, zoom) = (peer.id, peer.display_name().to_string(), peer.pitch, peer.skin.clone(), peer.zoom_fov);
         info!("{name} lies down in the bed at {bed:?}");
         let texture = self.skin_texture(&skin);
         self.send_command(from, 0, &build_object_messages(&[(id, physics_override_message(true))]));
@@ -2487,7 +2568,7 @@ impl Server {
         self.send_command(from, 0, &build_hud_set_flags(0, HUD_FLAG_WIELDITEM_VISIBLE));
         let lay = build_object_messages(&[
             (id, set_animation_message(Animation::new(ANIM_LAY, 0.0))),
-            (id, player_properties_message(&texture, true)),
+            (id, player_properties_message(&texture, true, zoom)),
         ]);
         self.send_to_players(&lay);
     }
@@ -2509,7 +2590,7 @@ impl Server {
             peer.pos_bs = was.from_bs;
             peer.yaw = yaw;
         }
-        let (id, name, pitch, skin) = (peer.id, peer.display_name().to_string(), peer.pitch, peer.skin.clone());
+        let (id, name, pitch, skin, zoom) = (peer.id, peer.display_name().to_string(), peer.pitch, peer.skin.clone(), peer.zoom_fov);
         info!("{name} gets up from the bed at {:?}", was.bed);
         let texture = self.skin_texture(&skin);
         if move_back {
@@ -2519,7 +2600,7 @@ impl Server {
         self.send_command(from, 0, &build_object_messages(&[(id, physics_override_message(false))]));
         self.send_command(from, 0, &build_local_player_animations(true));
         self.send_command(from, 0, &build_hud_set_flags(HUD_FLAG_WIELDITEM_VISIBLE, HUD_FLAG_WIELDITEM_VISIBLE));
-        let up = build_object_messages(&[(id, set_animation_message(stand)), (id, player_properties_message(&texture, false))]);
+        let up = build_object_messages(&[(id, set_animation_message(stand)), (id, player_properties_message(&texture, false, zoom))]);
         self.send_to_players(&up);
         true
     }
@@ -3012,7 +3093,7 @@ impl Server {
                 let s = content::wallmounted_support(self.world.param2(np));
                 (np.0 + s.0, np.1 + s.1, np.2 + s.2) == (pos[0] as i32, pos[1] as i32, pos[2] as i32)
             } else {
-                (content::is_sapling(id) || farming::is_attached_plant(id)) && dy == 1
+                content::stands_on_floor(id) && dy == 1
             };
             if !attached {
                 continue;
@@ -3287,6 +3368,189 @@ impl Server {
         self.inventory_changed(addr);
     }
 
+    /// The secret of the key in a player's hand, if they hold one.
+    fn wielded_key(&self, addr: SocketAddr) -> Option<String> {
+        let peer = self.peers.get(&addr)?;
+        keys::secret_of(peer.inventory.get(peer.wield).filter(|_| peer.wield < HOTBAR_SIZE))
+    }
+
+    /// binoculars.update_player_property: the zoom, if it has changed,
+    /// in the player's properties, which everyone is sent.
+    fn update_zoom(&mut self, addr: SocketAddr) {
+        let Some(peer) = self.peers.get_mut(&addr).filter(|p| p.ready) else {
+            return;
+        };
+        let zoom = binoculars::zoom_fov(&peer.inventory.main);
+        if zoom == peer.zoom_fov {
+            return;
+        }
+        peer.zoom_fov = zoom;
+        let (id, skin, lying) = (peer.id, peer.skin.clone(), peer.in_bed.is_some());
+        info!("{}: zoom {zoom}", peer.display_name());
+        let texture = self.skin_texture(&skin);
+        let packet = build_object_messages(&[(id, player_properties_message(&texture, lying, zoom))]);
+        self.send_to_players(&packet);
+    }
+
+    /// map.update_hud_flags: the minimap allowed with a mapping kit, its
+    /// radar never; the client told only of a change.
+    fn update_minimap(&mut self, addr: SocketAddr) {
+        let Some(peer) = self.peers.get_mut(&addr).filter(|p| p.ready) else {
+            return;
+        };
+        let allowed = binoculars::minimap(&peer.inventory.main);
+        if peer.minimap == Some(allowed) {
+            return;
+        }
+        peer.minimap = Some(allowed);
+        let (flags, mask) = binoculars::minimap_flags(allowed);
+        self.send_command(addr, 0, &build_hud_set_flags(flags, mask));
+    }
+
+    /// keys' skeleton key, used on a locked chest, steel door or steel
+    /// trapdoor (its on_skeleton_key_use): for the owner, the lock gets a
+    /// secret if it has none, and one skeleton key becomes a key to it.
+    fn cut_key(&mut self, addr: SocketAddr, slot: usize, under: [i16; 3]) {
+        let pos = (under[0] as i32, under[1] as i32, under[2] as i32);
+        let node = self.world.node(pos);
+        let Some(name) = self.peers.get(&addr).map(|p| p.display_name().to_string()) else {
+            return;
+        };
+        let new = keys::new_secret(|| self.rng.next() as u16);
+        let mine = |owner: Option<&str>| owner.is_some_and(|o| o.eq_ignore_ascii_case(&name));
+        let (secret, owner) = if content::is_locked_chest(node) {
+            let record = self.chests.get_or_add(pos);
+            if !mine(record.owner.as_deref()) {
+                self.tell(addr, keys::not_yours(node));
+                return;
+            }
+            let owner = record.owner.clone().unwrap_or_default();
+            let secret = record.secret.get_or_insert(new).clone();
+            self.chests.save();
+            (secret, owner)
+        } else if doors::is_locked(node) {
+            let owner = self.door_owners.owner(pos).map(str::to_string);
+            if !mine(owner.as_deref()) {
+                self.tell(addr, keys::not_yours(node));
+                return;
+            }
+            let Some(secret) = self.door_owners.lock_secret(pos, new) else {
+                return;
+            };
+            (secret, owner.unwrap_or_default())
+        } else {
+            return;
+        };
+        let key = keys::key_for(&secret, &owner, node);
+        info!("{name} cut a key to the {} at {under:?}", content::description_of(node));
+        let Some(peer) = self.peers.get_mut(&addr) else {
+            return;
+        };
+        let Some(skeleton) = peer.inventory.get(slot).filter(|s| s.id == content::ITEM_SKELETON_KEY) else {
+            return;
+        };
+        if skeleton.count == 1 {
+            peer.inventory.set(slot, Some(key));
+        } else {
+            peer.inventory.take_one(slot);
+            if peer.inventory.add(key) > 0 {
+                let at = peer.pos_bs.map(|v| v / 10.0);
+                self.spawn_item(key, (at, [0.0; 3]));
+            }
+        }
+        self.inventory_changed(addr);
+    }
+
+    /// The screwdriver (screwdriver.handler): the node at `under` turned
+    /// about its face or axis, as its param2 allows, unless it refuses or
+    /// couldn't be dug just now; then the screwdriver wears.
+    fn screwdrive(&mut self, addr: SocketAddr, slot: usize, under: [i16; 3], mode: screwdriver::Mode) {
+        let pos = (under[0] as i32, under[1] as i32, under[2] as i32);
+        let (node, param2) = (self.world.node(pos), self.world.param2(pos));
+        let Some(name) = self.peers.get(&addr).map(|p| p.display_name().to_string()) else {
+            return;
+        };
+        let Some(turned) = screwdriver::turns(node) else {
+            return;
+        };
+        let new = match turned {
+            content::Turned::Facedir => screwdriver::facedir(param2, mode),
+            content::Turned::Wallmounted => {
+                let attached = content::group_of(node, "attached_node") != 0;
+                let world = &self.world;
+                screwdriver::wallmounted(param2, mode, attached, |r| {
+                    let d = content::wallmounted_support(r);
+                    content::walkable(world.node((pos.0 + d.0, pos.1 + d.1, pos.2 + d.2)))
+                })
+            }
+        };
+        if beds::is_bed_bottom(node) {
+            // The bed's own on_rotate: both halves, or not at all.
+            if !self.turn_bed(pos, node, param2, new) {
+                return;
+            }
+        } else {
+            // can_dig: an emptied furnace, chest or shelf; someone else's
+            // locked chest or steel trapdoor not at all.
+            let can_dig = if content::is_furnace(node) {
+                self.furnaces.get(pos).map_or(true, |f| f.is_empty())
+            } else if content::is_chest(node) || node == bones::BONES || content::shelf_of(node).is_some() {
+                self.chests.get(pos).map_or(true, |c| c.is_empty() && c.allows(&name))
+            } else if doors::is_locked(node) {
+                self.door_owners.allows(pos, &name)
+            } else {
+                true
+            };
+            if !can_dig {
+                return;
+            }
+            if new != param2 {
+                info!("{name} turned {} at {under:?} ({param2} to {new})", content::name_of(node));
+                self.world.set_node(pos, node, new);
+                self.broadcast_node(under, &build_addnode_keeping_meta(under, node, new));
+            }
+        }
+        let Some(peer) = self.peers.get_mut(&addr) else {
+            return;
+        };
+        let Some(mut tool) = peer.inventory.get(slot) else {
+            return;
+        };
+        let intact = tool.add_wear(content::use_wear(screwdriver::USES, tool.wear));
+        peer.inventory.set(slot, intact.then_some(tool));
+        if !intact {
+            info!("{name}'s screwdriver broke");
+            self.play_sound_near(-1, content::TOOL_BREAKS, 0.5, under.map(|v| v as f32 * 10.0), HEARING);
+        }
+        self.inventory_changed(addr);
+    }
+
+    /// beds' on_rotate: the bed turns on its bottom half, if its top is
+    /// where it should be, the new turn is a level one, and there is room
+    /// for the top where it goes. Returns whether it turned.
+    fn turn_bed(&mut self, pos: NodePos, bottom: u16, param2: u8, new: u8) -> bool {
+        let old_top = beds::other_half(pos, param2, false);
+        let top = self.world.node(old_top);
+        if !beds::bed_of(top).is_some_and(|(_, is_top)| is_top) || self.world.param2(old_top) != param2 {
+            return false;
+        }
+        if new % 32 > 3 {
+            return false;
+        }
+        let new_top = beds::other_half(pos, new, false);
+        if !content::buildable_to(self.world.node(new_top)) {
+            return false;
+        }
+        let p16 = |p: NodePos| [p.0 as i16, p.1 as i16, p.2 as i16];
+        self.world.set_node(old_top, world::CONTENT_AIR, 0);
+        self.broadcast_node(p16(old_top), &build_removenode(p16(old_top)));
+        self.world.set_node(pos, bottom, new);
+        self.broadcast_node(p16(pos), &build_addnode(p16(pos), bottom, new));
+        self.world.set_node(new_top, top, new);
+        self.broadcast_node(p16(new_top), &build_addnode(p16(new_top), top, new));
+        true
+    }
+
     /// minetest_game's grow_sapling: on soil and in daylight it becomes a
     /// tree; otherwise it tries again in 5 minutes.
     fn grow_sapling(&mut self, pos: NodePos) {
@@ -3493,12 +3757,12 @@ impl Server {
         let skin = self.skins.get(next);
         peer.skin = skin.key.clone();
         peer.save(&self.players);
-        let (id, name, texture, label, lying) = (peer.id, peer.display_name().to_string(), skin.texture.clone(), skin.label.clone(), peer.in_bed.is_some());
+        let (id, name, texture, label, lying, zoom) = (peer.id, peer.display_name().to_string(), skin.texture.clone(), skin.label.clone(), peer.in_bed.is_some(), peer.zoom_fov);
         info!("{name} now wears the {label} skin");
         self.send_inventory_formspec(from);
         // Everyone (the player too, for the third-person view) redraws
         // the model with the new texture.
-        let packet = build_object_messages(&[(id, player_properties_message(&texture, lying))]);
+        let packet = build_object_messages(&[(id, player_properties_message(&texture, lying, zoom))]);
         self.send_to_players(&packet);
     }
 
@@ -3819,6 +4083,9 @@ impl Server {
         let name = peer.display_name().to_string();
         let open_furnace = peer.furnace;
         let open_chest = peer.chest;
+        // A locked chest's contents only for its owner, or while its key is
+        // in hand (the chest's allow_metadata_inventory_* callbacks).
+        let key = keys::secret_of(peer.inventory.get(peer.wield).filter(|_| peer.wield < HOTBAR_SIZE));
         let throw = drop_motion(peer.pos_bs, peer.yaw, peer.pitch);
         // Which list an action names: the player's own (not "craftpreview":
         // taking from it is a Craft action, and nothing can be put into it,
@@ -3831,7 +4098,7 @@ impl Server {
                 return List::from_name(list).map(Place::Own);
             }
             if let Some(pos) = chest::pos_of_location(loc) {
-                let ok = open_chest == Some(pos) && chests.get(pos).is_some() && list == "main";
+                let ok = open_chest == Some(pos) && chests.get(pos).is_some_and(|c| c.allows_with(&name, key.as_deref())) && list == "main";
                 return ok.then_some(Place::Chest(pos));
             }
             let pos = furnace::pos_of_location(loc).filter(|&p| open_furnace == Some(p) && furnaces.get(p).is_some())?;
@@ -3895,7 +4162,7 @@ impl Server {
                 self.chests.save();
             }
             self.send_chest(pos);
-            if ok && self.chests.get(pos).is_some_and(|c| c.shelf) {
+            if ok && self.chests.get(pos).is_some_and(|c| c.shelf.is_some()) {
                 self.update_shelf(pos);
             }
             // Bones vanish when the last thing is taken out, and the taker
@@ -3938,8 +4205,9 @@ impl Server {
             return;
         };
         self.fill_dungeon_chest(pos);
+        let key = self.wielded_key(addr);
         let record = self.chests.get_or_add(pos);
-        if !record.allows(&name) {
+        if !record.allows_with(&name, key.as_deref()) {
             let owner = record.owner.clone().unwrap_or_default();
             self.tell(addr, &format!("This chest is locked; it belongs to {owner}."));
             return;
@@ -4044,7 +4312,7 @@ impl Server {
         };
         let (main, left) = bones::pack(stacks);
         let share_at = self.clock.game_time() + bones::SHARE_TIME;
-        self.chests.insert(pos, chest::Chest { main, owner: Some(name.clone()), bones: true, share_at: Some(share_at), shelf: false });
+        self.chests.insert(pos, chest::Chest { main, owner: Some(name.clone()), bones: true, share_at: Some(share_at), shelf: None, secret: None });
         self.world.set_node(pos, bones::BONES, facing);
         let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
         self.broadcast_node(p16, &build_addnode(p16, bones::BONES, facing));
@@ -4135,20 +4403,21 @@ impl Server {
         }
     }
 
-    /// Right-clicking a bookshelf: its window.
+    /// Right-clicking a bookshelf or vessels shelf: its window.
     fn open_shelf(&mut self, addr: SocketAddr, pos: NodePos) {
         let Some(name) = self.peers.get(&addr).map(|p| p.display_name().to_string()) else {
             return;
         };
+        let kind = content::shelf_of(self.world.node(pos));
         let record = self.chests.get_or_add(pos);
-        if !record.shelf {
-            record.shelf = true;
+        if record.shelf != kind {
+            record.shelf = kind;
             self.chests.save();
         }
         if let Some(old) = self.peers.get_mut(&addr).and_then(|p| p.chest.replace(pos)) {
             self.close_unwatched_lids_at(old);
         }
-        info!("{name} opened the bookshelf at {pos:?}");
+        info!("{name} opened the {} at {pos:?}", content::name_of(self.world.node(pos)));
         if let Some(packet) = self.chest_packet(pos) {
             self.send_command(addr, 0, &packet);
         }
@@ -4158,24 +4427,28 @@ impl Server {
 
     fn shelf_form(&self, pos: NodePos) -> String {
         let empty: Vec<bool> = self.chests.get(pos).map_or(vec![true; chest::SHELF_SLOTS], |c| c.slots().iter().map(Option::is_none).collect());
-        shelf_formspec(&chest::detached_name(pos), &empty)
+        let kind = self.chests.get(pos).and_then(|c| c.shelf).unwrap_or(chest::Shelf::Books);
+        shelf_formspec(&chest::detached_name(pos), &empty, kind)
     }
 
-    /// After a bookshelf's books change (update_bookshelf): what it holds,
-    /// shown when it is pointed at, and the outlines of its empty slots.
+    /// After a shelf's contents change (update_bookshelf,
+    /// update_vessels_shelf): what it holds, shown when it is pointed at,
+    /// and the outlines of its empty slots.
     fn update_shelf(&mut self, pos: NodePos) {
         let (mut written, mut empty) = (0, 0);
-        for s in self.chests.get(pos).map(|c| c.slots()).unwrap_or(&[]).iter().flatten() {
+        let record = self.chests.get(pos);
+        for s in record.map(|c| c.slots()).unwrap_or(&[]).iter().flatten() {
             if s.meta.get("text").is_some() {
                 written += s.count;
             } else {
                 empty += s.count;
             }
         }
-        let infotext = if written + empty == 0 {
-            "Empty Bookshelf".to_string()
-        } else {
-            format!("Bookshelf ({written} written, {empty} empty books)")
+        let infotext = match record.and_then(|c| c.shelf) {
+            Some(chest::Shelf::Vessels) if written + empty == 0 => "Empty Vessels Shelf".to_string(),
+            Some(chest::Shelf::Vessels) => format!("Vessels Shelf ({} items)", written + empty),
+            _ if written + empty == 0 => "Empty Bookshelf".to_string(),
+            _ => format!("Bookshelf ({written} written, {empty} empty books)"),
         };
         self.world.set_meta(pos, Some(meta::Fields::from([("infotext".to_string(), infotext)])));
         self.broadcast_meta(pos);
@@ -5007,6 +5280,21 @@ impl Server {
         if now.duration_since(self.moss_checked) >= nature::moss_interval() {
             self.moss_checked = now;
             self.grow_moss();
+        }
+        // binoculars' and map's cyclic_update.
+        if now.duration_since(self.zoom_checked) >= binoculars::BINOCULARS_EVERY {
+            self.zoom_checked = now;
+            let all: Vec<SocketAddr> = self.peers.keys().copied().collect();
+            for addr in all {
+                self.update_zoom(addr);
+            }
+        }
+        if now.duration_since(self.map_checked) >= binoculars::MAP_EVERY {
+            self.map_checked = now;
+            let all: Vec<SocketAddr> = self.peers.keys().copied().collect();
+            for addr in all {
+                self.update_minimap(addr);
+            }
         }
         if now.duration_since(self.lava_cooled) >= LAVA_COOLING {
             self.lava_cooled = now;

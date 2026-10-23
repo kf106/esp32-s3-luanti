@@ -1,6 +1,6 @@
 #![allow(dead_code)]
-mod auth; mod beds; mod board; mod books; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod doors; mod dungeons; mod falling; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod jsonstring; mod liquids; mod messages; mod meta; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
-mod screen; mod server; mod sha1; mod sha256; mod skins; mod srp; mod stairs; mod status; mod storage; mod terrain; mod wifi_config; mod world; mod zstd;
+mod auth; mod beds; mod binoculars; mod board; mod books; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod doors; mod dungeons; mod falling; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod jsonstring; mod keys; mod liquids; mod messages; mod meta; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
+mod screen; mod screwdriver; mod server; mod sha1; mod sha256; mod skins; mod srp; mod stairs; mod status; mod storage; mod terrain; mod wifi_config; mod world; mod zstd;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -478,7 +478,24 @@ fn iron_stats() {
     println!("ground height at spawn: {spawn}");
 }
 
+/// The server's log on stderr (TEST_LOGS=1, as tests/run.py sets it).
+struct StderrLog;
+impl log::Log for StderrLog {
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, r: &log::Record) {
+        eprintln!("{} {}", r.level(), r.args());
+    }
+    fn flush(&self) {}
+}
+static STDERR_LOG: StderrLog = StderrLog;
+
 fn serve(port: &str) {
+    if std::env::var("TEST_LOGS").is_ok() {
+        let _ = log::set_logger(&STDERR_LOG);
+        log::set_max_level(log::LevelFilter::Info);
+    }
     let d = format!("{OUT}/serveworld");
     if std::env::var("KEEP_WORLD").is_err() {
         let _ = std::fs::remove_dir_all(&d);
@@ -752,7 +769,7 @@ fn main() {
     std::fs::create_dir_all(OUT).unwrap();
     if let Ok(port) = std::env::var("SERVE") { serve(&port); return; }
     if let Ok(path) = std::env::var("PLAYER_INIT") {
-        let d = messages::player_init_data(&messages::PlayerInit { name: "Steve", id: 2, pos_bs: [1.0, 2.0, 3.0], yaw: 45.0, anim: messages::Animation::new(messages::ANIM_STAND, 30.0), skin: "character.png" });
+        let d = messages::player_init_data(&messages::PlayerInit { name: "Steve", id: 2, pos_bs: [1.0, 2.0, 3.0], yaw: 45.0, anim: messages::Animation::new(messages::ANIM_STAND, 30.0), skin: "character.png", zoom_fov: 0.0 });
         std::fs::write(path, d).unwrap();
         return;
     }
