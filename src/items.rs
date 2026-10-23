@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use log::{info, warn};
 
-use crate::inventory::Stack;
+use crate::inventory::{Meta, Stack};
 use crate::messages::{item_size, GRAVITY};
 use crate::storage;
 
@@ -48,6 +48,8 @@ pub struct Dropped {
     pub count: u16,
     /// A tool's wear.
     pub wear: u16,
+    /// Its metadata (a written book's).
+    pub meta: Meta,
     /// Centre, in nodes.
     pub pos: [f32; 3],
     /// Nodes per second.
@@ -58,7 +60,7 @@ pub struct Dropped {
 
 impl Dropped {
     pub fn stack(&self) -> Stack {
-        Stack { id: self.item, count: self.count, wear: self.wear }
+        Stack { id: self.item, count: self.count, wear: self.wear, meta: self.meta }
     }
     pub fn pos_bs(&self) -> [f32; 3] {
         self.pos.map(|v| v * 10.0)
@@ -110,8 +112,8 @@ impl Items {
                 Some((pos, age, stack)) if items.list.len() < MAX_ITEMS => {
                     let id = items.next_id;
                     items.next_id += 1;
-                    let (item, count, wear) = (stack.id, stack.count, stack.wear);
-                    items.list.push(Dropped { id, item, count, wear, pos, vel: [0.0; 3], falling: true, age });
+                    let (item, count, wear, meta) = (stack.id, stack.count, stack.wear, stack.meta);
+                    items.list.push(Dropped { id, item, count, wear, meta, pos, vel: [0.0; 3], falling: true, age });
                 }
                 Some(_) => {}
                 None => warn!("Skipping item line \"{line}\""),
@@ -186,8 +188,8 @@ impl Items {
         self.next_id = if self.next_id == u16::MAX { FIRST_ID } else { self.next_id + 1 };
         let (mut pos, vel) = motion;
         lift_out(&mut pos, item_size(stack.count), solid);
-        let (item, count, wear) = (stack.id, stack.count, stack.wear);
-        self.list.push(Dropped { id, item, count, wear, pos, vel, falling: true, age: 0.0 });
+        let (item, count, wear, meta) = (stack.id, stack.count, stack.wear, stack.meta);
+        self.list.push(Dropped { id, item, count, wear, meta, pos, vel, falling: true, age: 0.0 });
         self.touch();
         (id, evicted)
     }
@@ -289,6 +291,7 @@ impl Items {
                     && !o.falling
                     && o.item == me.item
                     && o.wear == me.wear
+                    && o.meta == me.meta
                     && o.count + me.count <= crate::content::stack_max(me.item)
                     && (0..3).map(|i| (o.pos[i] - me.pos[i]).powi(2)).sum::<f32>() <= MERGE_RADIUS * MERGE_RADIUS
             });
@@ -396,7 +399,7 @@ mod tests {
         let ground = |_: i32, y: i32, _: i32| y <= 0;
         let mut items = Items::open(&path);
         items.add(Stack::new(CONTENT_COBBLE, 7), ([1.0, 3.0, 2.0], [0.0; 3]), &ground);
-        items.add(Stack { id: TOOL_PICK_STONE, count: 1, wear: 1234 }, ([4.0, 3.0, 2.0], [0.0; 3]), &ground);
+        items.add(Stack { wear: 1234, ..Stack::new(TOOL_PICK_STONE, 1) }, ([4.0, 3.0, 2.0], [0.0; 3]), &ground);
         for _ in 0..50 {
             items.step(0.1, &ground);
         }

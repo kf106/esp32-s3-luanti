@@ -134,6 +134,9 @@ pub enum Kind {
     /// A mese post light: a thin wooden post (nodebox) with mese windows
     /// down its sides, giving light.
     Post,
+    /// A bookshelf: a cube turned to face whoever placed it, opened with a
+    /// right-click, holding books.
+    Shelf,
     /// A sign: a thin board (a wallmounted nodebox) on a wall, floor or
     /// ceiling, walked through, with text (meta.rs) its right-click
     /// edits.
@@ -251,7 +254,8 @@ pub const MESE_POST_BIRCH: u16 = MESE_POST_APPLE + 1;
 pub const MESE_POST_FIR: u16 = MESE_POST_APPLE + 2;
 pub const MESE_POST_JUNGLE: u16 = MESE_POST_APPLE + 3;
 pub const MESE_POST_ACACIA: u16 = MESE_POST_APPLE + 4;
-/// Each post and the planks it's made with.
+/// Each post and the planks it's made with (for the tests).
+#[cfg(test)]
 pub const MESE_POSTS: [(u16, u16); 5] = [
     (MESE_POST_APPLE, CONTENT_APPLE_WOOD),
     (MESE_POST_BIRCH, CONTENT_BIRCH_WOOD),
@@ -259,6 +263,8 @@ pub const MESE_POSTS: [(u16, u16); 5] = [
     (MESE_POST_JUNGLE, CONTENT_JUNGLE_WOOD),
     (MESE_POST_ACACIA, CONTENT_ACACIA_WOOD),
 ];
+/// minetest_game's bookshelf: holds 16 books.
+pub const CONTENT_BOOKSHELF: u16 = SIGN_STEEL + 1;
 /// minetest_game's wooden and steel signs.
 pub const SIGN_WOOD: u16 = MESE_POST_ACACIA + 1;
 pub const SIGN_STEEL: u16 = SIGN_WOOD + 1;
@@ -297,6 +303,10 @@ pub const ITEM_DOOR_WOOD: u16 = 0x1004;
 pub const ITEM_DOOR_STEEL: u16 = 0x1005;
 /// xpanes' steel bar door, after the dyes.
 pub const ITEM_DOOR_STEEL_BAR: u16 = 0x102D;
+/// minetest_game's paper, book, and book with text.
+pub const ITEM_PAPER: u16 = 0x102E;
+pub const ITEM_BOOK: u16 = 0x102F;
+pub const ITEM_BOOK_WRITTEN: u16 = 0x1030;
 pub const ITEM_DOOR_GLASS: u16 = 0x1006;
 /// minetest_game's buckets.
 pub const ITEM_BUCKET_EMPTY: u16 = 0x1007;
@@ -2867,6 +2877,17 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Sign,
     },
+    // minetest_game's bookshelf: wood, with books on its front and back.
+    Node {
+        id: CONTENT_BOOKSHELF,
+        name: "esp:bookshelf",
+        description: "Bookshelf",
+        tiles: ["esp_apple_wood.png", "esp_apple_wood.png", "esp_apple_wood.png", "esp_apple_wood.png", "default_bookshelf.png", "default_bookshelf.png"],
+        groups: &[("choppy", 3), ("oddly_breakable_by_hand", 2), ("flammable", 3)],
+        drop: CONTENT_BOOKSHELF,
+        drop_count: 1,
+        kind: Kind::Shelf,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -3206,6 +3227,28 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Steel Bar Door",
         image: "xpanes_item_steel_bar.png",
         groups: &[("cracky", 1), ("level", 2)],
+    },
+    // minetest_game's paper and books (craftitems.lua).
+    CraftItem {
+        id: ITEM_PAPER,
+        name: "esp:paper",
+        description: "Paper",
+        image: "default_paper.png",
+        groups: &[("flammable", 3)],
+    },
+    CraftItem {
+        id: ITEM_BOOK,
+        name: "esp:book",
+        description: "Book",
+        image: "default_book.png",
+        groups: &[("book", 1), ("flammable", 3)],
+    },
+    CraftItem {
+        id: ITEM_BOOK_WRITTEN,
+        name: "esp:book_written",
+        description: "Book with Text",
+        image: "default_book_written.png",
+        groups: &[("book", 1), ("not_in_creative_inventory", 1), ("flammable", 3)],
     },
     // minetest_game's lumps, crystals and ingots (craftitems.lua).
     CraftItem {
@@ -3930,7 +3973,7 @@ pub fn passes_sunlight(id: u16) -> bool {
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane | Kind::Bones | Kind::Wall | Kind::Post))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane | Kind::Bones | Kind::Wall | Kind::Post | Kind::Shelf))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -3968,9 +4011,10 @@ pub fn is_sign(id: u16) -> bool {
     def(id).is_some_and(|n| n.kind == Kind::Sign)
 }
 
-/// Nodes that keep metadata (meta.rs): signs.
+/// Nodes that keep metadata (meta.rs): signs, and bookshelves (what they
+/// hold, as shown when pointed at).
 pub fn takes_meta(id: u16) -> bool {
-    is_sign(id)
+    is_sign(id) || id == CONTENT_BOOKSHELF
 }
 
 pub fn is_sapling(id: u16) -> bool {
@@ -4109,7 +4153,8 @@ pub fn is_item(id: u16) -> bool {
 pub fn stack_max(id: u16) -> u16 {
     // A full bucket doesn't stack (minetest_game's stack_max = 1).
     // So doesn't a bed.
-    if is_tool(id) || matches!(id, ITEM_BUCKET_WATER | ITEM_BUCKET_LAVA) || beds::is_bed(id) { 1 } else { 99 }
+    // Nor does a book with text.
+    if is_tool(id) || matches!(id, ITEM_BUCKET_WATER | ITEM_BUCKET_LAVA | ITEM_BOOK_WRITTEN) || beds::is_bed(id) { 1 } else { 99 }
 }
 
 /// Whether an item points at liquids, as buckets do: then the client
@@ -4410,6 +4455,12 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_mineral_copper.png", include_bytes!("../media/default_mineral_copper.png")),
     ("default_meselamp.png", include_bytes!("../media/default_meselamp.png")),
     ("default_sign_wood.png", include_bytes!("../media/default_sign_wood.png")),
+    ("default_paper.png", include_bytes!("../media/default_paper.png")),
+    ("default_book.png", include_bytes!("../media/default_book.png")),
+    ("default_book_written.png", include_bytes!("../media/default_book_written.png")),
+    ("default_bookshelf.png", include_bytes!("../media/default_bookshelf.png")),
+    ("default_bookshelf_slot.png", include_bytes!("../media/default_bookshelf_slot.png")),
+    ("gui_hb_bg.png", include_bytes!("../media/gui_hb_bg.png")),
     ("default_sign_steel.png", include_bytes!("../media/default_sign_steel.png")),
     ("default_sign_wall_wood.png", include_bytes!("../media/default_sign_wall_wood.png")),
     ("default_sign_wall_steel.png", include_bytes!("../media/default_sign_wall_steel.png")),
@@ -4741,6 +4792,7 @@ fn sounds_of(id: u16) -> Sounds {
         CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD | CONTENT_APPLE_TREE | CONTENT_APPLE_WOOD
         | CONTENT_JUNGLE_TREE | CONTENT_JUNGLE_WOOD | CONTENT_ACACIA_TREE | CONTENT_ACACIA_WOOD => wood,
         id if is_chest(id) => wood,
+        CONTENT_BOOKSHELF => wood,
         id if def(id).is_some_and(|n| n.kind == Kind::Post) => wood,
         SIGN_WOOD => wood,
         SIGN_STEEL => sounds_of(CONTENT_STEEL_BLOCK),
@@ -4981,7 +5033,8 @@ pub fn itemdef_bytes() -> Vec<u8> {
             groups: c.groups,
             // The empty bucket is used (left-click) to scoop water; bread
             // is eaten.
-            usable: matches!(c.id, ITEM_BUCKET_EMPTY | ITEM_BREAD | ITEM_BLUEBERRIES),
+            // (and books, which open to be written in or read)
+            usable: matches!(c.id, ITEM_BUCKET_EMPTY | ITEM_BREAD | ITEM_BLUEBERRIES | ITEM_BOOK | ITEM_BOOK_WRITTEN),
             liquids_pointable: liquids_pointable(c.id),
         });
     }
@@ -5273,7 +5326,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
         w.u8(CPT_LIGHT).u8(0);
-    } else if matches!(n.kind, Kind::Furnace | Kind::Bones) {
+    } else if matches!(n.kind, Kind::Furnace | Kind::Bones | Kind::Shelf) {
         w.u8(0).u8(CPT2_FACEDIR);
     } else if ladder {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
@@ -5311,7 +5364,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let (drawtype, mesh) = match n.kind {
         Kind::Torch => (NDT_MESH, torch_mesh(n.id)),
         Kind::Leaves => (NDT_ALLFACES_OPTIONAL, ""),
-        Kind::Solid | Kind::Furnace | Kind::Chest | Kind::Bones => (NDT_NORMAL, ""),
+        Kind::Solid | Kind::Furnace | Kind::Chest | Kind::Bones | Kind::Shelf => (NDT_NORMAL, ""),
         Kind::ChestOpen => (NDT_MESH, CHEST_OPEN_MESH),
         Kind::Glass => (NDT_GLASSLIKE_FRAMED_OPTIONAL, ""),
         Kind::Ladder => (NDT_SIGNLIKE, ""),
@@ -5437,7 +5490,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(!(mark || hidden || liquid) as u8) // diggable
         .u8(ladder as u8) // climbable
         .u8((mark || liquid || plant) as u8) // buildable_to
-        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::Gate | Kind::Bones) as u8) // rightclickable
+        .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::Gate | Kind::Bones | Kind::Shelf) as u8) // rightclickable
         .u32(damage_per_second(n.id) as u32); // damage_per_second
 
     // liquid

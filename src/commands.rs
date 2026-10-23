@@ -369,7 +369,7 @@ impl Server {
     }
 
     /// A player's position, in nodes.
-    fn position(&self, addr: SocketAddr) -> [f32; 3] {
+    pub(super) fn position(&self, addr: SocketAddr) -> [f32; 3] {
         self.peers.get(&addr).map_or([0.0; 3], |p| p.pos_bs.map(|v| v / 10.0))
     }
 

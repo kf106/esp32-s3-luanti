@@ -1021,7 +1021,7 @@ pub fn loot_for(pos: NodePos, desert: bool) -> [Option<Stack>; SLOTS] {
         if content::is_tool(id) {
             for _ in 0..amount {
                 let wear = rand.range((0.20 * 65535.0) as i32, (0.75 * 65535.0) as i32) as u16;
-                items.push(Stack { id, count: 1, wear });
+                items.push(Stack { wear, ..Stack::new(id, 1) });
             }
         } else if content::stack_max(id) == 1 {
             items.extend((0..amount).map(|_| Stack::new(id, 1)));

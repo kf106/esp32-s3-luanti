@@ -1,6 +1,7 @@
 mod auth;
 mod beds;
 mod board;
+mod books;
 mod bones;
 mod chest;
 mod clock;

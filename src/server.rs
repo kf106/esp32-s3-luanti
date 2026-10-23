@@ -30,6 +30,7 @@ use crate::privs::{self, Privs};
 use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
+use crate::books;
 use crate::dungeons;
 use crate::meta;
 use crate::clock::{self, Clock};
@@ -295,6 +296,10 @@ struct Peer {
     keys: u32,
     /// The chest whose window they have open.
     chest: Option<NodePos>,
+    /// The hotbar slot of the book whose window they have open
+    /// (minetest_game's book_writers), and the tab they last chose.
+    book_slot: Option<usize>,
+    book_tab: u8,
     /// The bed they lie in, if any.
     in_bed: Option<InBed>,
     /// Already reported: nothing heard from them for LINK_QUIET, and none
@@ -352,6 +357,8 @@ impl Peer {
             furnace_form_sent: None,
             keys: 0,
             chest: None,
+            book_slot: None,
+            book_tab: 1,
             in_bed: None,
             quiet_reported: false,
             unacked_reported: false,
@@ -1896,7 +1903,7 @@ impl Server {
                 }
                 // A chest must be emptied first, and isn't dug while open; a
                 // locked one only by its owner.
-                if content::is_chest(current) || current == bones::BONES {
+                if content::is_chest(current) || current == bones::BONES || current == content::CONTENT_BOOKSHELF {
                     self.fill_dungeon_chest(furnace_at);
                     let record = self.chests.get(furnace_at);
                     let open = content::chest_pair(current).is_some_and(|(_, o)| o == current);
@@ -2062,6 +2069,12 @@ impl Server {
                     }
                     return;
                 }
+                if self.world.node(node_pos(under)) == content::CONTENT_BOOKSHELF && !sneaking {
+                    if in_reach(under) {
+                        self.open_shelf(from, node_pos(under));
+                    }
+                    return;
+                }
                 if self.world.node(node_pos(under)) == bones::BONES && !sneaking {
                     if in_reach(under) {
                         self.open_bones(from, node_pos(under));
@@ -2197,7 +2210,7 @@ impl Server {
                 // Torches and ladders face what they were placed against.
                 let param2 = if content::is_wallmounted(id) {
                     content::wallmounted_param2(under, above)
-                } else if content::is_furnace(id) || content::is_chest(id) || doors::is_trapdoor(id) || fences::is_gate(id) || panes::is_flat(id) {
+                } else if content::is_furnace(id) || content::is_chest(id) || id == content::CONTENT_BOOKSHELF || doors::is_trapdoor(id) || fences::is_gate(id) || panes::is_flat(id) {
                     content::facedir_param2(above, body)
                 } else if stairs::shape_of(id).is_some() {
                     // Stairs and slabs: the way the player looks decides
@@ -2243,6 +2256,12 @@ impl Server {
                 self.broadcast_node(above, &build_addnode(above, node, param2));
                 // A pane, or a pane beside it, takes its new shape.
                 self.update_panes_near(node_pos(above));
+                // A bookshelf starts empty (its on_construct).
+                if node == content::CONTENT_BOOKSHELF {
+                    self.chests.get_or_add(node_pos(above)).shelf = true;
+                    self.chests.save();
+                    self.update_shelf(node_pos(above));
+                }
                 // A sign gets its text box (minetest_game's on_construct).
                 if content::is_sign(node) {
                     self.world.set_meta(node_pos(above), Some(meta::new_sign()));
@@ -3193,6 +3212,14 @@ impl Server {
         let Some(peer) = self.peers.get_mut(&addr) else {
             return;
         };
+        // A book opens to be written in, or read (book_on_use).
+        if let Some(book) = peer.inventory.get(slot).filter(|s| slot < HOTBAR_SIZE && books::is_book(s.id)) {
+            let form = books::use_form(&book, peer.display_name(), peer.book_tab);
+            info!("{} opened {} (slot {slot})", peer.display_name(), content::description_of(book.id));
+            peer.book_slot = Some(slot);
+            self.send_command(addr, 0, &build_show_formspec(&form, books::FORM));
+            return;
+        }
         // Food: an apple heals 2, bread 5 (minetest_game's item_eat); a
         // red mushroom hurts.
         let food = peer.inventory.get(slot).filter(|_| slot < HOTBAR_SIZE).and_then(|s| match s.id {
@@ -3379,6 +3406,10 @@ impl Server {
         };
         if form == beds::FORM {
             self.on_bed_fields(from, &fields);
+            return;
+        }
+        if form == books::FORM {
+            self.on_book_fields(from, &fields);
             return;
         }
         let pressed = |name: &str| fields.iter().any(|(f, _)| f == name);
@@ -3823,6 +3854,9 @@ impl Server {
                 self.chests.save();
             }
             self.send_chest(pos);
+            if ok && self.chests.get(pos).is_some_and(|c| c.shelf) {
+                self.update_shelf(pos);
+            }
             // Bones vanish when the last thing is taken out, and the taker
             // gets the bones block (on_metadata_inventory_take).
             if ok && self.chests.get(pos).is_some_and(|c| c.bones && c.is_empty()) && self.world.node(pos) == bones::BONES {
@@ -3969,7 +4003,7 @@ impl Server {
         };
         let (main, left) = bones::pack(stacks);
         let share_at = self.clock.game_time() + bones::SHARE_TIME;
-        self.chests.insert(pos, chest::Chest { main, owner: Some(name.clone()), bones: true, share_at: Some(share_at) });
+        self.chests.insert(pos, chest::Chest { main, owner: Some(name.clone()), bones: true, share_at: Some(share_at), shelf: false });
         self.world.set_node(pos, bones::BONES, facing);
         let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
         self.broadcast_node(p16, &build_addnode(p16, bones::BONES, facing));
@@ -4012,6 +4046,103 @@ impl Server {
         }
         let form = chest_formspec(&chest::detached_name(pos));
         self.send_command(addr, 0, &build_show_formspec(&form, CHEST_FORM));
+    }
+
+    /// The book window sent its fields: save what was written, turn a
+    /// page, or change tab.
+    fn on_book_fields(&mut self, from: SocketAddr, fields: &[(String, String)]) {
+        let Some(peer) = self.peers.get_mut(&from) else {
+            return;
+        };
+        let Some(slot) = peer.book_slot else {
+            return;
+        };
+        let name = peer.display_name().to_string();
+        let reply = books::on_fields(peer.inventory.get(slot), &name, fields, peer.book_tab);
+        if let Some(tab) = reply.tab {
+            peer.book_tab = tab;
+        }
+        if reply.done {
+            peer.book_slot = None;
+        }
+        if let Some(stack) = reply.stack {
+            peer.inventory.main[slot] = stack;
+        }
+        let mut dropped = None;
+        if let Some(book) = reply.extra {
+            if peer.inventory.add(book) > 0 {
+                dropped = Some(book);
+            }
+        }
+        if let Some(stack) = reply.stack.flatten().filter(|s| s.id == content::ITEM_BOOK_WRITTEN).or(reply.extra) {
+            if fields.iter().any(|(k, _)| k == "save") {
+                info!("{name} wrote the book {:?}", stack.meta.get("title").unwrap_or_default());
+            }
+        }
+        if let Some(book) = dropped {
+            let at = self.position(from);
+            self.spawn_item(book, ([at[0], at[1] + 1.0, at[2]], [0.0; 3]));
+        }
+        if let Some(message) = reply.message {
+            self.tell(from, message);
+        }
+        if reply.stack.is_some() || reply.extra.is_some() {
+            self.inventory_changed(from);
+        }
+        if let Some(form) = reply.show {
+            self.send_command(from, 0, &build_show_formspec(&form, books::FORM));
+        }
+    }
+
+    /// Right-clicking a bookshelf: its window.
+    fn open_shelf(&mut self, addr: SocketAddr, pos: NodePos) {
+        let Some(name) = self.peers.get(&addr).map(|p| p.display_name().to_string()) else {
+            return;
+        };
+        let record = self.chests.get_or_add(pos);
+        if !record.shelf {
+            record.shelf = true;
+            self.chests.save();
+        }
+        if let Some(old) = self.peers.get_mut(&addr).and_then(|p| p.chest.replace(pos)) {
+            self.close_unwatched_lids_at(old);
+        }
+        info!("{name} opened the bookshelf at {pos:?}");
+        if let Some(packet) = self.chest_packet(pos) {
+            self.send_command(addr, 0, &packet);
+        }
+        let form = self.shelf_form(pos);
+        self.send_command(addr, 0, &build_show_formspec(&form, CHEST_FORM));
+    }
+
+    fn shelf_form(&self, pos: NodePos) -> String {
+        let empty: Vec<bool> = self.chests.get(pos).map_or(vec![true; chest::SHELF_SLOTS], |c| c.slots().iter().map(Option::is_none).collect());
+        shelf_formspec(&chest::detached_name(pos), &empty)
+    }
+
+    /// After a bookshelf's books change (update_bookshelf): what it holds,
+    /// shown when it is pointed at, and the outlines of its empty slots.
+    fn update_shelf(&mut self, pos: NodePos) {
+        let (mut written, mut empty) = (0, 0);
+        for s in self.chests.get(pos).map(|c| c.slots()).unwrap_or(&[]).iter().flatten() {
+            if s.meta.get("text").is_some() {
+                written += s.count;
+            } else {
+                empty += s.count;
+            }
+        }
+        let infotext = if written + empty == 0 {
+            "Empty Bookshelf".to_string()
+        } else {
+            format!("Bookshelf ({written} written, {empty} empty books)")
+        };
+        self.world.set_meta(pos, Some(meta::Fields::from([("infotext".to_string(), infotext)])));
+        self.broadcast_meta(pos);
+        let form = self.shelf_form(pos);
+        let viewers: Vec<SocketAddr> = self.peers.iter().filter(|(_, p)| p.chest == Some(pos)).map(|(a, _)| *a).collect();
+        for addr in viewers {
+            self.send_command(addr, 0, &build_show_formspec(&form, CHEST_FORM));
+        }
     }
 
     /// Punching bones (their on_punch): everything that fits goes into the
@@ -4082,7 +4213,7 @@ impl Server {
     /// TOCLIENT_DETACHED_INVENTORY with a chest's contents.
     fn chest_packet(&self, pos: NodePos) -> Option<Vec<u8>> {
         let c = self.chests.get(pos)?;
-        let slots = c.main.iter().map(|s| s.map(|s| s.item_string())).collect();
+        let slots = c.slots().iter().map(|s| s.map(|s| s.item_string())).collect();
         Some(build_detached_inventory(&chest::detached_name(pos), &[("main", 0, slots)]))
     }
 

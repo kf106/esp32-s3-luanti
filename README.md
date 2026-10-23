@@ -16,6 +16,13 @@ It covers roughly half of Minetest Game so far: see [What works](#what-works) an
 
 *The server running on a Waveshare ESP32-S3-LCD-1.47. Its built-in screen has three pages, switched with the BOOT button: overview, device and chat (and a fourth, Join, with a QR code for phones, when it runs as its own hotspot).*
 
+<p align="center">
+  <img src="assets/server-101.jpg" width="48%" alt="The server on an LCDwiki ES3N28P, showing its device page: load on each CPU core, memory, Wi-Fi signal, SD card space and chip temperature">
+  <img src="assets/server-102.jpg" width="48%" alt="The Join page on the ES3N28P, running as its own hotspot: a QR code for the network MTG-6501, its password, and the address to enter in Luanti">
+</p>
+
+*The same server on an LCDwiki ES3N28P, here running as its own hotspot. At about 9 cm by 5 cm it is slightly larger and more expensive than the Waveshare, but it runs cooler and its 2.8" screen is easier to read. The repository can build for it: see [Other boards](#other-boards).*
+
 ## What it looks like
 
 A Luanti client playing on the ESP32:
@@ -41,7 +48,7 @@ Developed on a [**Waveshare ESP32-S3-LCD-1.47**](https://www.waveshare.com/produ
 
 ### Other boards
 
-The firmware can also be built for LCDwiki's **ES3C28P / ES3N28P** (2.8" screen, with and without touch), with `BOARD=es3c28p` when building:
+The firmware can also be built for LCDwiki's [**ES3C28P / ES3N28P**](https://www.lcdwiki.com/2.8inch_ESP32-S3_Display) (2.8" screen, with and without touch), with `BOARD=es3c28p` when building:
 
 | | Waveshare ESP32-S3-LCD-1.47 (default) | ES3C28P / ES3N28P (`BOARD=es3c28p`) |
 |---|---|---|
@@ -102,6 +109,8 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with a new entry
 - **Walls:** Minetest Game's cobblestone, desert cobblestone and mossy cobblestone walls. Two rows of three cobblestone make 6. A wall is a thick post that grows a lower wall out to each wall, fence or stone block beside it, and stops you as a full block does. Fences and rails join walls too.
 - **Dungeons:** Luanti's dungeon generator, ported from its source: underground rooms joined by corridors, some with stairs, walled in cobblestone that is mossy in places (desert stone in the desert). About four in ten mapchunks (80 nodes a side) have one, wherever there is stone, so they turn up in mines and caves at any depth, and now and then a room breaks out at the surface. As in Minetest Game, some rooms have a loot chest against a wall, up to two per mapchunk. What a chest holds depends on how deep it is: sticks, flint, apples, coal, gold and steel ingots, now and then mese crystals, a worn wooden sword, stone pickaxe or (rarely) diamond axe, sand and dirt near the surface (desert cobblestone and cactus in the desert), and obsidian and mese blocks below -512. Mossy cobblestone cooks back to stone, and makes stairs, slabs and walls.
 - **Signs:** Minetest Game's wooden and steel signs: two rows of planks (or steel ingots) over a stick make 3. They hang on walls, lie on floors and hang under ceilings, and drop off when what they hang on is dug. Right-click one to write on it (up to 512 characters, over several lines); what it says shows, in quotes, when you point at it. Anyone who may interact can rewrite any sign, as in Minetest Game without protection. Wooden signs burn for 10 s. The text is node metadata, which the server keeps in `world/meta.txt` and sends with the map blocks, as Luanti does.
+- **Paper, books and bookshelves:** three papyrus in a row make paper, three paper in a column a book, and three books between two rows of planks a bookshelf. A bookshelf holds 16 books (and nothing else), shows how many it holds when pointed at, and can only be dug when empty. It burns for 30 s.
+- **Writing in books:** use a book (left-click with it in hand) to write a title and up to 10,000 characters in it; saved, it becomes a book with text, which shows its title and author in the inventory. Its author can go on editing it or read it; anyone else reads it, 14 lines a page. Saving a book with no title and no text leaves it an empty book (or makes it one again), where Minetest Game would keep a book with text titled "". A book with text and an empty book crafted together make a copy, and the original stays in the grid. What is written is kept in the item itself (Luanti's item metadata), so it goes wherever the book goes: chests, bookshelves, bones, dropped on the ground, other players.
 - **Glass panes and steel bars:** Minetest Game's `xpanes`. Two rows of three glass, obsidian glass or steel ingots make 16. A pane on its own, or in a straight line, is a thin sheet running along the line; at a corner, a T or a cross it becomes a post with arms out to its neighbours. Panes join each other and stone, wood and trunks (not glass blocks, as in Minetest Game). Steel bars also make the **steel bar door** (two columns of three) and **steel bar trapdoor** (a square of four), locked to whoever places them like the steel ones.
 - **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
 - **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. Water flows as in Luanti: dig beside or under a lake and it runs in, up to 8 nodes across flat ground, getting shallower as it goes, and falls down any hole; take the source away and the flow drains. Two sources with a gap between make a third, so a lake never runs dry. Water washes torches out. It spreads a node a second; the server looks at up to 1,000 places a second, so a flood into a big cave takes a while. Where more than 8 nodes in a map block change at once, the block is sent again whole rather than node by node, to spare the radio; while water is moving the log says how much every 10 s ("Liquids: ...").
@@ -166,7 +175,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with a new entry
 
 ## What doesn't (yet)
 
-- Much of Minetest Game is still missing: cave ice, bookshelves, TNT and fire, boats, carts, keys, weather and creative mode.
+- Much of Minetest Game is still missing: cave ice, TNT and fire, boats, carts, keys, weather and creative mode.
 - No Lua mods: the game content is built in.
 - One world per SD card (or in the board's flash).
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
@@ -369,6 +378,7 @@ src/world.rs       the world: generated blocks, player changes, lighting
 src/terrain.rs     terrain, biomes, caves and ores
 src/dungeons.rs    dungeons, mossy cobblestone, and dungeon loot
 src/meta.rs        node metadata (a sign's text) and signs
+src/books.rs       writing in books (item metadata is in inventory.rs)
 src/items.rs       dropped items and their physics
 src/inventory.rs   inventories and inventory actions
 src/crafting.rs    crafting recipes, the craft grid, and fuel

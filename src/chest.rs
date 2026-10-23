@@ -6,10 +6,11 @@
 //! node metadata, and shown to the player who opens the chest as a detached
 //! inventory ("detached:esp_chest_<x>_<y>_<z>").
 //!
-//! Bones (bones.rs) are kept here too, as chests nobody can put into.
+//! Bones (bones.rs) are kept here too, as chests nobody can put into, and
+//! bookshelves, as chests of 16 slots that take only books.
 //!
 //! Saved in one text file, rewritten when a chest's contents change:
-//!   chest <x> <y> <z> [<owner>]         (or "bones ...")
+//!   chest <x> <y> <z> [<owner>]         (or "bones ...", "shelf ...")
 //!   share <game time>                  (bones: when anyone may take)
 //!   <slot> <item string>               (one line per filled slot)
 
@@ -24,6 +25,9 @@ use crate::storage;
 use crate::world::NodePos;
 
 pub const SLOTS: usize = 32;
+/// A bookshelf's slots (minetest_game's 8 x 2 "books" list), the first
+/// of its record's.
+pub const SHELF_SLOTS: usize = 16;
 const DETACHED_PREFIX: &str = "esp_chest_";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,11 +39,13 @@ pub struct Chest {
     pub bones: bool,
     /// Fresh bones: the game time at which they become everyone's.
     pub share_at: Option<u64>,
+    /// A bookshelf rather than a chest.
+    pub shelf: bool,
 }
 
 impl Default for Chest {
     fn default() -> Self {
-        Self { main: [None; SLOTS], owner: None, bones: false, share_at: None }
+        Self { main: [None; SLOTS], owner: None, bones: false, share_at: None, shelf: false }
     }
 }
 
@@ -53,6 +59,21 @@ impl Chest {
     /// (default.can_interact_with_node, without keys).
     pub fn allows(&self, player: &str) -> bool {
         self.owner.as_deref().map_or(true, |o| o.eq_ignore_ascii_case(player))
+    }
+
+    /// Its slots: a bookshelf's 16, or all 32.
+    pub fn slots(&self) -> &[Option<Stack>] {
+        &self.main[..if self.shelf { SHELF_SLOTS } else { SLOTS }]
+    }
+
+    pub fn slots_mut(&mut self) -> &mut [Option<Stack>] {
+        &mut self.main[..if self.shelf { SHELF_SLOTS } else { SLOTS }]
+    }
+
+    /// Whether a stack may be put in (allow_metadata_inventory_put):
+    /// nothing into bones, only books onto a bookshelf.
+    pub fn may_put(&self, stack: &Stack) -> bool {
+        !self.bones && (!self.shelf || crate::content::group_of(stack.id, "book") > 0)
     }
 }
 
@@ -143,7 +164,14 @@ impl Chests {
 fn format(map: &BTreeMap<NodePos, Chest>) -> String {
     let mut t = String::new();
     for (pos, c) in map {
-        t.push_str(&format!("{} {} {} {}", if c.bones { "bones" } else { "chest" }, pos.0, pos.1, pos.2));
+        let kind = if c.bones {
+            "bones"
+        } else if c.shelf {
+            "shelf"
+        } else {
+            "chest"
+        };
+        t.push_str(&format!("{kind} {} {} {}", pos.0, pos.1, pos.2));
         if let Some(owner) = &c.owner {
             t.push_str(&format!(" {owner}"));
         }
@@ -166,11 +194,12 @@ fn parse(text: &str) -> BTreeMap<NodePos, Chest> {
     for line in text.lines() {
         let mut f = line.split_whitespace();
         match f.next() {
-            Some(kind @ ("chest" | "bones")) => {
+            Some(kind @ ("chest" | "bones" | "shelf")) => {
                 let v: Vec<i32> = f.by_ref().take(3).filter_map(|v| v.parse().ok()).collect();
                 current = (v.len() == 3).then(|| (v[0], v[1], v[2]));
                 if let Some(pos) = current {
-                    map.insert(pos, Chest { owner: f.next().map(str::to_string), bones: kind == "bones", ..Default::default() });
+                    let (bones, shelf) = (kind == "bones", kind == "shelf");
+                    map.insert(pos, Chest { owner: f.next().map(str::to_string), bones, shelf, ..Default::default() });
                 }
             }
             Some("share") => match (current.and_then(|p| map.get_mut(&p)), f.next().and_then(|t| t.parse().ok())) {
@@ -179,7 +208,8 @@ fn parse(text: &str) -> BTreeMap<NodePos, Chest> {
             },
             Some(slot) => {
                 let slot = slot.parse::<usize>().ok();
-                let stack = Stack::parse(&f.collect::<Vec<_>>().join(" "));
+                // The item string as written (its metadata may hold spaces).
+                let stack = line.trim_start().split_once(' ').and_then(|(_, item)| Stack::parse(item));
                 match (current.and_then(|p| map.get_mut(&p)), slot, stack) {
                     (Some(c), Some(slot), Some(stack)) if slot < SLOTS => c.main[slot] = Some(stack),
                     _ => warn!("Skipping chest line \"{line}\""),

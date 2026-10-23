@@ -1214,6 +1214,25 @@ pub fn chest_formspec(inv: &str) -> String {
     )
 }
 
+/// minetest_game's bookshelf window: its 16 slots, with a book outline in
+/// the empty ones, over the player's inventory.
+pub fn shelf_formspec(inv: &str, empty: &[bool]) -> String {
+    let at = format!("detached:{inv}");
+    let mut f = format!(
+        "size[8,7;]list[{at};main;0,0.3;8,2;]\
+         list[current_player;main;0,2.85;8,1;]\
+         list[current_player;main;0,4.08;8,3;8]\
+         listring[{at};main]listring[current_player;main]"
+    );
+    for i in 0..8 {
+        f.push_str(&format!("image[{i},2.85;1,1;gui_hb_bg.png]"));
+    }
+    for (i, _) in empty.iter().enumerate().filter(|(_, e)| **e) {
+        f.push_str(&format!("image[{},{};1,1;default_bookshelf_slot.png]", i % 8, if i < 8 { "0.3" } else { "1.3" }));
+    }
+    f
+}
+
 /// Luanti's inventory text: each list as (name, width, item strings).
 fn inventory_text(lists: &[(&str, u32, Vec<Option<String>>)]) -> String {
     let mut text = String::new();
@@ -1242,12 +1261,13 @@ pub const FIELD_SKIN_NEXT: &str = "skin_next";
 
 /// Formspec text needs these escaped (and a texture's commas, inside a
 /// comma-separated list of textures).
-fn formspec_escape(s: &str) -> String {
+pub fn formspec_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace(']', "\\]")
         .replace('[', "\\[")
         .replace(';', "\\;")
         .replace(',', "\\,")
+        .replace('$', "\\$")
 }
 
 /// TOCLIENT_INVENTORY_FORMSPEC: the window the inventory key opens, laid

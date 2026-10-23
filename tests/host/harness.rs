@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-mod auth; mod beds; mod board; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod doors; mod dungeons; mod falling; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod liquids; mod messages; mod meta; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
+mod auth; mod beds; mod board; mod books; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod doors; mod dungeons; mod falling; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod liquids; mod messages; mod meta; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
 mod screen; mod server; mod sha1; mod sha256; mod skins; mod srp; mod stairs; mod status; mod storage; mod terrain; mod wifi_config; mod world; mod zstd;
 
 use std::cell::RefCell;
@@ -134,7 +134,7 @@ fn tools() {
         }
         assert_eq!(n, uses, "{}", name_of(tool));
     }
-    let worn = inventory::Stack { id: TOOL_AXE_WOOD, count: 1, wear: 13107 };
+    let worn = inventory::Stack { wear: 13107, ..inventory::Stack::new(TOOL_AXE_WOOD, 1) };
     assert_eq!(worn.item_string(), "esp:axe_wood 1 13107");
     assert_eq!(inventory::Stack::parse("esp:axe_wood 1 13107"), Some(worn));
     assert_eq!(inventory::Stack::parse("esp:axe_wood 5"), Some(inventory::Stack::new(TOOL_AXE_WOOD, 1)));

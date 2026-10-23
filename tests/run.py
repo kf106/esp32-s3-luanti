@@ -34,6 +34,8 @@ NETWORK = [
     ("fence", {}, [], False),
     ("walls", {}, [], False),
     ("signs", {}, [], False),
+    ("shelf", {}, [], False),
+    ("books", {}, [], False),
     ("door", {}, [], False),
     ("falling", {}, [], False),
     ("chest", {}, [], False),

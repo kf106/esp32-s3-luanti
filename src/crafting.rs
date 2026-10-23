@@ -119,6 +119,11 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(ITEM_MESE_CRYSTAL)], output: ITEM_MESE_FRAGMENT, count: 9 },
     // A mese lamp: glass over a mese crystal.
     Recipe { width: 1, pattern: &[I(CONTENT_GLASS), I(ITEM_MESE_CRYSTAL)], output: CONTENT_MESE_LAMP, count: 1 },
+    // Paper from three papyrus in a row; a book from three paper in a
+    // column; a bookshelf from three books between two rows of planks.
+    Recipe { width: 3, pattern: &[I(crate::plants::PAPYRUS); 3], output: ITEM_PAPER, count: 1 },
+    Recipe { width: 1, pattern: &[I(ITEM_PAPER); 3], output: ITEM_BOOK, count: 1 },
+    Recipe { width: 3, pattern: &[G("wood"), G("wood"), G("wood"), I(ITEM_BOOK), I(ITEM_BOOK), I(ITEM_BOOK), G("wood"), G("wood"), G("wood")], output: CONTENT_BOOKSHELF, count: 1 },
     // Signs: two rows of planks or steel ingots over a stick make 3.
     Recipe { width: 3, pattern: &sign(G("wood")), output: SIGN_WOOD, count: 3 },
     Recipe { width: 3, pattern: &sign(I(ITEM_STEEL_INGOT)), output: SIGN_STEEL, count: 3 },
@@ -325,6 +330,7 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_FIR_SAPLING => 5.0,
         ITEM_STICK => 1.0,
         SIGN_WOOD => 10.0,
+        CONTENT_BOOKSHELF => 30.0,
         TOOL_PICK_WOOD | TOOL_AXE_WOOD => 6.0,
         TOOL_SWORD_WOOD => 5.0,
         TOOL_SHOVEL_WOOD => 4.0,
@@ -394,6 +400,9 @@ pub struct Shapeless {
 pub const SHAPELESS: &[Shapeless] = &[
     // A chest and a steel ingot make a locked chest (chests.lua).
     Shapeless { items: &[I(CONTENT_CHEST), I(ITEM_STEEL_INGOT)], output: CONTENT_CHEST_LOCKED, count: 1 },
+    // A book and a written book make a copy of it; the original stays
+    // (register_craft_metadata_copy, in inventory.rs).
+    Shapeless { items: &[I(ITEM_BOOK), I(ITEM_BOOK_WRITTEN)], output: ITEM_BOOK_WRITTEN, count: 1 },
     // Four wheat, anyhow, make flour (farming/init.lua).
     Shapeless { items: &[I(ITEM_WHEAT); 4], output: ITEM_FLOUR, count: 1 },
     // Two dyes, anyhow, make two of a third (dye/init.lua's dye_recipes).
@@ -780,6 +789,16 @@ mod tests {
         assert_eq!(result(&rows(CONTENT_DESERT_COBBLE, 0)), Some((crate::fences::WALL_DESERT_COBBLE, 6)));
         assert_eq!(result(&rows(crate::dungeons::MOSSYCOBBLE, 0)), Some((crate::dungeons::WALL_MOSSYCOBBLE, 6)));
         assert_eq!(cook_result(crate::dungeons::MOSSYCOBBLE), Some((CONTENT_STONE, 3.0)));
+        // A mese lamp: glass with a mese crystal under it, anywhere.
+        for top in [0, 1, 2, 3, 4, 5] {
+            assert_eq!(result(&grid(&[(top, CONTENT_GLASS, 1), (top + 3, ITEM_MESE_CRYSTAL, 1)])), Some((CONTENT_MESE_LAMP, 1)));
+        }
+        // Paper, books and bookshelves.
+        assert_eq!(result(&grid(&[(3, crate::plants::PAPYRUS, 1), (4, crate::plants::PAPYRUS, 1), (5, crate::plants::PAPYRUS, 1)])), Some((ITEM_PAPER, 1)));
+        assert_eq!(result(&grid(&[(2, ITEM_PAPER, 1), (5, ITEM_PAPER, 1), (8, ITEM_PAPER, 1)])), Some((ITEM_BOOK, 1)));
+        let shelf: Vec<(usize, u16, u16)> = (0..9).map(|i| (i, if (3..6).contains(&i) { ITEM_BOOK } else { CONTENT_BIRCH_WOOD }, 1)).collect();
+        assert_eq!(result(&grid(&shelf)), Some((CONTENT_BOOKSHELF, 1)));
+        assert_eq!(burn_time(CONTENT_BOOKSHELF), 30.0);
         // Signs: two rows of planks or steel ingots over a stick make 3.
         let planks = grid(&[(0, CONTENT_FIR_WOOD, 1), (1, CONTENT_FIR_WOOD, 1), (2, CONTENT_FIR_WOOD, 1), (3, CONTENT_APPLE_WOOD, 1), (4, CONTENT_APPLE_WOOD, 1), (5, CONTENT_APPLE_WOOD, 1), (7, ITEM_STICK, 1)]);
         assert_eq!(result(&planks), Some((SIGN_WOOD, 3)));

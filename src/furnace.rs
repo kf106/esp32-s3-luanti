@@ -403,7 +403,7 @@ impl Lists<'_> {
         match place {
             Place::Own(list) => Some(self.player.list_mut(list)),
             Place::Furnace(pos, list) => self.furnaces.get_mut(pos).map(|f| f.list_mut(list)),
-            Place::Chest(pos) => self.chests.get_mut(pos).map(|c| &mut c.main[..]),
+            Place::Chest(pos) => self.chests.get_mut(pos).map(|c| c.slots_mut()),
         }
     }
 
@@ -418,12 +418,13 @@ impl Lists<'_> {
     }
 
     /// Whether a stack may be put into a list: nothing into the craft
-    /// result or into bones, and the furnace's own rules.
+    /// result or into bones, only books onto a bookshelf, and the
+    /// furnace's own rules.
     fn may_put(&self, place: Place, stack: &Stack) -> bool {
         match place {
             Place::Own(list) => list != List::CraftResult,
             Place::Furnace(_, list) => may_put(list, stack),
-            Place::Chest(pos) => !self.chests.get(pos).is_some_and(|c| c.bones),
+            Place::Chest(pos) => self.chests.get(pos).is_some_and(|c| c.may_put(stack)),
         }
     }
 

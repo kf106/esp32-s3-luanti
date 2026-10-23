@@ -13,7 +13,7 @@ That runs, in order:
 1. **Unit tests:** the `#[cfg(test)]` tests in `src/`.
 2. **Host checks:** `tests/host/harness.rs`, the server's code exercised directly, checking crafting, tools, item physics, trees, the Wi-Fi file and so on.
 3. **Content verifier:** `tests/net/verify.py` reads the item and node definitions, media and other packets the server sends at login the way the Luanti 5.17 client does, and checks they parse.
-4. **Network tests:** for each, a server on a fresh world, and a script in `tests/net/` that logs in one or more players and checks what happens: digging, building, crafting, chests, doors, beds, water and lava, farming, plants, admin commands, bones, signs, dungeon loot, and more.
+4. **Network tests:** for each, a server on a fresh world, and a script in `tests/net/` that logs in one or more players and checks what happens: digging, building, crafting, chests, doors, beds, water and lava, farming, plants, admin commands, bones, signs, bookshelves, writing in books, dungeon loot, and more.
 
 It ends with a count, and exits non-zero if anything failed. A full run takes about 10 minutes, mostly the network tests.
 

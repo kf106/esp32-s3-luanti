@@ -61,36 +61,42 @@ pub struct Stack {
     pub count: u16,
     /// A tool's wear, 0 (new) up to 65535; it breaks at 65536.
     pub wear: u16,
+    /// Its metadata: a written book's title, text and author.
+    pub meta: Meta,
 }
 
 impl Stack {
     pub fn new(id: u16, count: u16) -> Self {
-        Self { id, count, wear: 0 }
+        Self { id, count, wear: 0, meta: Meta::NONE }
     }
 
     /// Luanti's item string: "<name> <count>", with the wear after it for
-    /// a worn tool.
+    /// a worn tool, and the metadata after that if it has any
+    /// (ItemStack::serialize).
     pub fn item_string(&self) -> String {
-        match self.wear {
-            0 => format!("{} {}", content::name_of(self.id), self.count),
-            w => format!("{} {} {w}", content::name_of(self.id), self.count),
+        let name = content::name_of(self.id);
+        match (self.wear, self.meta) {
+            (_, m) if m != Meta::NONE => format!("{name} {} {} {}", self.count, self.wear, m.serialize()),
+            (0, _) => format!("{name} {}", self.count),
+            (w, _) => format!("{name} {} {w}", self.count),
         }
     }
 
-    /// Parse "<name> [<count> [<wear>]]" (ItemStack::deSerialize, without
-    /// metadata).
+    /// Parse "<name> [<count> [<wear> [<metadata>]]]"
+    /// (ItemStack::deSerialize).
     pub fn parse(text: &str) -> Option<Self> {
-        let mut f = text.split_whitespace();
-        let id = content::id_of(f.next()?).filter(|&id| content::is_item(id))?;
-        let count = f.next().map_or(Some(1), |c| c.parse::<u16>().ok())?;
-        let wear = f.next().map_or(Some(0), |w| w.parse::<u16>().ok())?;
-        (count > 0).then(|| Self { id, count: count.min(content::stack_max(id)), wear })
+        let mut rest = text;
+        let id = content::id_of(&next_token(&mut rest)?).filter(|&id| content::is_item(id))?;
+        let count = next_token(&mut rest).map_or(Some(1), |c| c.parse::<u16>().ok())?;
+        let wear = next_token(&mut rest).map_or(Some(0), |w| w.parse::<u16>().ok())?;
+        let meta = next_token(&mut rest).map_or(Meta::NONE, |m| Meta::parse(&m));
+        (count > 0).then(|| Self { id, count: count.min(content::stack_max(id)), wear, meta })
     }
 
     /// Whether another stack can be put onto this one (same item, same
-    /// wear: ItemStack::stacksWith).
+    /// wear, same metadata: ItemStack::stacksWith).
     fn stacks_with(&self, other: &Stack) -> bool {
-        self.id == other.id && self.wear == other.wear
+        self.id == other.id && self.wear == other.wear && self.meta == other.meta
     }
 
     /// Wear a tool by `amount`. Returns false if that breaks it.
@@ -102,6 +108,163 @@ impl Stack {
         self.wear = wear as u16;
         true
     }
+}
+
+// ---------------------------------------------------------------------------
+// Item metadata
+// ---------------------------------------------------------------------------
+
+/// An item's metadata (Luanti's ItemStackMetadata): named text values,
+/// such as a written book's title, text and author, and "description",
+/// which the client shows instead of the item's own. Stacks are copied
+/// about freely, so they hold a small handle; the values themselves are
+/// kept once each, in a table, for as long as the server runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct Meta(u32);
+
+type Fields = crate::meta::Fields;
+
+struct MetaTable {
+    all: Vec<std::sync::Arc<Fields>>,
+    index: std::collections::HashMap<std::sync::Arc<Fields>, u32>,
+}
+
+static METAS: std::sync::Mutex<Option<MetaTable>> = std::sync::Mutex::new(None);
+
+impl Meta {
+    /// No metadata.
+    pub const NONE: Meta = Meta(0);
+
+    /// The handle for these values (NONE for none).
+    pub fn new(fields: Fields) -> Meta {
+        // Its separators can't be in names or values (sanitize_string).
+        let clean = |s: &String| s.chars().filter(|c| !matches!(c, '\x01' | '\x02' | '\x03')).collect::<String>();
+        let fields: Fields = fields.iter().map(|(k, v)| (clean(k), clean(v))).collect();
+        if fields.is_empty() {
+            return Meta::NONE;
+        }
+        let mut guard = METAS.lock().unwrap_or_else(|e| e.into_inner());
+        let table = guard.get_or_insert_with(|| MetaTable { all: Vec::new(), index: Default::default() });
+        if let Some(&i) = table.index.get(&fields) {
+            return Meta(i);
+        }
+        let fields = std::sync::Arc::new(fields);
+        table.all.push(fields.clone());
+        let i = table.all.len() as u32; // 0 is NONE
+        table.index.insert(fields, i);
+        Meta(i)
+    }
+
+    /// The values.
+    pub fn fields(self) -> Fields {
+        if self == Meta::NONE {
+            return Fields::new();
+        }
+        let guard = METAS.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().and_then(|t| t.all.get(self.0 as usize - 1)).map(|f| (**f).clone()).unwrap_or_default()
+    }
+
+    pub fn get(self, name: &str) -> Option<String> {
+        self.fields().remove(name)
+    }
+
+    /// ItemStackMetadata::serialize: \x01, then name \x02 value \x03 for
+    /// each, as a JSON string when it has spaces or the like.
+    pub fn serialize(self) -> String {
+        let mut raw = String::from("\x01");
+        for (name, value) in self.fields() {
+            if !name.is_empty() || !value.is_empty() {
+                raw.push_str(&name);
+                raw.push('\x02');
+                raw.push_str(&value);
+                raw.push('\x03');
+            }
+        }
+        json_if_needed(&raw)
+    }
+
+    /// ItemStackMetadata::deSerialize, from the text after the wear (as
+    /// `next_token` gives it).
+    pub fn parse(text: &str) -> Meta {
+        let mut fields = Fields::new();
+        if let Some(body) = text.strip_prefix('\x01') {
+            for pair in body.split('\x03').filter(|p| !p.is_empty()) {
+                let (name, value) = pair.split_once('\x02').unwrap_or((pair, ""));
+                fields.insert(name.to_string(), value.to_string());
+            }
+        } else if !text.is_empty() {
+            fields.insert(String::new(), text.to_string());
+        }
+        Meta::new(fields)
+    }
+}
+
+/// Luanti's serializeJsonStringIfNeeded: as it is, or quoted and escaped
+/// if it has spaces, quotes, control characters or anything not ASCII.
+fn json_if_needed(s: &str) -> String {
+    if !s.bytes().any(|b| b <= 0x1f || b >= 0x7f || b == b' ' || b == b'"') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 32 || c as u32 == 127 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The next word of an item string, or a JSON string
+/// (deSerializeJsonStringIfNeeded), taken off the front of `rest`.
+fn next_token(rest: &mut &str) -> Option<String> {
+    let s = rest.trim_start_matches(' ');
+    if s.is_empty() {
+        *rest = s;
+        return None;
+    }
+    if let Some(body) = s.strip_prefix('"') {
+        let mut out = String::new();
+        let mut chars = body.char_indices();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '"' => {
+                    *rest = &body[i + 1..];
+                    return Some(out);
+                }
+                '\\' => match chars.next().map(|(_, c)| c) {
+                    Some('b') => out.push('\u{8}'),
+                    Some('f') => out.push('\u{c}'),
+                    Some('n') => out.push('\n'),
+                    Some('r') => out.push('\r'),
+                    Some('t') => out.push('\t'),
+                    Some('u') => {
+                        let hex: String = (0..4).filter_map(|_| chars.next().map(|(_, c)| c)).collect();
+                        if let Some(c) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                            out.push(c);
+                        }
+                    }
+                    Some(c) => out.push(c),
+                    None => break,
+                },
+                c => out.push(c),
+            }
+        }
+        *rest = "";
+        return Some(out); // unterminated: take what there is
+    }
+    let end = s.find(' ').unwrap_or(s.len());
+    *rest = &s[end..];
+    Some(s[..end].to_string())
 }
 
 /// The lists every Luanti player has. "craftpreview" isn't stored: it
@@ -195,7 +358,26 @@ impl Inventory {
 
     /// What the craft grid makes, for the craftpreview slot.
     pub fn craft_preview(&self) -> Option<Stack> {
-        crafting::result(&self.craft).map(|(id, count)| Stack::new(id, count))
+        let made = crafting::result(&self.craft).map(|(id, count)| Stack::new(id, count))?;
+        Some(match self.copied_book() {
+            Some((_, original)) => Stack { meta: original.meta, ..made },
+            None => made,
+        })
+    }
+
+    /// A written book being copied (minetest_game's
+    /// register_craft_metadata_copy: a book and a written book make a
+    /// copy, and the original stays in the grid): its slot and stack.
+    fn copied_book(&self) -> Option<(usize, Stack)> {
+        let filled: Vec<(usize, Stack)> = self.craft.iter().enumerate().filter_map(|(i, s)| s.map(|s| (i, s))).collect();
+        let [a, b] = filled[..] else {
+            return None;
+        };
+        match (a.1.id, b.1.id) {
+            (content::ITEM_BOOK, content::ITEM_BOOK_WRITTEN) => Some(b),
+            (content::ITEM_BOOK_WRITTEN, content::ITEM_BOOK) => Some(a),
+            _ => None,
+        }
     }
 
     /// ICraftAction: craft up to `times` times (0: as often as possible)
@@ -212,7 +394,11 @@ impl Inventory {
             if !room {
                 break;
             }
+            let copied = self.copied_book();
             crafting::craft(&mut self.craft);
+            if let Some((i, original)) = copied {
+                self.craft[i] = Some(original); // put back in the grid
+            }
             let slot = &mut self.craft_result[0];
             match slot {
                 Some(r) => r.count += next.count,
@@ -319,7 +505,9 @@ impl Inventory {
                 f.next();
             }
             let slot = f.next().and_then(|s| s.parse::<usize>().ok());
-            let stack = Stack::parse(&f.collect::<Vec<_>>().join(" "));
+            // The item string as written (its metadata may hold spaces).
+            let words = if list == List::Main { 1 } else { 2 };
+            let stack = line.trim_start().splitn(words + 1, ' ').nth(words).and_then(Stack::parse);
             match (slot, stack) {
                 (Some(slot), Some(stack)) if slot < inv.list(list).len() => inv.list_mut(list)[slot] = Some(stack),
                 _ => warn!("Skipping inventory line \"{line}\""),
@@ -473,5 +661,66 @@ impl InventoryStore {
             warn!("Saving inventory of {name}: {e}");
             crate::status::problem();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::{ITEM_BOOK, ITEM_BOOK_WRITTEN};
+
+    fn written(title: &str, text: &str) -> Stack {
+        let fields = Fields::from([
+            ("title".to_string(), title.to_string()),
+            ("text".to_string(), text.to_string()),
+            ("owner".to_string(), "Ann".to_string()),
+        ]);
+        Stack { meta: Meta::new(fields), ..Stack::new(ITEM_BOOK_WRITTEN, 1) }
+    }
+
+    #[test]
+    fn item_strings_with_metadata() {
+        // As Luanti writes it: count, wear, then the metadata, quoted and
+        // escaped when it needs to be.
+        let b = written("My \"day\"", "a b\nc");
+        assert_eq!(b.item_string(), "esp:book_written 1 0 \"\\u0001owner\\u0002Ann\\u0003text\\u0002a b\\nc\\u0003title\\u0002My \\\"day\\\"\\u0003\"");
+        assert_eq!(Stack::parse(&b.item_string()), Some(b));
+        // Unquoted metadata, and Luanti's other forms.
+        let plain = Stack::parse("esp:book_written 1 0 \u{1}title\u{2}x\u{3}").unwrap();
+        assert_eq!(plain.meta.get("title").as_deref(), Some("x"));
+        assert_eq!(Stack::parse("esp:book 3"), Some(Stack::new(ITEM_BOOK, 3)));
+        assert_eq!(Stack::parse("esp:book"), Some(Stack::new(ITEM_BOOK, 1)));
+        // The same values, the same handle: they stack (if they could).
+        assert_eq!(written("T", "x").meta, written("T", "x").meta);
+        assert_ne!(written("T", "x").meta, written("T", "y").meta);
+        assert!(!b.stacks_with(&Stack::new(ITEM_BOOK_WRITTEN, 1)));
+        // Separators are taken out of the values.
+        let odd = Meta::new(Fields::from([("t".to_string(), "a\u{2}b\u{3}".to_string())]));
+        assert_eq!(odd.get("t").as_deref(), Some("ab"));
+    }
+
+    #[test]
+    fn saved_inventories_keep_books() {
+        let mut inv = Inventory::new();
+        inv.main[3] = Some(written("Spaces  and  more", "line 1\nline 2"));
+        inv.craft[4] = Some(written("In the grid", "x"));
+        let back = Inventory::from_text(&inv.to_text());
+        assert_eq!(back.main[3], inv.main[3]);
+        assert_eq!(back.craft[4], inv.craft[4]);
+    }
+
+    #[test]
+    fn copying_a_book() {
+        let mut inv = Inventory::new();
+        let original = written("Copy me", "text");
+        inv.craft[0] = Some(original);
+        inv.craft[5] = Some(Stack::new(ITEM_BOOK, 2));
+        let preview = inv.craft_preview().unwrap();
+        assert_eq!((preview.id, preview.meta), (ITEM_BOOK_WRITTEN, original.meta));
+        let made = inv.craft(1).unwrap();
+        assert_eq!(made.meta, original.meta);
+        // The original is still in the grid; one empty book was used.
+        assert_eq!(inv.craft[0], Some(original));
+        assert_eq!(inv.craft[5], Some(Stack::new(ITEM_BOOK, 1)));
     }
 }
