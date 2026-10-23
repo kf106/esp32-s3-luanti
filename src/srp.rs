@@ -97,6 +97,27 @@ pub fn start_with_b(login: &Login, secret_b: &[u8]) -> Option<Challenge> {
     })
 }
 
+/// A new salt and verifier for a password, as Luanti's
+/// generate_srp_verifier_and_salt: x = H(salt | H(lowercase name ":"
+/// password)), v = g^x mod N, with a 16-byte random salt. Takes one
+/// modular exponentiation (about a third of a second on the ESP32).
+pub fn new_verifier(name: &str, password: &str) -> (Vec<u8>, Vec<u8>) {
+    let mut salt = vec![0u8; 16];
+    random_fill(&mut salt);
+    let v = verifier_with_salt(name, password, &salt);
+    (salt, v)
+}
+
+fn verifier_with_salt(name: &str, password: &str, salt: &[u8]) -> Vec<u8> {
+    let mut inner = Sha256::new();
+    inner.update(name.to_ascii_lowercase().as_bytes()).update(b":").update(password.as_bytes());
+    let mut outer = Sha256::new();
+    outer.update(salt).update(&inner.finish());
+    let x = outer.finish();
+    let g = Group::new();
+    to_be_min(&g.pow(&small(G), &x))
+}
+
 /// H(PAD(x) | PAD(y)), each padded to the length of N.
 fn h_nn(x: &Num, y: &Num) -> [u8; 32] {
     let mut h = Sha256::new();

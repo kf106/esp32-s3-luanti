@@ -88,6 +88,25 @@ impl AuthStore {
     }
 }
 
+impl AuthStore {
+    /// Replace an account's password (a new salt and verifier), or create
+    /// the account. An empty verifier is a cleared password: the next
+    /// login sets a new one, as Luanti's empty password.
+    pub fn set(&self, name: &str, account: &Account) -> io::Result<()> {
+        crate::storage::write(&self.path(name), &encode(account))
+    }
+
+    /// The folder the accounts are kept in.
+    pub fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
+    /// Whether the account exists.
+    pub fn exists(&self, name: &str) -> bool {
+        self.path(name).exists()
+    }
+}
+
 fn encode(a: &Account) -> Vec<u8> {
     let mut v = Vec::with_capacity(8 + a.salt.len() + a.verifier.len());
     v.extend_from_slice(MAGIC);

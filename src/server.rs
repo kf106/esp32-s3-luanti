@@ -24,6 +24,7 @@ use crate::falling::{self, Falling};
 use crate::farming;
 use crate::fences;
 use crate::plants;
+use crate::privs::{self, Privs};
 use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
@@ -32,6 +33,10 @@ use crate::colours;
 use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
 use crate::nature::{self, Job, Rng, Timers};
 use crate::world::{self, BlockPos, NodePos, World};
+
+/// Chat commands (commands.rs).
+#[path = "commands.rs"]
+mod commands;
 
 /// The resend timeout before any round trip has been measured (Luanti's
 /// starting resend_timeout).
@@ -129,7 +134,6 @@ const BUILDS_IN_FLIGHT: usize = 4;
 const BUILT_CACHE_MAX: usize = 600;
 /// Block data goes on channel 2, like the Luanti server.
 const BLOCK_CHANNEL: usize = 2;
-const PRIVILEGES: &[&str] = &["interact", "shout", "fly", "fast", "noclip"];
 /// How far (in nodes, from the player's feet) a player may dig or build.
 /// The hand's range is 4 nodes from the eyes; this leaves room for lag.
 const MAX_INTERACT_DISTANCE: f32 = 8.0;
@@ -144,8 +148,6 @@ const MAX_PLAYERS: usize = 6;
 /// chat_message_limit_per_10sec).
 const CHAT_MAX_CHARS: usize = 500;
 const CHAT_MAX_PER_10S: usize = 8;
-const CHAT_HELP: &str = "\
-Commands: /help, /me <action>, /msg <player> <message>, /status, /time";
 /// The welcome message, shown in the chat area when a player joins, one
 /// line per message. A /sd/motd.txt file replaces it.
 const WELCOME: &str = "\
@@ -240,6 +242,8 @@ struct Peer {
     /// Auth mechanisms we offered in TOCLIENT_HELLO.
     allowed_auth_mechs: u32,
     authenticated: bool,
+    /// What the player may do, from login (privs.rs).
+    privs: Privs,
     content_sent: bool,
     ready: bool,
     /// Blocks the client has (sent, and not reported deleted).
@@ -312,6 +316,7 @@ impl Peer {
             hello_sent: false,
             allowed_auth_mechs: 0,
             authenticated: false,
+            privs: Privs::NONE,
             content_sent: false,
             ready: false,
             sent_blocks: Default::default(),
@@ -407,6 +412,8 @@ struct Content {
 pub struct Server {
     socket: UdpSocket,
     auth: AuthStore,
+    /// Privileges, the administrator and bans (privs.rs).
+    privs: privs::Store,
     world: World,
     inventories: InventoryStore,
     players: PlayerStore,
@@ -760,8 +767,13 @@ impl Server {
                 world.set_node(pos, closed, param2);
             }
         }
+        let privs = privs::Store::open(auth.dir());
+        if let Some(admin) = privs.admin() {
+            info!("The administrator is {admin}");
+        }
         Self {
             socket,
+            privs,
             auth,
             world,
             inventories,
@@ -1026,20 +1038,7 @@ impl Server {
                 // Nothing to do: if it came reliably, it has already been ACKed.
             }
 
-            Packet::Control(Control::Disco) => {
-                if let Some(mut peer) = self.peers.remove(&from) {
-                    peer.save(&self.players);
-                    peer.save_inventory(&self.inventories);
-                    info!("Peer {} ({}) disconnected", peer.id, peer.display_name());
-                    if peer.ready {
-                        self.remove_player_object(peer.id);
-                        self.event(format!("{} left", peer.display_name()));
-                        status::lock(&self.status).leaves += 1;
-                    }
-                    self.close_unwatched_lids();
-                    self.refresh_players();
-                }
-            }
+            Packet::Control(Control::Disco) => self.remove_peer(from, "disconnected", "left"),
 
             Packet::Control(other) => {
                 warn!("Unexpected control packet from {from}: {other}");
@@ -1195,6 +1194,14 @@ impl Server {
             }
         }
 
+        // The administrator is never shut out (they may share an address).
+        if let Some(ban) = self.privs.ban_on(&init.name, from.ip()).filter(|_| !self.privs.is_admin(&init.name)) {
+            let reason = format!("Your IP is banned. Banned name was {}", ban.name);
+            info!("{} at {from} is banned (as {})", init.name, ban.name);
+            self.deny(from, AccessDenied::CustomString, &reason);
+            return;
+        }
+
         // Checked now so a client isn't taken through logging in only to be
         // turned away, and again when it is ready to join (Luanti does both).
         if self.user_limit_reached(&init.name) {
@@ -1204,6 +1211,9 @@ impl Server {
         }
 
         let auth_mechs = match self.auth.load(&init.name) {
+            // A cleared password (/clearpassword): the player sets a new
+            // one by logging in, as with a new account.
+            Ok(Some(a)) if a.verifier.is_empty() => AUTH_MECHANISM_FIRST_SRP,
             Ok(Some(_)) => AUTH_MECHANISM_SRP,
             Ok(None) => AUTH_MECHANISM_FIRST_SRP,
             Err(e) => {
@@ -1240,7 +1250,20 @@ impl Server {
             return;
         };
         if peer.authenticated {
-            info!("{} tried to change password (not supported yet)", peer.display_name());
+            // The client's Change Password dialogue (Luanti's
+            // handleCommand_FirstSrp for a player already in the game).
+            let name = peer.display_name().to_string();
+            let account = Account { salt: msg.salt, verifier: msg.verifier };
+            match self.auth.set(&name, &account) {
+                Ok(()) => {
+                    info!("{name} changed their password");
+                    self.tell(from, "Password change successful.");
+                }
+                Err(e) => {
+                    warn!("Saving {name}'s new password: {e}");
+                    self.tell(from, "Password change failed or unavailable.");
+                }
+            }
             return;
         }
         if !peer.hello_sent || peer.allowed_auth_mechs & AUTH_MECHANISM_FIRST_SRP == 0 {
@@ -1258,7 +1281,10 @@ impl Server {
             salt: msg.salt,
             verifier: msg.verifier,
         };
-        match self.auth.create(&name, &account) {
+        // An account whose password was cleared takes the new one.
+        let cleared = matches!(self.auth.load(&name), Ok(Some(a)) if a.verifier.is_empty());
+        let created = if cleared { self.auth.set(&name, &account).map(|_| true) } else { self.auth.create(&name, &account) };
+        match created {
             Ok(true) => {
                 info!(
                     "Registered account {name} (salt {} bytes, verifier {} bytes)",
@@ -1291,6 +1317,18 @@ impl Server {
         };
         peer.authenticated = true;
         peer.srp = None;
+        let display = peer.display_name().to_string();
+        // The first player to log in to a world with no administrator
+        // becomes it (privs.rs).
+        if self.privs.claim_admin(&display) {
+            info!("{display} is now the administrator");
+            self.event(format!("Admin: {display}"));
+        }
+        let privs = self.privs.privs(&display);
+        let Some(peer) = self.peers.get_mut(&from) else {
+            return;
+        };
+        peer.privs = privs;
         let name = peer.display_name().to_ascii_lowercase();
         let stale: Vec<SocketAddr> = self
             .peers
@@ -1441,6 +1479,24 @@ impl Server {
         st.players = ready.into_iter().map(|(_, n)| n).collect();
     }
 
+    /// Forget a connection: save the player, and take them out of the game.
+    /// `how` goes in the log, `event` on the status screen ("left").
+    fn remove_peer(&mut self, addr: SocketAddr, how: &str, event: &str) {
+        let Some(mut peer) = self.peers.remove(&addr) else {
+            return;
+        };
+        peer.save(&self.players);
+        peer.save_inventory(&self.inventories);
+        info!("Peer {} ({}) {how}", peer.id, peer.display_name());
+        if peer.ready {
+            self.remove_player_object(peer.id);
+            self.event(format!("{} {event}", peer.display_name()));
+            status::lock(&self.status).leaves += 1;
+        }
+        self.close_unwatched_lids();
+        self.refresh_players();
+    }
+
     fn deny(&mut self, addr: SocketAddr, reason: AccessDenied, custom: &str) {
         info!("Denying access to {addr}: {reason:?} {custom}");
         let pkt = build_access_denied(reason, custom, false);
@@ -1563,7 +1619,8 @@ impl Server {
             let items: u32 = peer.inventory.main.iter().flatten().map(|s| s.count as u32).sum();
             info!("{} has {items} items", peer.display_name());
         }
-        self.send_command(from, 0, &build_privileges(PRIVILEGES));
+        let privs = self.peers.get(&from).map_or(Privs::NONE, |p| p.privs);
+        self.send_command(from, 0, &build_privileges(&privs.names()));
         // Frame ranges for the client's own model (third-person view)
         self.send_command(from, 0, &build_local_player_animations(true));
         self.send_command(from, 0, &build_move_player(spawn_bs, pitch, yaw));
@@ -1742,6 +1799,19 @@ impl Server {
         let name = peer.display_name().to_string();
         let body = [peer.pos_bs[0] / 10.0, peer.pos_bs[1] / 10.0 + 1.0, peer.pos_bs[2] / 10.0];
         let dead = peer.hp == 0;
+        // Without "interact", nothing happens, and a dug or placed node is
+        // put back as it was (Luanti's handleCommand_Interact).
+        if !peer.privs.has("interact") {
+            info!("{name} attempted to interact without 'interact' privilege");
+            if let Pointed::Node { under, above } = msg.pointed {
+                match msg.action {
+                    INTERACT_DIGGING_COMPLETED => self.resend_node(from, under),
+                    INTERACT_PLACE => self.resend_node(from, above),
+                    _ => {}
+                }
+            }
+            return;
+        }
         if msg.action == INTERACT_USE {
             if !dead {
                 // An empty bucket scoops up the water it points at.
@@ -3189,59 +3259,13 @@ impl Server {
             self.chat_command(from, &name, command);
             return;
         }
+        if !self.peers.get(&from).is_some_and(|p| p.privs.has("shout")) {
+            self.tell(from, "-!- You don't have permission to shout.");
+            return;
+        }
         self.tell_all(&format!("<{name}> {text}"));
         self.event(format!("{name}: {text}"));
         status::lock(&self.status).chat_line(status::ChatLine { name, text, action: false });
-    }
-
-    /// A chat command, as Luanti's built-in ones word their replies.
-    fn chat_command(&mut self, from: SocketAddr, name: &str, command: &str) {
-        let (cmd, param) = command.split_once(' ').unwrap_or((command, ""));
-        let param = param.trim();
-        match cmd {
-            "" => self.tell(from, "-!- Empty command."),
-            "help" => self.tell(from, CHAT_HELP),
-            "me" => {
-                if param.is_empty() {
-                    self.tell(from, "-!- Invalid command usage: /me <action>");
-                } else {
-                    self.tell_all(&format!("* {name} {param}"));
-                    status::lock(&self.status).chat_line(status::ChatLine {
-                        name: name.to_string(),
-                        text: param.to_string(),
-                        action: true,
-                    });
-                }
-            }
-            "msg" => {
-                let Some((to, message)) = param.split_once(' ').map(|(t, m)| (t, m.trim())).filter(|(_, m)| !m.is_empty()) else {
-                    self.tell(from, "Invalid usage, see /help.");
-                    return;
-                };
-                let target = self
-                    .peers
-                    .iter()
-                    .find(|(_, p)| p.ready && p.display_name().eq_ignore_ascii_case(to))
-                    .map(|(a, p)| (*a, p.display_name().to_string()));
-                match target {
-                    Some((addr, to_name)) => {
-                        info!("DM from {name} to {to_name}: {message}");
-                        self.tell(addr, &format!("DM from {name}: {message}"));
-                        self.tell(from, "Message sent.");
-                    }
-                    None => self.tell(from, &format!("The player {to} is not online.")),
-                }
-            }
-            "status" => {
-                let line = self.status_line();
-                self.tell(from, &line);
-            }
-            "time" => {
-                let line = format!("Current time is {}.", self.clock.hh_mm());
-                self.tell(from, &line);
-            }
-            other => self.tell(from, &format!("-!- Invalid command: {other}. Type /help for a list of commands.")),
-        }
     }
 
     /// Like Luanti's status line: version, uptime, time of day, players.
@@ -3654,6 +3678,13 @@ impl Server {
             return;
         };
         if !peer.ready {
+            return;
+        }
+        if !peer.privs.has("interact") {
+            // Luanti ignores inventory actions without "interact"; the
+            // client is sent its inventory as it really is.
+            info!("{} can't move items without 'interact' privilege", peer.display_name());
+            self.send_inventory(from);
             return;
         }
         let text = String::from_utf8_lossy(&payload[2..]).into_owned();

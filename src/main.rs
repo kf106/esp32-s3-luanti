@@ -20,6 +20,7 @@ mod liquids;
 mod messages;
 mod nature;
 mod plants;
+mod privs;
 mod player;
 mod protocol;
 mod screen;

@@ -115,7 +115,8 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes
   - items fall, land, and merge with matching items nearby.
 - **Up to six players at once:** a seventh is turned away with Luanti's "too many users" message. The limit is `MAX_PLAYERS` in `src/server.rs`; more players would overload the ESP32, mainly in generating map blocks when several explore at once.
 - **Welcome message:** joining players are told what the server is and who else is on.
-- **Chat:** with Luanti's usual limits (500 characters, 8 messages per 10 seconds), and the commands `/help`, `/me`, `/msg` (a private message), `/status` and `/time`.
+- **Chat:** with Luanti's usual limits (500 characters, 8 messages per 10 seconds, commands included), and Luanti's chat commands: see [Administrator and privileges](#administrator-and-privileges).
+- **Changing your password:** from the client's own Change Password dialogue.
 - **Sounds:** Minetest Game's footstep, digging, breaking and placing sounds for each kind of block, and a sound when you are hurt. The client plays them; the server only says which.
 - **Players:** other players are shown with the animated Minetest Game character and their name tags.
 - **Skins:**
@@ -137,7 +138,6 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes
 ## What doesn't (yet)
 
 - Much of Minetest Game is still missing: mese posts, mossy cobblestone and cave ice (they come with dungeons and caves), signs, bookshelves, TNT and fire, bones, boats, carts, keys, walls, glass panes, dungeons, weather and creative mode.
-- No admin commands.
 - No Lua mods: the game content is built in.
 - One world per SD card (or in the board's flash).
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
@@ -181,7 +181,8 @@ The ESP-IDF settings that matter, in `sdkconfig.defaults`:
 Format the card as FAT32 and insert it before powering up. Any size will do: a world takes a few megabytes. The server creates what it needs:
 
 ```
-/sd/auth/       accounts (salt and SRP verifier per player)
+/sd/auth/       accounts (salt and SRP verifier per player), <name>.privs (privileges, where not the default),
+                admin.txt (the administrator's name) and ipban.txt (banned players)
 /sd/world/      the world: nodes.log (every change made), furnaces.txt and chests.txt (their contents), items.txt (dropped items), doors.txt (steel doors' and trapdoors' owners),
                 beds_spawns (where players respawn),
                 env_meta.txt (the time of day, as Luanti keeps it) and the generator version
@@ -284,6 +285,41 @@ To add a skin, put `skin_<name>.png` in `/sd/media` and restart. It appears in t
 2. In Luanti, open **Join Game** and enter that address with port **30000**.
 3. Pick a name and password; the first login creates the account.
 
+The first player to log in to a new world becomes its administrator, so log in yourself before anyone else does.
+
+## Administrator and privileges
+
+Privileges work as in Luanti. Each player has a set of them, and chat commands check them.
+
+- **New players** get Luanti's defaults, `interact` (dig, build, use and move items) and `shout` (chat). No fly, fast or noclip until the administrator grants them.
+- **The administrator** has every privilege, always: they can't be revoked, kicked or banned. It is the first player to log in to a new world, or, for a world from before there was an administrator, the first to log in after the update. The name is kept in `/sd/auth/admin.txt`; to hand the role on, put another name there on a PC (one line) and restart. `/admin` shows who it is.
+- **Privileges:** `interact`, `shout`, `fly`, `fast`, `noclip` (pass through blocks while flying), `teleport` (self), `bring` (teleport others), `settime`, `give`, `kick`, `ban`, `password`, `server`, `privs` (grant and revoke anything) and `basic_privs` (grant and revoke only `interact` and `shout`, for a moderator).
+
+The commands, with Luanti's wording:
+
+| Command | Privilege | What it does |
+|---|---|---|
+| `/help [all \| <cmd>]` | | The commands you may use, or how to use one |
+| `/admin` | | Who the administrator is |
+| `/privs [<name>]` | | Your privileges, or another player's |
+| `/me <action>`, `/msg <name> <message>` | `shout` | An action, or a private message |
+| `/status`, `/time` | | Players online and uptime; the time of day |
+| `/grant <name> <privs> \| all`, `/revoke ...` | `privs` or `basic_privs` | Give or take away privileges, comma-separated: `/grant Jane fly, fast` |
+| `/grantme ...`, `/revokeme ...` | `privs` or `basic_privs` | The same for yourself |
+| `/haspriv <privilege>` | `basic_privs` | Who online has a privilege |
+| `/time <hh:mm \| 0..24000>` | `settime` | Set the time of day |
+| `/teleport <x>,<y>,<z> \| <name>` | `teleport` | Go to a place (`~` for where you are: `~ ~20 ~`) or to a player |
+| `/teleport <name> <x>,<y>,<z> \| <name2>` | `bring` | Move another player |
+| `/give <name> <item> [<count>]`, `/giveme <item> [<count>]` | `give` | Items, by their name: `esp:torch`, `default:torch` or just `torch` |
+| `/clearinv [<name>]` | `give` (`server` for others) | Empty an inventory |
+| `/kick <name> [<reason>]` | `kick` | Disconnect a player |
+| `/ban [<name>]`, `/unban <name \| address>` | `ban` | Ban an online player (their name and address), list bans, or lift one |
+| `/setpassword <name> <password>` | `password` | Set a player's password, for one who has forgotten theirs |
+| `/clearpassword <name>` | `password` | Clear it: their next login sets a new one, like a new account |
+| `/kill [<name>]` | `server` | Kill a player, or yourself |
+
+Privileges are kept in `/sd/auth/<name>.privs`, one line such as `interact,shout,fly`, and bans in `/sd/auth/ipban.txt`, one `address|name` line each; both can be edited on a PC. A banned player is turned away by name, and anyone from their address too (on the board's hotspot, addresses are handed out afresh, so the name is what counts). Setting a password holds the server up for about a third of a second.
+
 ## Project layout
 
 ```
@@ -310,6 +346,8 @@ src/plants.rs      cactus, papyrus, bushes, ferns, marram grass, kelp, corals
 src/falling.rs     falling sand and gravel
 src/colours.rs     flowers, dyes and wool
 src/liquids.rs     flowing water and lava
+src/privs.rs       privileges, the administrator and bans
+src/commands.rs    chat commands
 src/player.rs      saved player state
 src/skins.rs       player skins
 src/auth.rs        accounts; src/srp.rs, sha256.rs, sha1.rs: login crypto
