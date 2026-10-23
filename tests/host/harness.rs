@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-mod auth; mod beds; mod board; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod doors; mod falling; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod liquids; mod messages; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
+mod auth; mod beds; mod board; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod doors; mod dungeons; mod falling; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod liquids; mod messages; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
 mod screen; mod server; mod sha1; mod sha256; mod skins; mod srp; mod stairs; mod status; mod storage; mod terrain; mod wifi_config; mod world; mod zstd;
 
 use std::cell::RefCell;
@@ -741,6 +741,7 @@ fn main() {
     if std::env::var("BIOMES").is_ok() { biomes(); return; }
     if std::env::var("ORE_STATS").is_ok() { ore_stats(); return; }
     if std::env::var("FIND_PLANTS").is_ok() { find_plants(); return; }
+    if std::env::var("DUNGEONS").is_ok() { dungeon_stats(); return; }
     if std::env::var("IRON_STATS").is_ok() { iron_stats(); return; }
     if std::env::var("NEAREST_APPLE").is_ok() {
         let mut t: Vec<_> = terrain::trees_in(-60, -60, 76, 76).into_iter().filter(|t| t.kind == terrain::TreeKind::Apple).collect();
@@ -1038,6 +1039,14 @@ fn main() {
             } }
             println!("{n} blocks in {:?} ({:.3} ms/block)", t.elapsed(), t.elapsed().as_secs_f64() * 1000.0 / n as f64);
         }
+        // Underground, where the dungeons are: the first time round they
+        // are worked out as well; the second, they are already known.
+        for round in 0..2 {
+            let w = world::World::builder();
+            let t = std::time::Instant::now(); let mut n = 0;
+            for bz in -40i16..-30 { for bx in -40i16..-30 { for by in -6i16..0 { w.block_raw((bx, by, bz)); n += 1; } } }
+            println!("underground{}: {n} blocks in {:?} ({:.3} ms/block)", if round == 0 { ", with dungeons new" } else { "" }, t.elapsed(), t.elapsed().as_secs_f64() * 1000.0 / n as f64);
+        }
         return;
     }
     content_dump();
@@ -1055,4 +1064,43 @@ fn main() {
     tools();
     physics();
     real_world();
+}
+
+/// How many mapchunks have dungeons, how big they are, how long they take
+/// to work out, and the loot chest nearest the spawn (printed as "FOUND
+/// chest x y z", for the dungeon test).
+fn dungeon_stats() {
+    let mut terrain = |p: world::NodePos| {
+        let col = terrain::column(p.0, p.2);
+        if p.1 > col.height {
+            if p.1 <= terrain::WATER_LEVEL { terrain::lake_node(p.1, &col) } else { world::CONTENT_AIR }
+        } else {
+            terrain::node(p.0, p.1, p.2, &col, &mut terrain::cave_sample)
+        }
+    };
+    let (mut chunks, mut with, mut nodes, mut rooms) = (0, 0, 0, 0);
+    let mut chests = Vec::new();
+    let mut slowest = std::time::Duration::ZERO;
+    let t = std::time::Instant::now();
+    for cz in -3..=3 { for cy in -3..=1 { for cx in -3..=3 {
+        let t1 = std::time::Instant::now();
+        let c = dungeons::generate((cx, cy, cz), &mut terrain);
+        slowest = slowest.max(t1.elapsed());
+        chunks += 1;
+        if c.nodes() > 0 { with += 1; nodes += c.nodes(); rooms += c.rooms.len(); }
+        chests.extend(c.chests.iter().copied());
+    } } }
+    println!("{chunks} mapchunks in {:?} (slowest {:?}): {with} with dungeons, {} rooms and {} nodes changed on average, {} chests",
+        t.elapsed(), slowest, rooms / with.max(1), nodes / with.max(1), chests.len());
+    chests.sort_by_key(|p| p.0 * p.0 + p.2 * p.2 + p.1 * p.1);
+    let w = world::World::builder();
+    for &p in chests.iter().take(1) {
+        assert_eq!(w.node(p), content::CONTENT_CHEST, "the world has the chest at {p:?}");
+        assert!(w.is_dungeon_chest(p));
+        // Room to stand in front of it.
+        let front = (0..4).map(|f| [(0, 0, 1), (1, 0, 0), (0, 0, -1), (-1, 0, 0)][f]).find(|d| {
+            w.node((p.0 + d.0, p.1, p.2 + d.2)) == world::CONTENT_AIR && w.node((p.0 + d.0, p.1 + 1, p.2 + d.2)) == world::CONTENT_AIR
+        }).unwrap();
+        println!("FOUND chest {} {} {} front {} {} {}", p.0, p.1, p.2, p.0 + front.0, p.1, p.2 + front.2);
+    }
 }

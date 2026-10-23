@@ -51,6 +51,7 @@ NETWORK = [
     ("farm", {"LUANTI_GROW_SECS": "2", "LUANTI_SOIL_SECS": "2"}, [], False),
     ("plants", {}, ["{kelp}", "{coral}", "{berries}"], False),
     ("flowers", {}, ["{water}"], False),
+    ("dungeon", {}, ["{chest}", "{front}"], False),
 ]
 
 
@@ -93,14 +94,20 @@ def step(title, cmd, **kw):
 
 
 def find_plants(binary):
-    """Where the generated world has kelp, coral, blueberries and open
-    water, for the plant tests."""
+    """Where the generated world has kelp, coral, blueberries, open water
+    and a dungeon chest, for the plant and dungeon tests."""
     r = subprocess.run([binary], cwd=WORK, env={**os.environ, "FIND_PLANTS": "1"}, capture_output=True, text=True)
     found = {}
     for line in r.stdout.splitlines():
         if line.startswith("FOUND "):
             _, what, x, y, z = line.split()
             found[what] = f"{x},{y},{z}"
+    # And a dungeon's loot chest, with the air in front of it.
+    r = subprocess.run([binary], cwd=WORK, env={**os.environ, "DUNGEONS": "1"}, capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        if line.startswith("FOUND chest "):
+            w = line.split()
+            found["chest"], found["front"] = ",".join(w[2:5]), ",".join(w[6:9])
     return found
 
 

@@ -16,6 +16,7 @@ use crate::sha1::sha1;
 use crate::beds;
 use crate::bones;
 use crate::doors;
+use crate::dungeons;
 use crate::colours;
 use crate::farming;
 use crate::fences;
@@ -130,6 +131,9 @@ pub enum Kind {
     /// A wall (fences.rs): a post joining its neighbours, like a fence,
     /// but casting shade.
     Wall,
+    /// A mese post light: a thin wooden post (nodebox) with mese windows
+    /// down its sides, giving light.
+    Post,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -236,6 +240,23 @@ pub const CONTENT_OBSIDIAN_GLASS: u16 = 247;
 /// Light a mese lamp gives (minetest_game's LIGHT_MAX, 14, less one as
 /// for torches: the lit area, and the work, stay smaller).
 pub const MESE_LAMP_LIGHT: u8 = 13;
+/// minetest_game's mese post lights, one per wood: apple, birch, fir,
+/// jungle and acacia (its default, aspen, pine, junglewood and acacia).
+pub const MESE_POST_APPLE: u16 = stairs::MOSSY.end();
+pub const MESE_POST_BIRCH: u16 = MESE_POST_APPLE + 1;
+pub const MESE_POST_FIR: u16 = MESE_POST_APPLE + 2;
+pub const MESE_POST_JUNGLE: u16 = MESE_POST_APPLE + 3;
+pub const MESE_POST_ACACIA: u16 = MESE_POST_APPLE + 4;
+/// Each post and the planks it's made with.
+pub const MESE_POSTS: [(u16, u16); 5] = [
+    (MESE_POST_APPLE, CONTENT_APPLE_WOOD),
+    (MESE_POST_BIRCH, CONTENT_BIRCH_WOOD),
+    (MESE_POST_FIR, CONTENT_FIR_WOOD),
+    (MESE_POST_JUNGLE, CONTENT_JUNGLE_WOOD),
+    (MESE_POST_ACACIA, CONTENT_ACACIA_WOOD),
+];
+/// The post: 4/16 of a node square, full height.
+const MESE_POST_BOX: [f32; 6] = [-2.0 / 16.0, -0.5, -2.0 / 16.0, 2.0 / 16.0, 0.5, 2.0 / 16.0];
 /// Light a mese block gives (minetest_game's light_source 3).
 pub const MESE_LIGHT: u8 = 3;
 /// Light lava glows with (minetest_game's LIGHT_MAX - 1). Only the client
@@ -2699,6 +2720,118 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Wall,
     },
+    // minetest_game's mossy cobblestone, which dungeons are partly built
+    // of (dungeons.rs), and its wall, stairs and slab.
+    Node {
+        id: dungeons::MOSSYCOBBLE,
+        name: "esp:mossycobble",
+        description: "Mossy Cobblestone",
+        tiles: ["default_mossycobble.png"; 6],
+        groups: &[("cracky", 3), ("stone", 1)],
+        drop: dungeons::MOSSYCOBBLE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: dungeons::WALL_MOSSYCOBBLE,
+        name: "esp:wall_mossycobble",
+        description: "Mossy Cobblestone Wall",
+        tiles: ["default_mossycobble.png"; 6],
+        groups: &[("cracky", 3), ("wall", 1), ("stone", 2)],
+        drop: dungeons::WALL_MOSSYCOBBLE,
+        drop_count: 1,
+        kind: Kind::Wall,
+    },
+    shaped!(stairs::MOSSY.first_stair(), "stair_mossycobble", "Mossy Cobblestone Stair", "default_mossycobble.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::MOSSY.first_slab(), "slab_mossycobble", "Mossy Cobblestone Slab", "default_mossycobble.png", &[("cracky", 3), ("slab", 1)]),
+    shaped!(stairs::MOSSY.first_inner(), "stair_inner_mossycobble", "Inner Mossy Cobblestone Stair", "default_mossycobble.png", &[("cracky", 3), ("stair", 1)]),
+    shaped!(stairs::MOSSY.first_outer(), "stair_outer_mossycobble", "Outer Mossy Cobblestone Stair", "default_mossycobble.png", &[("cracky", 3), ("stair", 1)]),
+    // minetest_game's mese post lights (default.register_mesepost).
+    Node {
+        id: MESE_POST_APPLE,
+        name: "esp:mese_post_light",
+        description: "Apple Wood Mese Post Light",
+        tiles: [
+            "esp_apple_wood.png",
+            "esp_apple_wood.png",
+            "esp_apple_wood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "esp_apple_wood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "esp_apple_wood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+            "esp_apple_wood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2)],
+        drop: MESE_POST_APPLE,
+        drop_count: 1,
+        kind: Kind::Post,
+    },
+    Node {
+        id: MESE_POST_BIRCH,
+        name: "esp:mese_post_light_birch_wood",
+        description: "Birch Wood Mese Post Light",
+        tiles: [
+            "esp_birch_wood.png",
+            "esp_birch_wood.png",
+            "esp_birch_wood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "esp_birch_wood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "esp_birch_wood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+            "esp_birch_wood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2)],
+        drop: MESE_POST_BIRCH,
+        drop_count: 1,
+        kind: Kind::Post,
+    },
+    Node {
+        id: MESE_POST_FIR,
+        name: "esp:mese_post_light_fir_wood",
+        description: "Fir Wood Mese Post Light",
+        tiles: [
+            "esp_fir_wood.png",
+            "esp_fir_wood.png",
+            "esp_fir_wood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "esp_fir_wood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "esp_fir_wood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+            "esp_fir_wood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2)],
+        drop: MESE_POST_FIR,
+        drop_count: 1,
+        kind: Kind::Post,
+    },
+    Node {
+        id: MESE_POST_JUNGLE,
+        name: "esp:mese_post_light_junglewood",
+        description: "Jungle Wood Mese Post Light",
+        tiles: [
+            "default_junglewood.png",
+            "default_junglewood.png",
+            "default_junglewood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "default_junglewood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "default_junglewood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+            "default_junglewood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2)],
+        drop: MESE_POST_JUNGLE,
+        drop_count: 1,
+        kind: Kind::Post,
+    },
+    Node {
+        id: MESE_POST_ACACIA,
+        name: "esp:mese_post_light_acacia_wood",
+        description: "Acacia Wood Mese Post Light",
+        tiles: [
+            "default_acacia_wood.png",
+            "default_acacia_wood.png",
+            "default_acacia_wood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "default_acacia_wood.png^default_mese_post_light_side_dark.png^[makealpha:0,0,0",
+            "default_acacia_wood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+            "default_acacia_wood.png^default_mese_post_light_side.png^[makealpha:0,0,0",
+        ],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2)],
+        drop: MESE_POST_ACACIA,
+        drop_count: 1,
+        kind: Kind::Post,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -3705,14 +3838,14 @@ pub fn light_source(id: u16) -> u8 {
         Some(n) if n.kind == Kind::Torch => TORCH_LIGHT,
         Some(n) if n.id == CONTENT_FURNACE_ACTIVE => FURNACE_LIGHT,
         Some(n) if n.id == CONTENT_MESE_BLOCK => MESE_LIGHT,
-        Some(n) if n.id == CONTENT_MESE_LAMP => MESE_LAMP_LIGHT,
+        Some(n) if n.id == CONTENT_MESE_LAMP || n.kind == Kind::Post => MESE_LAMP_LIGHT,
         _ => 0,
     }
 }
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -3757,12 +3890,12 @@ pub fn buildable_to(id: u16) -> bool {
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane | Kind::Bones | Kind::Wall))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane | Kind::Bones | Kind::Wall | Kind::Post))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -4232,6 +4365,8 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_large_cactus_seedling.png", include_bytes!("../media/default_large_cactus_seedling.png")),
     ("default_mineral_copper.png", include_bytes!("../media/default_mineral_copper.png")),
     ("default_meselamp.png", include_bytes!("../media/default_meselamp.png")),
+    ("default_mese_post_light_side.png", include_bytes!("../media/default_mese_post_light_side.png")),
+    ("default_mese_post_light_side_dark.png", include_bytes!("../media/default_mese_post_light_side_dark.png")),
     ("flowers_rose.png", include_bytes!("../media/flowers_rose.png")),
     ("flowers_tulip.png", include_bytes!("../media/flowers_tulip.png")),
     ("flowers_dandelion_yellow.png", include_bytes!("../media/flowers_dandelion_yellow.png")),
@@ -4310,6 +4445,7 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_desert_sand.png", include_bytes!("../media/default_desert_sand.png")),
     ("default_desert_stone.png", include_bytes!("../media/default_desert_stone.png")),
     ("default_desert_cobble.png", include_bytes!("../media/default_desert_cobble.png")),
+    ("default_mossycobble.png", include_bytes!("../media/default_mossycobble.png")),
     ("default_desert_stone_brick.png", include_bytes!("../media/default_desert_stone_brick.png")),
     ("default_desert_stone_block.png", include_bytes!("../media/default_desert_stone_block.png")),
     ("default_desert_sandstone.png", include_bytes!("../media/default_desert_sandstone.png")),
@@ -4557,6 +4693,7 @@ fn sounds_of(id: u16) -> Sounds {
         CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD | CONTENT_APPLE_TREE | CONTENT_APPLE_WOOD
         | CONTENT_JUNGLE_TREE | CONTENT_JUNGLE_WOOD | CONTENT_ACACIA_TREE | CONTENT_ACACIA_WOOD => wood,
         id if is_chest(id) => wood,
+        id if def(id).is_some_and(|n| n.kind == Kind::Post) => wood,
         CONTENT_LADDER_WOOD => wood,
         // minetest_game's node_sound_glass_defaults and _metal_defaults.
         CONTENT_GLASS | CONTENT_MESE_LAMP | CONTENT_OBSIDIAN_GLASS => Sounds {
@@ -5085,7 +5222,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
     } else if seed {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
-    } else if fence || stalk || n.kind == Kind::Lamp || n.kind == Kind::SnowLayer {
+    } else if fence || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Post) {
         w.u8(CPT_LIGHT).u8(0);
     } else if n.kind == Kind::Lily || flat_pane {
         // Turned any way (facedir), as minetest_game places it.
@@ -5125,7 +5262,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
         Kind::Lamp => (NDT_GLASSLIKE, ""),
         Kind::SnowLayer => (NDT_NODEBOX, ""),
-        Kind::Lily | Kind::Pane => (NDT_NODEBOX, ""),
+        Kind::Lily | Kind::Pane | Kind::Post => (NDT_NODEBOX, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
@@ -5217,7 +5354,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane)) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post)) as u8) // light_propagates
         .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
@@ -5265,6 +5402,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         _ if fence => connected_nodebox(&mut w, fence_box),
         _ if n.kind == Kind::SnowLayer => fixed_nodebox(&mut w, &[SNOW_LAYER_BOX]),
         _ if n.kind == Kind::Lily => fixed_nodebox(&mut w, &[colours::LILY_BOX]),
+        _ if n.kind == Kind::Post => fixed_nodebox(&mut w, &[MESE_POST_BOX]),
         _ if flat_pane => fixed_nodebox(&mut w, &[panes::FLAT_BOX]),
         _ if pane => connected_nodebox(&mut w, &panes::CONNECTED_BOX),
         _ => regular_nodebox(&mut w), // node_box (unused by meshes)
@@ -5298,6 +5436,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         fixed_nodebox(&mut w, &[SNOW_LAYER_BOX]);
     } else if n.kind == Kind::Lily {
         fixed_nodebox(&mut w, &[colours::LILY_SELECTION]);
+    } else if n.kind == Kind::Post {
+        fixed_nodebox(&mut w, &[MESE_POST_BOX]);
     } else if stalk {
         let r = if n.kind == Kind::Stem { 7.0 / 16.0 } else { 6.0 / 16.0 };
         fixed_nodebox(&mut w, &[[-r, -0.5, -r, r, 0.5, r]]);
@@ -5332,6 +5472,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     } else if n.kind == Kind::SnowLayer {
         // A little thinner underfoot than it looks (minetest_game's snow).
         fixed_nodebox(&mut w, &[[-0.5, -0.5, -0.5, 0.5, -7.0 / 16.0, 0.5]]);
+    } else if n.kind == Kind::Post {
+        fixed_nodebox(&mut w, &[MESE_POST_BOX]);
     } else if wall {
         connected_nodebox(&mut w, &fences::WALL_COLLISION);
     } else if fence {

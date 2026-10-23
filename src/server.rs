@@ -30,6 +30,7 @@ use crate::privs::{self, Privs};
 use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
+use crate::dungeons;
 use crate::clock::{self, Clock};
 use crate::colours;
 use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
@@ -1893,6 +1894,7 @@ impl Server {
                 // A chest must be emptied first, and isn't dug while open; a
                 // locked one only by its owner.
                 if content::is_chest(current) || current == bones::BONES {
+                    self.fill_dungeon_chest(furnace_at);
                     let record = self.chests.get(furnace_at);
                     let open = content::chest_pair(current).is_some_and(|(_, o)| o == current);
                     if open || record.is_some_and(|c| !c.is_empty() || !c.allows(&name)) {
@@ -3852,6 +3854,7 @@ impl Server {
         let Some(name) = self.peers.get(&addr).map(|p| p.display_name().to_string()) else {
             return;
         };
+        self.fill_dungeon_chest(pos);
         let record = self.chests.get_or_add(pos);
         if !record.allows(&name) {
             let owner = record.owner.clone().unwrap_or_default();
@@ -3879,6 +3882,17 @@ impl Server {
         }
         let form = chest_formspec(&chest::detached_name(pos));
         self.send_command(addr, 0, &build_show_formspec(&form, CHEST_FORM));
+    }
+
+    /// A dungeon's chest gets its loot the first time it is opened or
+    /// dug (dungeon_loot fills it as the map is generated).
+    fn fill_dungeon_chest(&mut self, pos: NodePos) {
+        if self.chests.get(pos).is_some() || !self.world.is_dungeon_chest(pos) {
+            return;
+        }
+        self.chests.get_or_add(pos).main = dungeons::loot_for(pos, dungeons::desert_at(pos));
+        self.chests.save();
+        info!("Filled the dungeon chest at {pos:?}");
     }
 
     /// A player closed their chest window.

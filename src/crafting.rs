@@ -119,6 +119,13 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(ITEM_MESE_CRYSTAL)], output: ITEM_MESE_FRAGMENT, count: 9 },
     // A mese lamp: glass over a mese crystal.
     Recipe { width: 1, pattern: &[I(CONTENT_GLASS), I(ITEM_MESE_CRYSTAL)], output: CONTENT_MESE_LAMP, count: 1 },
+    // Mese post lights: glass over three mese crystals over planks make 4
+    // (default.register_mesepost).
+    Recipe { width: 3, pattern: &mese_post(CONTENT_APPLE_WOOD), output: MESE_POST_APPLE, count: 4 },
+    Recipe { width: 3, pattern: &mese_post(CONTENT_BIRCH_WOOD), output: MESE_POST_BIRCH, count: 4 },
+    Recipe { width: 3, pattern: &mese_post(CONTENT_FIR_WOOD), output: MESE_POST_FIR, count: 4 },
+    Recipe { width: 3, pattern: &mese_post(CONTENT_JUNGLE_WOOD), output: MESE_POST_JUNGLE, count: 4 },
+    Recipe { width: 3, pattern: &mese_post(CONTENT_ACACIA_WOOD), output: MESE_POST_ACACIA, count: 4 },
     // Bronze: eight copper ingots round a tin one make nine.
     Recipe { width: 3, pattern: &ring(I(ITEM_COPPER_INGOT), I(ITEM_TIN_INGOT)), output: ITEM_BRONZE_INGOT, count: 9 },
     // Ladders: an H of sticks makes 5, of steel ingots 15.
@@ -166,6 +173,7 @@ pub const RECIPES: &[Recipe] = &[
     // Walls (walls mod): two rows of three cobblestone make 6.
     Recipe { width: 3, pattern: &[I(CONTENT_COBBLE); 6], output: crate::fences::WALL_COBBLE, count: 6 },
     Recipe { width: 3, pattern: &[I(CONTENT_DESERT_COBBLE); 6], output: crate::fences::WALL_DESERT_COBBLE, count: 6 },
+    Recipe { width: 3, pattern: &[I(crate::dungeons::MOSSYCOBBLE); 6], output: crate::dungeons::WALL_MOSSYCOBBLE, count: 6 },
     // Panes (xpanes): two rows of three glass, obsidian glass or steel
     // ingots make 16; the steel bars make a door (two columns of three)
     // and a trapdoor (a square of four).
@@ -265,6 +273,7 @@ pub fn cook_result(id: u16) -> Option<(u16, f32)> {
         ITEM_GOLD_LUMP => Some((ITEM_GOLD_INGOT, 3.0)),
         CONTENT_COBBLE => Some((CONTENT_STONE, 3.0)),
         CONTENT_DESERT_COBBLE => Some((CONTENT_DESERT_STONE, 3.0)),
+        crate::dungeons::MOSSYCOBBLE => Some((CONTENT_STONE, 3.0)),
         // group:sand: glass.
         CONTENT_SAND | CONTENT_DESERT_SAND | CONTENT_SILVER_SAND => Some((CONTENT_GLASS, 3.0)),
         ITEM_CLAY_LUMP => Some((ITEM_CLAY_BRICK, 3.0)),
@@ -350,6 +359,11 @@ const fn gate(planks: u16) -> [Ingredient; 6] {
 }
 
 /// minetest_game's ladder shape: two sides joined in the middle.
+/// A mese post light of `wood`.
+const fn mese_post(wood: u16) -> [Ingredient; 9] {
+    [E, I(CONTENT_GLASS), E, I(ITEM_MESE_CRYSTAL), I(ITEM_MESE_CRYSTAL), I(ITEM_MESE_CRYSTAL), E, I(wood), E]
+}
+
 const fn ladder(m: Ingredient) -> [Ingredient; 9] {
     [m, E, m, m, m, m, m, E, m]
 }
@@ -755,6 +769,16 @@ mod tests {
         assert_eq!(result(&rows(ITEM_STEEL_INGOT, 0)), Some((BAR_FLAT, 16)));
         assert_eq!(result(&rows(CONTENT_COBBLE, 3)), Some((crate::fences::WALL_COBBLE, 6)));
         assert_eq!(result(&rows(CONTENT_DESERT_COBBLE, 0)), Some((crate::fences::WALL_DESERT_COBBLE, 6)));
+        assert_eq!(result(&rows(crate::dungeons::MOSSYCOBBLE, 0)), Some((crate::dungeons::WALL_MOSSYCOBBLE, 6)));
+        assert_eq!(cook_result(crate::dungeons::MOSSYCOBBLE), Some((CONTENT_STONE, 3.0)));
+        // Mese post lights: glass, three mese crystals, planks, in a column
+        // through the middle.
+        for (post, wood) in MESE_POSTS {
+            let g = grid(&[(1, CONTENT_GLASS, 1), (3, ITEM_MESE_CRYSTAL, 1), (4, ITEM_MESE_CRYSTAL, 1), (5, ITEM_MESE_CRYSTAL, 1), (7, wood, 1)]);
+            assert_eq!(result(&g), Some((post, 4)));
+            assert_eq!(content::light_source(post), MESE_LAMP_LIGHT);
+            assert!(content::walkable(post) && content::passes_sunlight(post));
+        }
         // Steel ingots in two columns are still a steel door.
         let cols = |id: u16| grid(&[0, 1, 3, 4, 6, 7].map(|i| (i, id, 1)));
         assert_eq!(result(&cols(ITEM_STEEL_INGOT)), Some((ITEM_DOOR_STEEL, 1)));

@@ -54,7 +54,12 @@ The firmware can also be built for LCDwiki's **ES3C28P / ES3N28P** (2.8" screen,
 
 On the ES3C28P the status pages are drawn as on the Waveshare, 320 × 172, in the middle of the larger screen, for now. If its colours come out with red and blue swapped, or inverted, or the pages mirrored, flip `lcd_bgr`, `lcd_invert`, `lcd_mirror_x` or `lcd_mirror_y` for it in `src/board.rs` (both mirrors for pages upside down).
 
-After flashing over USB, this board may restart into its download mode ("waiting for download" in the monitor) rather than run the new firmware: press its RESET button, and it starts normally.
+Flashing this board is most reliable with the flash erased first:
+```
+espflash erase-flash
+BOARD=es3c28p WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
+```
+That wipes a world kept in the board's flash (one on an SD card is untouched). If the monitor still shows "waiting for download" after flashing, the board has restarted into its download mode rather than the new firmware: press its RESET button, and it starts normally.
 
 Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with a new entry in `src/board.rs` and their SD card and screen pins in `src/main.rs`; an SD card slot is optional. PSRAM is required: the server keeps its own data there and leaves the internal RAM to Wi-Fi and the system.
 
@@ -67,6 +72,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with a new entry
   - Minetest Game's biomes: grassland, with coniferous forest in the hills; desert (desert sand over desert stone), savanna and rainforest in the hot lands, from dry to wet; cold desert (silver sand), tundra (permafrost, moss and stones, gravel beaches) and snowy fir forest in the cold lands, from dry to wet; snow on the mountain tops. Snow lies on the snowy lands and in patches on the tundra, and cold lakes freeze over;
   - gravel in blobs underground, and clay and gravel on lake beds;
   - caves with entrances; below height -64, in about half the land, they are flooded with lava, sealed off from the dry ones by solid stone;
+  - dungeons (see below);
   - Minetest Game's ores, deeper for the better ones, at about its densities: coal everywhere, iron below 0, copper and tin below -64, gold below -256, mese below -512, diamond below -1024, and the odd mese block below -2048;
   - birch woods with apple trees in the lowlands and fir forests in the hills and snow, with clearings and the odd lone tree; dense jungle in the rainforest, with jungle grass on a floor of leaf litter; scattered flat-topped acacias in the savanna's dry grass. Leaves cast shade.
 - **Trees, as in Minetest Game:** chop a tree's trunk away and its leaves fall within a few seconds (leaves you placed yourself never do). Leaves give a sapling one time in 20, dug or fallen. Plant a sapling on dirt, grass, savanna dirt or leaf litter in the open and it grows into a birch, fir, apple, jungle or acacia tree after 5 to 25 minutes, in daylight.
@@ -85,6 +91,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with a new entry
   - a chest from 8 planks in a ring; a locked chest with a steel ingot in the middle, or from a chest and a steel ingot;
   - building blocks: 4 stone make 4 stone bricks and 9 make 9 stone blocks, and the same for sandstone; 9 coal lumps, steel, copper, tin, bronze or gold ingots, mese crystals or diamonds make a block of each, and back; 8 copper ingots round a tin one make 9 bronze ingots; a mese crystal breaks into 9 fragments, and 9 fragments make a crystal;
   - ladders: an H of sticks makes 5 wooden ladders, of steel ingots 15 steel ones.
+  - lights: glass over a mese crystal makes a mese lamp; glass over three mese crystals in a row over planks makes 4 mese post lights of that wood, thin posts with glowing mese windows that light up as much as a lamp.
 - **Stairs, slabs and corner stairs:** Minetest Game's, of each kind of planks, stone, cobblestone, each sandstone, desert stone and cobblestone, their bricks and blocks, brick, obsidian (and its bricks and blocks), ice, snow blocks, and the steel, copper, tin, bronze and gold blocks.
   - 6 blocks in a staircase (rising to the right) make 8 stairs, and 3 in a row make 6 slabs. 4 stairs in a square give 3 blocks back, and 2 slabs one above the other give 1.
   - Corner stairs: 6 blocks in a staircase shape with the middle left empty (one on top in the middle, one either side below, a full row underneath) make 7 inner corners; 4 as an upside-down T make 6 outer corners. They place like stairs, so which way a corner turns depends on where you stand.
@@ -92,7 +99,8 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with a new entry
   - Light gets in, so a slab roof doesn't make a dark room. Wooden ones burn, for three quarters (stairs) or half (slabs) the time of the planks.
 - **Doors:** Minetest Game's wooden, glass and steel doors: two columns of three planks, glass or steel ingots make one. A door faces the way you look as you place it, and one placed beside another hinges on the other side, so the pair opens outwards. Right-click opens and shuts it, with its sound; with sneak held, right-click builds against it instead. A steel door belongs to whoever placed it: only they can open or dig it (with a steel pickaxe). Owners are kept in `world/doors.txt`.
 - **Fences, fence rails and fence gates:** Minetest Game's, in all five woods. Two rows of planks, stick, planks make 4 fences; two planks above two more, with an empty row between, 16 rails (a fence without its posts); two rows of stick, planks, stick a gate. Fences join up with each other, with gates and with planks and trunks next to them (the client draws the joins, from the node definitions). A gate is placed facing away from you, joins fences on its left and right, and opens and closes with a right-click and a creak. Rails join only fences, gates and other rails, and stop you like a fence does. Fences and gates burn for 5 to 7 s, as their planks, rails for 3 to 5 s.
-- **Walls:** Minetest Game's cobblestone and desert cobblestone walls (mossy cobblestone's will come with dungeons). Two rows of three cobblestone make 6. A wall is a thick post that grows a lower wall out to each wall, fence or stone block beside it, and stops you as a full block does. Fences and rails join walls too.
+- **Walls:** Minetest Game's cobblestone, desert cobblestone and mossy cobblestone walls. Two rows of three cobblestone make 6. A wall is a thick post that grows a lower wall out to each wall, fence or stone block beside it, and stops you as a full block does. Fences and rails join walls too.
+- **Dungeons:** Luanti's dungeon generator, ported from its source: underground rooms joined by corridors, some with stairs, walled in cobblestone that is mossy in places (desert stone in the desert). About four in ten mapchunks (80 nodes a side) have one, wherever there is stone, so they turn up in mines and caves at any depth, and now and then a room breaks out at the surface. As in Minetest Game, some rooms have a loot chest against a wall, up to two per mapchunk. What a chest holds depends on how deep it is: sticks, flint, apples, coal, gold and steel ingots, now and then mese crystals, a worn wooden sword, stone pickaxe or (rarely) diamond axe, sand and dirt near the surface (desert cobblestone and cactus in the desert), and obsidian and mese blocks below -512. Mossy cobblestone cooks back to stone, and makes stairs, slabs and walls.
 - **Glass panes and steel bars:** Minetest Game's `xpanes`. Two rows of three glass, obsidian glass or steel ingots make 16. A pane on its own, or in a straight line, is a thin sheet running along the line; at a corner, a T or a cross it becomes a post with arms out to its neighbours. Panes join each other and stone, wood and trunks (not glass blocks, as in Minetest Game). Steel bars also make the **steel bar door** (two columns of three) and **steel bar trapdoor** (a square of four), locked to whoever places them like the steel ones.
 - **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
 - **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. Water flows as in Luanti: dig beside or under a lake and it runs in, up to 8 nodes across flat ground, getting shallower as it goes, and falls down any hole; take the source away and the flow drains. Two sources with a gap between make a third, so a lake never runs dry. Water washes torches out. It spreads a node a second; the server looks at up to 1,000 places a second, so a flood into a big cave takes a while. Where more than 8 nodes in a map block change at once, the block is sent again whole rather than node by node, to spare the radio; while water is moving the log says how much every 10 s ("Liquids: ...").
@@ -157,7 +165,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with a new entry
 
 ## What doesn't (yet)
 
-- Much of Minetest Game is still missing: mese posts, mossy cobblestone and cave ice (they come with dungeons and caves), signs, bookshelves, TNT and fire, boats, carts, keys, dungeons, weather and creative mode.
+- Much of Minetest Game is still missing: cave ice, signs, bookshelves, TNT and fire, boats, carts, keys, weather and creative mode.
 - No Lua mods: the game content is built in.
 - One world per SD card (or in the board's flash).
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
@@ -358,6 +366,7 @@ src/messages.rs    building and parsing protocol commands
 src/content.rs     node and item definitions, media
 src/world.rs       the world: generated blocks, player changes, lighting
 src/terrain.rs     terrain, biomes, caves and ores
+src/dungeons.rs    dungeons, mossy cobblestone, and dungeon loot
 src/items.rs       dropped items and their physics
 src/inventory.rs   inventories and inventory actions
 src/crafting.rs    crafting recipes, the craft grid, and fuel

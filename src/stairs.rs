@@ -6,7 +6,8 @@
 //! Their content ids come in sets: for each set, all the stairs in its
 //! materials' order, then all the slabs, the inner corner stairs and the
 //! outer corner stairs. The first set follows on from the early nodes; the
-//! second, for the jungle and acacia wood that came later, from the fences.
+//! second, for the jungle and acacia wood that came later, from the fences;
+//! the others, for later blocks, after other nodes.
 
 use crate::content::*;
 
@@ -95,10 +96,14 @@ pub const BUILDING_MATERIALS: [Material; 21] = [
     Material { base: CONTENT_GOLD_BLOCK, world_aligned: true },
 ];
 
+/// minetest_game's mossy cobblestone, which came with the dungeons.
+pub const MOSSY_MATERIALS: [Material; 1] = [Material { base: crate::dungeons::MOSSYCOBBLE, world_aligned: true }];
+
 pub const EARLY: Set = Set { first: 41, materials: &MATERIALS };
 pub const LATER: Set = Set { first: crate::fences::RAIL_ACACIA + 1, materials: &LATER_MATERIALS };
 pub const BUILDING: Set = Set { first: CONTENT_OBSIDIAN_GLASS + 1, materials: &BUILDING_MATERIALS };
-const SETS: [Set; 3] = [EARLY, LATER, BUILDING];
+pub const MOSSY: Set = Set { first: crate::dungeons::WALL_MOSSYCOBBLE + 1, materials: &MOSSY_MATERIALS };
+const SETS: [Set; 4] = [EARLY, LATER, BUILDING, MOSSY];
 
 pub const FIRST_STAIR: u16 = EARLY.first_stair();
 pub const FIRST_SLAB: u16 = EARLY.first_slab();

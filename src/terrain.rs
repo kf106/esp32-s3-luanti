@@ -32,7 +32,8 @@ use crate::world::CONTENT_AIR;
 /// grass, kelp and corals) came without a bump: they only fill air, or
 /// replace the top of a lake bed or swampy shore, so a world's changes
 /// still fit around them.
-pub const GENERATOR_VERSION: u32 = 3;
+/// 4: dungeons (dungeons.rs).
+pub const GENERATOR_VERSION: u32 = 4;
 
 const SEED_HILLS: u32 = 0x1A2B_3C4D;
 const SEED_MOUNTAINS: u32 = 0x5E6F_7081;
@@ -117,7 +118,7 @@ pub enum Deep {
 // Noise
 // ---------------------------------------------------------------------------
 
-fn hash(x: i32, y: i32, z: i32, seed: u32) -> u32 {
+pub(crate) fn hash(x: i32, y: i32, z: i32, seed: u32) -> u32 {
     let mut h = seed
         ^ (x as u32).wrapping_mul(0x8DA6_B343)
         ^ (y as u32).wrapping_mul(0xD816_3841)
@@ -221,6 +222,35 @@ fn fbm2(x: f32, z: f32, octaves: u32, seed: u32) -> f32 {
         freq *= 2.0;
     }
     sum / total
+}
+
+/// Luanti's NoiseFractal3D: octaves of 3D noise, each `lacunarity` times
+/// finer and `persistence` times as strong as the last, summed (not
+/// scaled back), times `scale`, plus `offset`. Luanti's noise is value
+/// noise, which spreads wider than this gradient noise; VALUE_SPREAD
+/// widens each octave to match, so thresholds like "above zero" pick out
+/// about the same share of places.
+pub fn fractal3(p: (i32, i32, i32), np: &NoiseParams, seed: u32) -> f32 {
+    const VALUE_SPREAD: f32 = 1.8;
+    let (mut sum, mut amp, mut freq) = (0.0, 1.0, 1.0);
+    for o in 0..np.octaves {
+        let f = freq / np.spread;
+        sum += amp * noise3(p.0 as f32 * f, p.1 as f32 * f, p.2 as f32 * f, seed.wrapping_add(np.seed).wrapping_add(o * 7919));
+        amp *= np.persistence;
+        freq *= np.lacunarity;
+    }
+    np.offset + np.scale * sum * VALUE_SPREAD
+}
+
+/// Luanti's NoiseParams (one spread for all three axes).
+pub struct NoiseParams {
+    pub offset: f32,
+    pub scale: f32,
+    pub spread: f32,
+    pub seed: u32,
+    pub octaves: u32,
+    pub persistence: f32,
+    pub lacunarity: f32,
 }
 
 // ---------------------------------------------------------------------------

@@ -149,7 +149,7 @@ for _ in range(count):
         assert (media_dir/mesh).exists() and mesh == ("doors_fencegate_open.obj" if name.endswith(b"_open") else "doors_fencegate_closed.obj")
         assert all(t[1] & 1 for t in tiles) and len(cbox) == (2 if name.endswith(b"_open") else 1)
         gates = globals().setdefault("gates", []); gates.append(cid)
-lst.done(); assert len(torches) == 3 and len(shaped) == 132; 
+lst.done(); assert len(torches) == 3 and len(shaped) == 136; 
 assert len(fences) == 10 and len(gates) == 10
 want = sorted(cid for nm, (cid, gr) in ids.items() if any(g in (b"fence", b"wood", b"tree", b"wall") for g, _ in gr))
 rail_want = sorted(cid for nm, (cid, gr) in ids.items() if any(g in (b"fence", b"wall") for g, _ in gr))

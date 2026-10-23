@@ -8,6 +8,7 @@ mod colours;
 mod content;
 mod crafting;
 mod doors;
+mod dungeons;
 mod falling;
 mod farming;
 mod fences;

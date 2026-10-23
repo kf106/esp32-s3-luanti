@@ -37,6 +37,7 @@ use std::sync::Arc;
 use log::{info, warn};
 
 use crate::content::{self, TORCH_LIGHT};
+use crate::dungeons;
 use crate::farming;
 use crate::liquids;
 use crate::messages::Writer;
@@ -66,6 +67,8 @@ const CAVE_CACHE_MAX: usize = 28_000;
 /// Height ranges of block columns, for deciding which blocks players need
 /// (16 bytes each; under 7/8 of 4096 for the same reason).
 const HEIGHT_CACHE_MAX: usize = 3_500;
+/// Map blocks whose dungeon nodes are kept (most have none).
+const DUNGEON_CACHE_MAX: usize = 4_096;
 
 /// How far torch light reaches: it starts at TORCH_LIGHT and fades by one
 /// per node, so nodes further than this get none.
@@ -190,6 +193,9 @@ pub struct World {
     column_limit: usize,
     heights: RefCell<FastMap<(i16, i16), (i32, i32)>>,
     cave_samples: RefCell<FastMap<(i32, i32, i32), (f32, f32)>>,
+    /// The nodes dungeons change in each map block (None: none), as
+    /// dungeons::block gives them.
+    dungeon_blocks: RefCell<FastMap<BlockPos, Option<Arc<[dungeons::Placed]>>>>,
     /// Places where liquid may flow (liquids.rs).
     liquid_queue: liquids::Queue,
     /// Lava that touches water, and may cool (see lava_touching_water).
@@ -221,6 +227,7 @@ impl World {
             column_limit: SERVER_COLUMNS,
             heights: RefCell::new(FastMap::default()),
             cave_samples: RefCell::new(FastMap::default()),
+            dungeon_blocks: RefCell::new(FastMap::default()),
             liquid_queue: liquids::Queue::default(),
             cooling: FastSet::default(),
             pending_log: Vec::new(),
@@ -267,6 +274,7 @@ impl World {
             column_limit: BUILDER_COLUMNS,
             heights: RefCell::new(FastMap::default()),
             cave_samples: RefCell::new(FastMap::default()),
+            dungeon_blocks: RefCell::new(FastMap::default()),
             liquid_queue: liquids::Queue::default(),
             cooling: FastSet::default(),
             pending_log: Vec::new(),
@@ -434,7 +442,58 @@ impl World {
         h
     }
 
+    /// The generated node: the dungeons', or the terrain's.
     fn generated(&self, x: i32, y: i32, z: i32, col: &Column) -> u16 {
+        match self.dungeon_node((x, y, z)) {
+            Some(d) => d.id,
+            None => self.terrain_node(x, y, z, col),
+        }
+    }
+
+    /// The param2 of a generated node: a dungeon's stair or chest is
+    /// turned; kelp has its height.
+    fn generated_param2(&self, pos: NodePos, id: u16) -> u8 {
+        match self.dungeon_node(pos) {
+            Some(d) => d.param2,
+            None => terrain::generated_param2(pos.0, pos.1, pos.2, id),
+        }
+    }
+
+    /// The nodes dungeons change in a map block, sorted (dungeons::block).
+    fn dungeon_block(&self, b: BlockPos) -> Option<Arc<[dungeons::Placed]>> {
+        if let Some(found) = self.dungeon_blocks.borrow().get(&b) {
+            return found.clone();
+        }
+        // The dungeons are dug into the terrain without them, and without
+        // trees (which they leave alone, as anything above the ground).
+        let mut terrain = |p: NodePos| {
+            let col = self.column(p.0, p.2);
+            if p.1 > col.height {
+                if p.1 <= terrain::WATER_LEVEL {
+                    terrain::lake_node(p.1, &col)
+                } else {
+                    CONTENT_AIR
+                }
+            } else {
+                self.terrain_node(p.0, p.1, p.2, &col)
+            }
+        };
+        let placed = dungeons::block(b, &mut terrain);
+        let found: Option<Arc<[dungeons::Placed]>> = (!placed.is_empty()).then(|| placed.into());
+        let mut cache = self.dungeon_blocks.borrow_mut();
+        if cache.len() >= DUNGEON_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(b, found.clone());
+        found
+    }
+
+    fn dungeon_node(&self, p: NodePos) -> Option<dungeons::Placed> {
+        dungeons::find(&self.dungeon_block(block_of_node(p))?, p)
+    }
+
+    /// The terrain's node, without dungeons.
+    fn terrain_node(&self, x: i32, y: i32, z: i32, col: &Column) -> u16 {
         // Above the surface it's air or trees: no need to look at caves.
         if y > col.height {
             let id = self.block_column(block_of(x), block_of(z)).above_ground(x, y, z);
@@ -456,7 +515,7 @@ impl World {
     fn apply(&mut self, pos: NodePos, id: u16, param2: u8) {
         let col = self.column(pos.0, pos.2);
         let generated = self.generated(pos.0, pos.1, pos.2, &col);
-        let generated_param2 = terrain::generated_param2(pos.0, pos.1, pos.2, generated);
+        let generated_param2 = self.generated_param2(pos, generated);
         let st = Arc::make_mut(&mut self.state);
         // Kept even if the change is undone; it only costs some lookups.
         st.changed_blocks.insert(block_of_node(pos));
@@ -482,16 +541,22 @@ impl World {
         if let Some(&p) = self.state.param2s.get(&pos) {
             return p;
         }
+        if self.state.changes.contains_key(&pos) {
+            return 0;
+        }
+        if let Some(d) = self.dungeon_node(pos) {
+            return d.param2;
+        }
         // Kelp grows only on lake beds, deep down: most positions can't be
         // kelp, and are answered without generating anything.
-        if pos.1 > terrain::KELP_TOP || self.state.changes.contains_key(&pos) {
+        if pos.1 > terrain::KELP_TOP {
             return 0;
         }
         let col = self.column(pos.0, pos.2);
         if pos.1 != col.height {
             return 0;
         }
-        terrain::generated_param2(pos.0, pos.1, pos.2, self.generated(pos.0, pos.1, pos.2, &col))
+        terrain::generated_param2(pos.0, pos.1, pos.2, self.terrain_node(pos.0, pos.1, pos.2, &col))
     }
 
     pub fn node(&self, pos: NodePos) -> u16 {
@@ -504,6 +569,11 @@ impl World {
             return id;
         }
         self.generated(x, y, z, col)
+    }
+
+    /// Whether a dungeon's loot chest stands at `pos`, as generated.
+    pub fn is_dungeon_chest(&self, pos: NodePos) -> bool {
+        !self.state.changes.contains_key(&pos) && self.dungeon_node(pos).is_some_and(|d| d.id == content::CONTENT_CHEST)
     }
 
     /// Nodes players have put in the world that match `wanted` (saplings,
@@ -725,6 +795,7 @@ impl World {
         let mut any_shaded = false;
         let bc = self.block_column(pos.0, pos.2);
         let changed = self.state.changed_blocks.contains(&pos);
+        let dungeon = self.dungeon_block(pos);
         // Cave samples for the 5x5x5 grid points around this block, filled
         // on first use. Same values as the shared cache, just quicker to
         // reach than through a hash map.
@@ -755,8 +826,13 @@ impl World {
                     let (wx, wy, wz) = (bx + x, by + y, bz + z);
                     // Look for a player's change only in blocks that have any.
                     let change = if changed { self.state.changes.get(&(wx, wy, wz)) } else { None };
-                    let id = match change {
-                        Some(&id) => id,
+                    let dug = match (&dungeon, change) {
+                        (Some(list), None) => dungeons::find(list, (wx, wy, wz)),
+                        _ => None,
+                    };
+                    let id = match (change, dug) {
+                        (Some(&id), _) => id,
+                        (_, Some(d)) => d.id,
                         _ if wy > col.height => self.unless_unsupported(bc.above_ground(wx, wy, wz), wx, wy, wz, &col),
                         _ => {
                             let cell = ((z / 4) * 16 + (y / 4) * 4 + x / 4) as usize;
@@ -769,9 +845,10 @@ impl World {
                     };
                     let i = idx(x, y, z);
                     param0[i] = id;
-                    param2[i] = match change {
-                        Some(_) => self.param2((wx, wy, wz)),
-                        None => terrain::generated_param2(wx, wy, wz, id),
+                    param2[i] = match (change, dug) {
+                        (Some(_), _) => self.param2((wx, wy, wz)),
+                        (_, Some(d)) => d.param2,
+                        _ => terrain::generated_param2(wx, wy, wz, id),
                     };
                     if content::passes_light(id) {
                         any_air |= id == CONTENT_AIR;
