@@ -258,6 +258,12 @@ fn gb(bytes: u64) -> String {
     if g >= 10.0 { format!("{g:.0}G") } else { format!("{g:.1}G") }
 }
 
+/// A size in megabytes (the board's own flash is a few of them).
+fn mb(bytes: u64) -> String {
+    let m = bytes as f64 / 1e6;
+    if m >= 10.0 { format!("{m:.0}M") } else { format!("{m:.1}M") }
+}
+
 /// The second page: how hard the device is working, and its resources.
 fn render_device(f: &mut Frame, st: &Status, sys: &System) {
     let margin = 6;
@@ -323,9 +329,10 @@ fn render_device(f: &mut Frame, st: &Status, sys: &System) {
     f.pair(&(col2, y), "Send fails ", &st.send_failures.to_string());
     y += line;
 
-    // Storage
-    let sd = sys.sd.map_or("-".to_string(), |(total, free)| format!("{} free of {}", gb(free), gb(total)));
-    f.pair(&(margin, y), "SD card ", &sd);
+    // Storage: the SD card, or the board's own flash without one.
+    let (store, size): (&str, fn(u64) -> String) = if crate::status::on_flash() { ("Flash ", mb) } else { ("SD card ", gb) };
+    let sd = sys.sd.map_or("-".to_string(), |(total, free)| format!("{} free of {}", size(free), size(total)));
+    f.pair(&(margin, y), store, &sd);
     y += line;
 
     // Heat (see chip_colour).

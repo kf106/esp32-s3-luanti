@@ -82,23 +82,39 @@ fn main() -> anyhow::Result<()> {
     let p = Peripherals::take()?;
     let pins = p.pins;
 
-    // SD card (Waveshare ESP32-S3-LCD-1.47 TF slot, 4-bit SDMMC)
-    let host = SdMmcHostDriver::new_4bits(
-        p.sdmmc1,
-        pins.gpio15, // CMD
-        pins.gpio14, // CLK
-        pins.gpio16, // D0
-        pins.gpio18, // D1
-        pins.gpio17, // D2
-        pins.gpio21, // D3
-        None::<AnyIOPin>, // no card-detect line
-        None::<AnyIOPin>, // no write-protect line
-        &SdMmcHostConfiguration::new(),
-    )?;
-    let sd = SdCardDriver::new_mmc(host, &SdCardConfiguration::new())?;
-    let fatfs = Fatfs::new_sdcard(0, sd)?;
-    let _mounted = MountedFatfs::mount(fatfs, MOUNT, 4)?;
-    info!("SD mounted at {MOUNT}");
+    // Storage: the SD card (Waveshare ESP32-S3-LCD-1.47 TF slot, 4-bit
+    // SDMMC) if there is one, otherwise the board's own flash. Either is
+    // mounted at /sd, so the rest of the server doesn't know which.
+    let sd = (|| -> anyhow::Result<_> {
+        let host = SdMmcHostDriver::new_4bits(
+            p.sdmmc1,
+            pins.gpio15, // CMD
+            pins.gpio14, // CLK
+            pins.gpio16, // D0
+            pins.gpio18, // D1
+            pins.gpio17, // D2
+            pins.gpio21, // D3
+            None::<AnyIOPin>, // no card-detect line
+            None::<AnyIOPin>, // no write-protect line
+            &SdMmcHostConfiguration::new(),
+        )?;
+        let sd = SdCardDriver::new_mmc(host, &SdCardConfiguration::new())?;
+        let fatfs = Fatfs::new_sdcard(0, sd)?;
+        Ok(MountedFatfs::mount(fatfs, MOUNT, 4)?)
+    })();
+    // Kept until the server stops: dropping it would unmount the card.
+    let _sd = match sd {
+        Ok(mounted) => {
+            info!("SD card mounted at {MOUNT}");
+            Some(mounted)
+        }
+        Err(e) => {
+            log::warn!("No SD card ({e}): keeping the game in the board's own flash");
+            mount_flash()?;
+            status::set_on_flash();
+            None
+        }
+    };
     reset_sd_if_asked();
     for entry in fs::read_dir(MOUNT)? {
         info!("  {:?}", entry?.file_name());
@@ -115,7 +131,7 @@ fn main() -> anyhow::Result<()> {
         ssid: ssid.to_string(),
         password: option_env!("WIFI_PASS").unwrap_or("").to_string(),
     });
-    let config = wifi_config::load(&wifi_config::Files { networks: WIFI_FILE, written: WIFI_WRITTEN }, built_in);
+    let config = wifi_config::load(&wifi_config::Files { networks: WIFI_FILE, written: WIFI_WRITTEN }, built_in, &board_id());
     let sysloop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
     // Kept until the server stops: dropping it would switch the hotspot off.
@@ -441,6 +457,51 @@ fn watch_wifi(mut wifi: BlockingWifi<EspWifi<'static>>, networks: &[wifi_config:
             Err(e) => log::warn!("Rejoined {joined}, but no IP address: {e}"),
         }
     }
+}
+
+/// This board's id, for its default hotspot's name (see
+/// wifi_config::board_id): from its hotspot MAC address.
+fn board_id() -> String {
+    let mut mac = [0u8; 6];
+    let result = unsafe {
+        esp_idf_svc::sys::esp_read_mac(mac.as_mut_ptr(), esp_idf_svc::sys::esp_mac_type_t_ESP_MAC_WIFI_SOFTAP)
+    };
+    if result != 0 {
+        log::warn!("Reading the board's MAC address: error {result}");
+    }
+    wifi_config::board_id(mac)
+}
+
+/// The flash partition that holds the game when there is no SD card (see
+/// partitions.csv).
+const FLASH_PARTITION: &str = "storage";
+
+/// Mount the board's own flash at MOUNT: a FAT file system, formatted the
+/// first time, over ESP-IDF's wear levelling, which spreads the writes
+/// across the partition so no part of the flash wears out first.
+fn mount_flash() -> anyhow::Result<()> {
+    use esp_idf_svc::sys;
+    let base = std::ffi::CString::new(MOUNT)?;
+    let label = std::ffi::CString::new(FLASH_PARTITION)?;
+    let config = sys::esp_vfs_fat_mount_config_t {
+        format_if_mount_failed: true,
+        max_files: 4,
+        allocation_unit_size: 4096,
+        disk_status_check_enable: false,
+        use_one_fat: false,
+    };
+    // The handle is only needed to unmount, which never happens.
+    let mut handle: sys::wl_handle_t = 0;
+    let result = unsafe { sys::esp_vfs_fat_spiflash_mount_rw_wl(base.as_ptr(), label.as_ptr(), &config, &mut handle) };
+    if result == sys::ESP_ERR_NOT_FOUND as sys::esp_err_t {
+        anyhow::bail!(
+            "no SD card, and no \"{FLASH_PARTITION}\" partition in flash to use instead: \
+             flash with partitions.csv (cargo run does, as set in .cargo/config.toml)"
+        );
+    }
+    sys::esp!(result)?;
+    info!("Board's flash mounted at {MOUNT}");
+    Ok(())
 }
 
 /// Game data on the SD card that a reset deletes. Extra media (skins and

@@ -96,6 +96,18 @@ pub fn problems() -> u64 {
     PROBLEMS.load(std::sync::atomic::Ordering::Relaxed) as u64
 }
 
+/// Set at start-up when there is no SD card and the game is kept in the
+/// board's own flash instead.
+static ON_FLASH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_on_flash() {
+    ON_FLASH.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn on_flash() -> bool {
+    ON_FLASH.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub type SharedStatus = Arc<Mutex<Status>>;
 
 impl Status {

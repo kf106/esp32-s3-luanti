@@ -11,8 +11,8 @@
 //! password hunter2
 //!
 //! # The board's own hotspot (hold BOOT at start-up)
-//! hotspot Luanti
-//! password LuantiLuanti
+//! hotspot MTG-A1B2
+//! password minetest
 //! ```
 //!
 //! Each `network` line starts an entry; the `password` line after it is
@@ -25,7 +25,9 @@
 //! Networks given when building (WIFI_SSID and WIFI_PASS) are written into
 //! the file the first time that firmware starts, so later hand edits are
 //! kept: they are written again only if the built-in network changes. A
-//! file with no `hotspot` entry gets the default one added at start-up.
+//! file with no `hotspot` entry gets the default one added at start-up:
+//! "MTG-" and the last four hex digits of the board's hotspot MAC
+//! address, so that boards near each other have different names.
 
 use log::{info, warn};
 
@@ -38,10 +40,22 @@ const SSID_MAX: usize = 32;
 const PASSWORD_MAX: usize = 64;
 const PASSPHRASE_MIN: usize = 8;
 
-/// The hotspot written into the file when it has none. (WPA2 needs a
-/// password of at least 8 characters, so not just "Luanti".)
-pub const DEFAULT_HOTSPOT_SSID: &str = "Luanti";
-pub const DEFAULT_HOTSPOT_PASSWORD: &str = "LuantiLuanti";
+/// The hotspot written into the file when it has none: this and the
+/// board's id (see `default_hotspot`). (WPA2 needs a password of at least
+/// 8 characters.)
+const DEFAULT_HOTSPOT_PREFIX: &str = "MTG-";
+const DEFAULT_HOTSPOT_PASSWORD: &str = "minetest";
+/// The old default hotspot. A file still holding it, untouched, gets the
+/// new default.
+const OLD_DEFAULT_HOTSPOT_SSID: &str = "Luanti";
+const OLD_DEFAULT_HOTSPOT_PASSWORD: &str = "LuantiLuanti";
+
+/// A board's id for its hotspot's name: the last two bytes of its hotspot
+/// MAC address, as four hex digits (as the end of the address a phone or
+/// laptop shows).
+pub fn board_id(mac: [u8; 6]) -> String {
+    format!("{:02X}{:02X}", mac[4], mac[5])
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Network {
@@ -50,8 +64,14 @@ pub struct Network {
 }
 
 impl Network {
-    pub fn default_hotspot() -> Self {
-        Self { ssid: DEFAULT_HOTSPOT_SSID.into(), password: DEFAULT_HOTSPOT_PASSWORD.into() }
+    /// The default hotspot of the board with this id (see `board_id`).
+    pub fn default_hotspot(id: &str) -> Self {
+        Self { ssid: format!("{DEFAULT_HOTSPOT_PREFIX}{id}"), password: DEFAULT_HOTSPOT_PASSWORD.into() }
+    }
+
+    /// The old default hotspot.
+    fn old_default_hotspot() -> Self {
+        Self { ssid: OLD_DEFAULT_HOTSPOT_SSID.into(), password: OLD_DEFAULT_HOTSPOT_PASSWORD.into() }
     }
 }
 
@@ -205,13 +225,42 @@ pub struct Files<'a> {
 }
 
 /// What the file should now say, given its current text (None if there is
-/// no file) and the built-in network if it is new to this card. None if it
-/// needs no change.
-fn updated(text: Option<&str>, parsed: &mut Parsed, built_in: Option<&Network>) -> Option<String> {
+/// no file), the built-in network if it is new to this card, and this
+/// board's default hotspot. None if it needs no change.
+fn updated(text: Option<&str>, parsed: &mut Parsed, built_in: Option<&Network>, default: &Network) -> Option<String> {
+    // The old default hotspot, untouched, becomes this board's default:
+    // only its two lines change, so the rest of the file stays as it was.
+    let renamed = match (text, &parsed.hotspot) {
+        (Some(t), Some(h)) if *h == Network::old_default_hotspot() => {
+            let mut out = String::with_capacity(t.len() + 8);
+            let mut in_hotspot = false;
+            for line in t.split_inclusive('\n') {
+                let trimmed = line.trim_end_matches(['\r', '\n']).trim();
+                if trimmed == format!("hotspot {OLD_DEFAULT_HOTSPOT_SSID}") {
+                    out.push_str(&format!("hotspot {}\n", default.ssid));
+                    in_hotspot = true;
+                } else if in_hotspot && trimmed == format!("password {OLD_DEFAULT_HOTSPOT_PASSWORD}") {
+                    out.push_str(&format!("password {}\n", default.password));
+                    in_hotspot = false;
+                } else {
+                    if trimmed.starts_with("network ") {
+                        in_hotspot = false;
+                    }
+                    out.push_str(line);
+                }
+            }
+            parsed.hotspot = Some(default.clone());
+            Some(out)
+        }
+        _ => None,
+    };
     let merged = built_in.is_some_and(|net| merge(&mut parsed.networks, net));
     if merged {
-        let hotspot = parsed.hotspot.clone().unwrap_or_else(Network::default_hotspot);
+        let hotspot = parsed.hotspot.clone().unwrap_or_else(|| default.clone());
         return Some(format(&parsed.networks, &hotspot));
+    }
+    if renamed.is_some() {
+        return renamed;
     }
     if parsed.hotspot.is_none() {
         // Added at the end, so the rest of the file stays as it was.
@@ -219,7 +268,7 @@ fn updated(text: Option<&str>, parsed: &mut Parsed, built_in: Option<&Network>) 
             Some(t) if !t.trim().is_empty() => t.trim_end().to_string() + "\n",
             _ => HEADER.to_string(),
         };
-        text.push_str(&hotspot_text(&Network::default_hotspot()));
+        text.push_str(&hotspot_text(default));
         return Some(text);
     }
     None
@@ -227,8 +276,10 @@ fn updated(text: Option<&str>, parsed: &mut Parsed, built_in: Option<&Network>) 
 
 /// The networks to try and the hotspot: from the file, with the built-in
 /// network (if any) written into it the first time this firmware sees the
-/// card, and the default hotspot added if the file has none.
-pub fn load(files: &Files, built_in: Option<Network>) -> Config {
+/// card, and the default hotspot added if the file has none. `id` is the
+/// board's (see `board_id`), for the default hotspot's name.
+pub fn load(files: &Files, built_in: Option<Network>, id: &str) -> Config {
+    let default = Network::default_hotspot(id);
     let text = storage::read(std::path::Path::new(files.networks)).map(|d| String::from_utf8_lossy(&d).into_owned()).ok();
     let mut parsed = parse(text.as_deref().unwrap_or(""));
     // The built-in network, if this card hasn't had it yet.
@@ -243,9 +294,14 @@ pub fn load(files: &Files, built_in: Option<Network>) -> Config {
             new_built_in = Some((net, print));
         }
     }
-    if let Some(new_text) = updated(text.as_deref(), &mut parsed, new_built_in.as_ref().map(|(n, _)| n)) {
-        if parsed.hotspot.is_none() {
-            info!("Adding the default hotspot \"{DEFAULT_HOTSPOT_SSID}\" to {}", files.networks);
+    let had_hotspot = parsed.hotspot.clone();
+    if let Some(new_text) = updated(text.as_deref(), &mut parsed, new_built_in.as_ref().map(|(n, _)| n), &default) {
+        match had_hotspot {
+            None => info!("Adding the default hotspot \"{}\" to {}", default.ssid, files.networks),
+            Some(h) if h != default && parsed.hotspot.as_ref() == Some(&default) => {
+                info!("Renaming the hotspot \"{}\" to \"{}\" in {}", h.ssid, default.ssid, files.networks)
+            }
+            _ => {}
         }
         let mut saved = storage::write(std::path::Path::new(files.networks), new_text.as_bytes());
         if let Some((_, print)) = &new_built_in {
@@ -256,13 +312,13 @@ pub fn load(files: &Files, built_in: Option<Network>) -> Config {
         }
     }
     let hotspot = match parsed.hotspot {
-        None => Network::default_hotspot(),
+        None => default,
         Some(net) => match check_hotspot(&net) {
             Ok(()) => net,
             Err(why) => {
-                warn!("wifi.txt: can't use hotspot \"{}\" ({why}); using \"{DEFAULT_HOTSPOT_SSID}\" instead", net.ssid);
+                warn!("wifi.txt: can't use hotspot \"{}\" ({why}); using \"{}\" instead", net.ssid, default.ssid);
                 crate::status::problem();
-                Network::default_hotspot()
+                default
             }
         },
     };
@@ -330,29 +386,47 @@ mod tests {
     fn hotspot_added_without_touching_the_rest() {
         let text = "# mine\nnetwork Home\npassword four\n";
         let mut p = parse(text);
-        let new = updated(Some(text), &mut p, None).unwrap();
+        let new = updated(Some(text), &mut p, None, &Network::default_hotspot("A1B2")).unwrap();
         assert!(new.starts_with(text));
         let again = parse(&new);
-        assert_eq!(again.hotspot, Some(Network::default_hotspot()));
+        assert_eq!(again.hotspot, Some(net("MTG-A1B2", "minetest")));
         assert_eq!(again.networks, vec![net("Home", "four")]);
         // Once there, nothing more to do.
         let mut again = again;
-        assert_eq!(updated(Some(&new), &mut again, None), None);
+        assert_eq!(updated(Some(&new), &mut again, None, &Network::default_hotspot("A1B2")), None);
     }
 
     #[test]
     fn new_file_gets_header_and_hotspot() {
         let mut p = parse("");
-        let new = updated(None, &mut p, None).unwrap();
+        let new = updated(None, &mut p, None, &Network::default_hotspot("00FF")).unwrap();
         assert!(new.starts_with(HEADER));
-        assert_eq!(parse(&new).hotspot, Some(Network::default_hotspot()));
+        assert_eq!(parse(&new).hotspot, Some(net("MTG-00FF", "minetest")));
+    }
+
+    #[test]
+    fn old_default_hotspot_takes_the_board_id() {
+        assert_eq!(board_id([0x24, 0x6f, 0x28, 0x9a, 0x0b, 0xc4]), "0BC4");
+        let default = Network::default_hotspot("0BC4");
+        let text = "# mine\nnetwork Home\n\n# note\nhotspot Luanti\npassword LuantiLuanti\n";
+        let mut p = parse(text);
+        let new = updated(Some(text), &mut p, None, &default).unwrap();
+        assert_eq!(new, text.replace("hotspot Luanti\npassword LuantiLuanti\n", "hotspot MTG-0BC4\npassword minetest\n"));
+        assert_eq!(p.hotspot, Some(default.clone()));
+        // With a new built-in network too, the renamed hotspot is kept.
+        let mut p = parse(text);
+        let new = updated(Some(text), &mut p, Some(&net("Work", "secret99")), &default).unwrap();
+        assert_eq!(parse(&new).hotspot, Some(default.clone()));
+        // A hand-set password is left alone.
+        let text = "hotspot Luanti\npassword mysecret1\n";
+        assert_eq!(updated(Some(text), &mut parse(text), None, &default), None);
     }
 
     #[test]
     fn built_in_keeps_listed_hotspot() {
         let text = "network Home\nhotspot Den\n";
         let mut p = parse(text);
-        let new = updated(Some(text), &mut p, Some(&net("Work", "secret99"))).unwrap();
+        let new = updated(Some(text), &mut p, Some(&net("Work", "secret99")), &Network::default_hotspot("A1B2")).unwrap();
         let again = parse(&new);
         assert_eq!(again.networks, vec![net("Work", "secret99"), net("Home", "")]);
         assert_eq!(again.hotspot, Some(net("Den", "")));
@@ -360,7 +434,7 @@ mod tests {
 
     #[test]
     fn hotspot_checks() {
-        assert!(check_hotspot(&Network::default_hotspot()).is_ok());
+        assert!(check_hotspot(&Network::default_hotspot("A1B2")).is_ok());
         assert!(check_hotspot(&net("Open", "")).is_ok());
         assert!(check_hotspot(&net("Short", "Luanti")).is_err());
         assert!(check_hotspot(&net("", "longenough")).is_err());

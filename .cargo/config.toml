@@ -3,7 +3,8 @@ target = "xtensa-esp32s3-espidf"
 
 [target.'cfg(target_os = "espidf")']
 linker = "ldproxy"
-runner = "espflash flash --monitor"
+# partitions.csv: the firmware, and room for the game without an SD card.
+runner = "espflash flash --monitor --partition-table partitions.csv"
 rustflags = [ "--cfg",  "espidf_time64"]
 
 [unstable]

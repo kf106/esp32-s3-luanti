@@ -2,7 +2,7 @@
 
 **Minetest on a $12 stick:** Minetest Game, rebuilt in Rust, running as a [Luanti](https://www.luanti.org/) server on a $12 ESP32-S3 board the size of a slightly oversized USB stick.
 
-A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. The board can join your access point, or run as its own free-standing hotspot. You can create an account, log in, explore a generated world with hills, forests, lakes, caves, lava and ores, dig and build, craft, smelt, farm, sleep through the night, and see the other players; testing shows it handles about six players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
+A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. The board can join your access point, or run as its own free-standing hotspot. You can create an account, log in, explore a generated world with hills, forests, lakes, caves, lava and ores, dig and build, craft, smelt, farm, sleep through the night, and see the other players; testing shows it handles about six players. The world, accounts, inventories and player positions are stored on a microSD card, or, without one, in the board's own flash. The board's small LCD shows the server's status.
 
 **Why "minetest" and not "luanti"?** When Minetest became Luanti, the point was to separate the engine (Luanti) from the game (Minetest Game). This project was first called esp32-s3-luanti, but it is really the other half: the server doesn't run Lua and can't load games or mods. It speaks Luanti's network protocol so that a normal client can connect, and everything else is Minetest Game (its nodes, recipes, furnace, doors, farming, beds and so on), built in, in about 20,000 lines of Rust. So it was renamed. The old GitHub link redirects here.
 
@@ -34,12 +34,12 @@ Developed on a [**Waveshare ESP32-S3-LCD-1.47**](https://www.waveshare.com/produ
 | RAM | 512 KB internal SRAM, plus 8 MB octal PSRAM |
 | Flash | 16 MB |
 | Display | 1.47" ST7789 LCD, 172 × 320 |
-| Storage | microSD slot (4-bit SDMMC) |
+| Storage | microSD slot (4-bit SDMMC), optional |
 | Network | 2.4 GHz Wi-Fi |
 
 ![The back of the board, with the microSD card that holds the world](assets/esp32-waveshare.jpeg)
 
-Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. The SD card pins are set in `src/main.rs` (CMD 15, CLK 14, D0 16, D1 18, D2 17, D3 21) and the LCD pins in `src/lcd.rs`. PSRAM is required: the server keeps its own data there and leaves the internal RAM to Wi-Fi and the system.
+Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes; an SD card slot is optional. The SD card pins are set in `src/main.rs` (CMD 15, CLK 14, D0 16, D1 18, D2 17, D3 21) and the LCD pins in `src/lcd.rs`. PSRAM is required: the server keeps its own data there and leaves the internal RAM to Wi-Fi and the system.
 
 ## What works
 
@@ -131,7 +131,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **Status screens:** the LCD has three pages, switched with the board's BOOT button, plus a fourth when the board runs its own hotspot. The screen switches off after a minute without a press, to keep the board cooler; the next press wakes it on the same page.
   - **Join** (hotspot only, first): a QR code that a phone camera offers to join, with the hotspot's name, password and address written beside it.
   - **Overview:** players online, packet and block counts, memory, and recent events.
-  - **Device:** load on each CPU core, how busy the server is, time per map block, memory (free, lowest, largest piece), Wi-Fi signal and channel (on the hotspot: its channel and how many devices are on it), failed sends, SD card space, and the chip's temperature.
+  - **Device:** load on each CPU core, how busy the server is, time per map block, memory (free, lowest, largest piece), Wi-Fi signal and channel (on the hotspot: its channel and how many devices are on it), failed sends, SD card space (or flash space, without a card), and the chip's temperature.
   - **Chat:** the latest public chat, newest at the bottom. The screen font covers Latin-1 and Latin Extended-A, so Finnish, Swedish and most European letters show properly.
 
 ## What doesn't (yet)
@@ -139,7 +139,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - Much of Minetest Game is still missing: mese posts, mossy cobblestone and cave ice (they come with dungeons and caves), signs, bookshelves, TNT and fire, bones, boats, carts, keys, walls, glass panes, dungeons, weather and creative mode.
 - No admin commands.
 - No Lua mods: the game content is built in.
-- One world per SD card.
+- One world per SD card (or in the board's flash).
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
 
 ## Building
@@ -161,7 +161,7 @@ You need the Rust toolchain for Xtensa, plus `git` and Python 3 with the `venv` 
    ```
    WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
    ```
-   `cargo run` flashes the board with `espflash` and opens the serial monitor.
+   `cargo run` flashes the board with `espflash`, with the partition table in `partitions.csv`, and opens the serial monitor.
 
 **The first build is slow.** It downloads ESP-IDF v5.5.1 and its tools into `.embuild/` inside the project and compiles them.
 
@@ -178,7 +178,7 @@ The ESP-IDF settings that matter, in `sdkconfig.defaults`:
 
 ## The SD card
 
-Format the card as FAT32 and insert it before powering up. The server creates what it needs:
+Format the card as FAT32 and insert it before powering up. Any size will do: a world takes a few megabytes. The server creates what it needs:
 
 ```
 /sd/auth/       accounts (salt and SRP verifier per player)
@@ -192,6 +192,19 @@ Format the card as FAT32 and insert it before powering up. The server creates wh
 ```
 
 All of these are plain text or simple binary files, so you can inspect or edit them on a PC. If a future version changes the terrain generator, the old change log is kept as `nodes-v<n>.log` and the world starts afresh.
+
+### Without an SD card
+
+If no card is found at start-up, the server keeps everything in the board's own flash instead: an 11 MB partition (`storage` in `partitions.csv`), formatted as FAT the first time and mounted in the card's place, with ESP-IDF's wear levelling spreading the writes. The same files are kept there, and the Device page shows "Flash" in place of "SD card". Things to know:
+- **Getting files in and out:** there is no card to put in a PC, so no editing `wifi.txt` or `motd.txt`, adding skins, or looking at the files there. Build with `WIFI_SSID` and `WIFI_PASS` (or use the hotspot) for the Wi-Fi settings; changing networks means reflashing.
+- **Backups and moving a world:** a card can be copied in seconds; a world in flash belongs to that board, and there is no tool yet to copy it out.
+- **The partition table:** `cargo run` writes it with the firmware (see `.cargo/config.toml`). Ordinary reflashing keeps the game, but flashing with a different table (for instance if the firmware ever outgrows its 5 MB), or erasing the whole flash, wipes it.
+- **Space:** 11 MB. A world takes a few megabytes, so it is plenty for play, but leaves little room for extra media.
+- **Wear:** flash lasts about 100,000 erases per sector. Wear levelling spreads the writes over the whole partition, so at the server's rate (changes saved once a second while people play) it should last many years, but unlike a card it can't be replaced.
+- **A card and flash are separate:** a world started in flash stays there, and isn't seen while a card is in. One board holds one world in flash; cards let you swap between worlds.
+- `RESET_SD=1` resets whichever is in use.
+
+For tinkering, backups or more than one world, use a card; flash suits a fixed setup or a demo.
 
 ### Wi-Fi networks
 
@@ -221,11 +234,11 @@ Where there is no Wi-Fi to join, the board can make its own network. Switch it o
 The hotspot is set in `wifi.txt` with a `hotspot` line, and the `password` line after it:
 
 ```
-hotspot Luanti
-password LuantiLuanti
+hotspot MTG-0BC4
+password minetest
 ```
 
-If the file has no `hotspot` entry, this default is added to the end of it at start-up (the rest of the file is left as it was). WPA2 needs a password of 8 to 63 characters; leave the `password` line out for an open hotspot. If the entry can't be used (a password too short, say), the server warns and runs the default instead.
+If the file has no `hotspot` entry, this default is added to the end of it at start-up (the rest of the file is left as it was). The four characters after "MTG-" are the last four hex digits of the board's hotspot MAC address, so boards near each other have different names; the screen's Join page shows the name. A file that still has the old default (`hotspot Luanti` with the password `LuantiLuanti`) gets the new one in its place; a name or password you set yourself is left alone. WPA2 needs a password of 8 to 63 characters; leave the `password` line out for an open hotspot. If the entry can't be used (a password too short, say), the server warns and runs the default instead.
 
 On the hotspot, the server is at **192.168.4.1** (port 30000, Luanti's default), and hands out addresses to up to 8 devices. The screen opens on the Join page: point a phone's camera at the QR code to join, or type the name and password on a laptop, then connect Luanti to 192.168.4.1. There is no internet on the hotspot, so a phone may complain or drift back to mobile data; tell it to stay connected. The power saving described above is off on the hotspot, since the board is the access point.
 
@@ -274,7 +287,7 @@ To add a skin, put `skin_<name>.png` in `/sd/media` and restart. It appears in t
 ## Project layout
 
 ```
-src/main.rs        start-up: SD card, Wi-Fi, LCD, and the memory allocator
+src/main.rs        start-up: SD card or flash, Wi-Fi, LCD, and the memory allocator
 src/server.rs      the server loop: peers, reliability, and all game logic
 src/protocol.rs    Luanti's UDP packet framing
 src/messages.rs    building and parsing protocol commands
@@ -304,6 +317,7 @@ src/zstd.rs        a small zstd compressor for map blocks
 src/lcd.rs, screen.rs, font.rs, status.rs   the status display
 src/storage.rs     safe file writes on FAT
 media/             built-in textures and models
+partitions.csv     the flash layout: firmware, and room for the game without an SD card
 tools/loadtest.py  bot players for load testing (see below)
 ```
 
