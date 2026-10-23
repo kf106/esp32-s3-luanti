@@ -30,6 +30,8 @@ pub const MUSHROOM_RED: u16 = 340;
 pub const MUSHROOM_BROWN: u16 = 341;
 pub const WATERLILY: u16 = 342;
 const FIRST_WOOL: u16 = 343;
+/// The last wool node (pink).
+pub const LAST_WOOL: u16 = FIRST_WOOL + 13;
 /// Dye items.
 const FIRST_DYE: u16 = 0x101E;
 

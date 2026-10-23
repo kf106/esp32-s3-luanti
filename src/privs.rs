@@ -25,7 +25,7 @@ use crate::storage;
 
 /// The privileges, with Luanti's descriptions. Only ones that do something
 /// here.
-pub const ALL: [(&str, &str); 15] = [
+pub const ALL: [(&str, &str); 16] = [
     ("interact", "Can interact with things and modify the world"),
     ("shout", "Can speak in chat"),
     ("basic_privs", "Can modify basic privileges (interact, shout)"),
@@ -41,11 +41,13 @@ pub const ALL: [(&str, &str); 15] = [
     ("fly", "Can use fly mode"),
     ("fast", "Can use fast mode"),
     ("noclip", "Can fly through solid nodes using noclip mode"),
+    // minetest_game's sethome mod.
+    ("home", "Can use /sethome and /home"),
 ];
 
 /// A set of privileges: bit i is ALL[i].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Privs(u16);
+pub struct Privs(u32);
 
 impl Privs {
     pub const NONE: Privs = Privs(0);

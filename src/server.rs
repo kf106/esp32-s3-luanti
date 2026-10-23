@@ -23,6 +23,7 @@ use crate::doors::{self, Door};
 use crate::falling::{self, Falling};
 use crate::farming;
 use crate::fences;
+use crate::panes;
 use crate::plants;
 use crate::privs::{self, Privs};
 use crate::stairs;
@@ -242,6 +243,8 @@ struct Peer {
     /// Auth mechanisms we offered in TOCLIENT_HELLO.
     allowed_auth_mechs: u32,
     authenticated: bool,
+    /// Where /home takes them (/sethome), from their player file.
+    home: Option<[f32; 3]>,
     /// What the player may do, from login (privs.rs).
     privs: Privs,
     content_sent: bool,
@@ -316,6 +319,7 @@ impl Peer {
             hello_sent: false,
             allowed_auth_mechs: 0,
             authenticated: false,
+            home: None,
             privs: Privs::NONE,
             content_sent: false,
             ready: false,
@@ -383,6 +387,7 @@ impl Peer {
             pitch: self.pitch,
             hp: self.hp,
             skin: self.skin.clone(),
+            home: self.home,
         }
     }
 
@@ -1613,6 +1618,7 @@ impl Server {
             peer.pitch = pitch;
             peer.hp = hp;
             peer.skin = skin;
+            peer.home = saved.as_ref().and_then(|d| d.home);
             peer.saved = saved;
             peer.saved_at = Instant::now();
             peer.inventory = self.inventories.load(peer.display_name());
@@ -1976,6 +1982,8 @@ impl Server {
                 }
                 // Items resting on the dug node fall.
                 self.wake_items(node_pos(under));
+                // Panes beside it take their new shape.
+                self.update_panes_near(node_pos(under));
                 // Sand or gravel that stood on it comes loose.
                 self.check_falling((under[0] as i32, under[1] as i32 + 1, under[2] as i32));
                 // Torches hanging on the dug node, and saplings standing on
@@ -2171,7 +2179,7 @@ impl Server {
                 // Torches and ladders face what they were placed against.
                 let param2 = if content::is_wallmounted(id) {
                     content::wallmounted_param2(under, above)
-                } else if content::is_furnace(id) || content::is_chest(id) || doors::is_trapdoor(id) || fences::is_gate(id) {
+                } else if content::is_furnace(id) || content::is_chest(id) || doors::is_trapdoor(id) || fences::is_gate(id) || panes::is_flat(id) {
                     content::facedir_param2(above, body)
                 } else if stairs::shape_of(id).is_some() {
                     // Stairs and slabs: the way the player looks decides
@@ -2215,6 +2223,8 @@ impl Server {
                 // Sand or gravel put over nothing falls.
                 self.check_falling(node_pos(above));
                 self.broadcast_node(above, &build_addnode(above, node, param2));
+                // A pane, or a pane beside it, takes its new shape.
+                self.update_panes_near(node_pos(above));
                 // Built into lava: the client lit the block up as the lava
                 // went; send it again with the server's light.
                 if content::is_lava(target) {
@@ -3469,6 +3479,24 @@ impl Server {
     /// builtin's check_for_falling: sand or gravel at `pos` with nothing
     /// under it comes loose, and so in turn does any stacked on it. The
     /// world loses it at once; players keep seeing it as it falls.
+    /// xpanes' on_placenode and on_dignode: the pane at `pos` and those on
+    /// its four sides become flat or joined, as their neighbours now say.
+    fn update_panes_near(&mut self, pos: NodePos) {
+        for (dx, dz) in [(0, 0)].into_iter().chain(panes::SIDES) {
+            let p = (pos.0 + dx, pos.1, pos.2 + dz);
+            let id = self.world.node(p);
+            if !panes::is_pane(id) {
+                continue;
+            }
+            let sides = panes::SIDES.map(|(sx, sz)| self.world.node((p.0 + sx, p.1, p.2 + sz)));
+            if let Some((node, param2)) = panes::update(id, self.world.param2(p), sides) {
+                self.world.set_node(p, node, param2);
+                let p16 = [p.0 as i16, p.1 as i16, p.2 as i16];
+                self.broadcast_node(p16, &build_addnode(p16, node, param2));
+            }
+        }
+    }
+
     fn check_falling(&mut self, mut pos: NodePos) {
         loop {
             let id = self.world.node(pos);

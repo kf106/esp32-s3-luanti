@@ -18,6 +18,7 @@ use crate::doors;
 use crate::colours;
 use crate::farming;
 use crate::fences;
+use crate::panes;
 use crate::plants;
 use crate::stairs;
 
@@ -119,6 +120,9 @@ pub enum Kind {
     SnowLayer,
     /// A waterlily: a thin pad lying on water, built over, washed away.
     Lily,
+    /// A glass pane or steel bars (panes.rs): flat, or joining its
+    /// neighbours.
+    Pane,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -249,6 +253,8 @@ pub const ITEM_STEEL_INGOT: u16 = 0x1003;
 /// door's two nodes.
 pub const ITEM_DOOR_WOOD: u16 = 0x1004;
 pub const ITEM_DOOR_STEEL: u16 = 0x1005;
+/// xpanes' steel bar door, after the dyes.
+pub const ITEM_DOOR_STEEL_BAR: u16 = 0x102D;
 pub const ITEM_DOOR_GLASS: u16 = 0x1006;
 /// minetest_game's buckets.
 pub const ITEM_BUCKET_EMPTY: u16 = 0x1007;
@@ -2566,6 +2572,93 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Solid,
     },
+    // minetest_game's xpanes (panes.rs; CC BY-SA 3.0, see
+    // media/LICENSE-xpanes.txt): each pane flat, then connected.
+    Node {
+        id: panes::PANE_FLAT,
+        name: "esp:pane_flat",
+        description: "Glass Pane",
+        tiles: ["xpanes_edge.png", "xpanes_edge.png", "xpanes_edge.png", "xpanes_edge.png", "default_glass.png", "default_glass.png"],
+        groups: &[("snappy", 2), ("cracky", 3), ("oddly_breakable_by_hand", 3), ("pane", 1)],
+        drop: panes::PANE_FLAT,
+        drop_count: 1,
+        kind: Kind::Pane,
+    },
+    Node {
+        id: panes::PANE,
+        name: "esp:pane",
+        description: "Glass Pane",
+        tiles: ["xpanes_edge.png", "xpanes_edge.png", "default_glass.png", "default_glass.png", "default_glass.png", "default_glass.png"],
+        groups: &[("snappy", 2), ("cracky", 3), ("oddly_breakable_by_hand", 3), ("pane", 1), ("not_in_creative_inventory", 1)],
+        drop: panes::PANE_FLAT,
+        drop_count: 1,
+        kind: Kind::Pane,
+    },
+    Node {
+        id: panes::OBSIDIAN_PANE_FLAT,
+        name: "esp:obsidian_pane_flat",
+        description: "Obsidian Glass Pane",
+        tiles: ["xpanes_edge_obsidian.png", "xpanes_edge_obsidian.png", "xpanes_edge_obsidian.png", "xpanes_edge_obsidian.png", "default_obsidian_glass.png", "default_obsidian_glass.png"],
+        groups: &[("snappy", 2), ("cracky", 3), ("pane", 1)],
+        drop: panes::OBSIDIAN_PANE_FLAT,
+        drop_count: 1,
+        kind: Kind::Pane,
+    },
+    Node {
+        id: panes::OBSIDIAN_PANE,
+        name: "esp:obsidian_pane",
+        description: "Obsidian Glass Pane",
+        tiles: ["xpanes_edge_obsidian.png", "xpanes_edge_obsidian.png", "default_obsidian_glass.png", "default_obsidian_glass.png", "default_obsidian_glass.png", "default_obsidian_glass.png"],
+        groups: &[("snappy", 2), ("cracky", 3), ("pane", 1), ("not_in_creative_inventory", 1)],
+        drop: panes::OBSIDIAN_PANE_FLAT,
+        drop_count: 1,
+        kind: Kind::Pane,
+    },
+    Node {
+        id: panes::BAR_FLAT,
+        name: "esp:bar_flat",
+        description: "Steel Bars",
+        tiles: ["xpanes_bar_top.png", "xpanes_bar_top.png", "xpanes_bar_top.png", "xpanes_bar_top.png", "xpanes_bar.png", "xpanes_bar.png"],
+        groups: &[("cracky", 2), ("pane", 1)],
+        drop: panes::BAR_FLAT,
+        drop_count: 1,
+        kind: Kind::Pane,
+    },
+    Node {
+        id: panes::BAR,
+        name: "esp:bar",
+        description: "Steel Bars",
+        tiles: ["xpanes_bar_top.png", "xpanes_bar_top.png", "xpanes_bar.png", "xpanes_bar.png", "xpanes_bar.png", "xpanes_bar.png"],
+        groups: &[("cracky", 2), ("pane", 1), ("not_in_creative_inventory", 1)],
+        drop: panes::BAR_FLAT,
+        drop_count: 1,
+        kind: Kind::Pane,
+    },
+    // The steel bar door and trapdoor (xpanes, with the doors mod).
+    door!(panes::BAR_DOOR + 0, "door_steel_bar_a", "Steel Bar Door", "xpanes_door_steel_bar.png", &[("cracky", 1), ("level", 2), ("door", 1)], ITEM_DOOR_STEEL_BAR),
+    door!(panes::BAR_DOOR + 1, "door_steel_bar_b", "Steel Bar Door", "xpanes_door_steel_bar.png", &[("cracky", 1), ("level", 2), ("door", 1)], ITEM_DOOR_STEEL_BAR),
+    door!(panes::BAR_DOOR + 2, "door_steel_bar_c", "Steel Bar Door", "xpanes_door_steel_bar.png", &[("cracky", 1), ("level", 2), ("door", 1)], ITEM_DOOR_STEEL_BAR),
+    door!(panes::BAR_DOOR + 3, "door_steel_bar_d", "Steel Bar Door", "xpanes_door_steel_bar.png", &[("cracky", 1), ("level", 2), ("door", 1)], ITEM_DOOR_STEEL_BAR),
+    Node {
+        id: panes::BAR_TRAPDOOR,
+        name: "esp:trapdoor_steel_bar",
+        description: "Steel Bar Trapdoor",
+        tiles: TRAPDOOR_BAR_CLOSED,
+        groups: &[("cracky", 1), ("level", 2), ("door", 1)],
+        drop: panes::BAR_TRAPDOOR,
+        drop_count: 1,
+        kind: Kind::Trapdoor,
+    },
+    Node {
+        id: panes::BAR_TRAPDOOR + 1,
+        name: "esp:trapdoor_steel_bar_open",
+        description: "Steel Bar Trapdoor",
+        tiles: TRAPDOOR_BAR_OPEN,
+        groups: &[("cracky", 1), ("level", 2), ("door", 1), ("not_in_creative_inventory", 1)],
+        drop: panes::BAR_TRAPDOOR,
+        drop_count: 1,
+        kind: Kind::Trapdoor,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -2645,6 +2738,22 @@ const TRAPDOOR_STEEL_CLOSED: [&str; 6] = [
     "doors_trapdoor_steel_side.png",
     "doors_trapdoor_steel_side.png",
     "doors_trapdoor_steel_side.png",
+];
+const TRAPDOOR_BAR_CLOSED: [&str; 6] = [
+    "xpanes_trapdoor_steel_bar.png",
+    "xpanes_trapdoor_steel_bar.png^[transformFY",
+    "xpanes_trapdoor_steel_bar_side.png",
+    "xpanes_trapdoor_steel_bar_side.png",
+    "xpanes_trapdoor_steel_bar_side.png",
+    "xpanes_trapdoor_steel_bar_side.png",
+];
+const TRAPDOOR_BAR_OPEN: [&str; 6] = [
+    "xpanes_trapdoor_steel_bar_side.png",
+    "xpanes_trapdoor_steel_bar_side.png^[transform2",
+    "xpanes_trapdoor_steel_bar_side.png^[transform3",
+    "xpanes_trapdoor_steel_bar_side.png^[transform1",
+    "xpanes_trapdoor_steel_bar.png^[transform46",
+    "xpanes_trapdoor_steel_bar.png^[transform6",
 ];
 const TRAPDOOR_STEEL_OPEN: [&str; 6] = [
     "doors_trapdoor_steel_side.png",
@@ -2881,6 +2990,14 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Pink Dye",
         image: "dye_pink.png",
         groups: &[("dye", 1), ("color_pink", 1)],
+    },
+    // xpanes' steel bar door (CC BY-SA 3.0, see media/LICENSE-xpanes.txt).
+    CraftItem {
+        id: ITEM_DOOR_STEEL_BAR,
+        name: "esp:door_steel_bar",
+        description: "Steel Bar Door",
+        image: "xpanes_item_steel_bar.png",
+        groups: &[("cracky", 1), ("level", 2)],
     },
     // minetest_game's lumps, crystals and ingots (craftitems.lua).
     CraftItem {
@@ -3555,7 +3672,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -3600,12 +3717,12 @@ pub fn buildable_to(id: u16) -> bool {
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -4116,6 +4233,16 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("wool_red.png", include_bytes!("../media/wool_red.png")),
     ("wool_magenta.png", include_bytes!("../media/wool_magenta.png")),
     ("wool_pink.png", include_bytes!("../media/wool_pink.png")),
+    ("xpanes_bar.png", include_bytes!("../media/xpanes_bar.png")),
+    ("xpanes_bar_top.png", include_bytes!("../media/xpanes_bar_top.png")),
+    ("xpanes_edge.png", include_bytes!("../media/xpanes_edge.png")),
+    ("xpanes_edge_obsidian.png", include_bytes!("../media/xpanes_edge_obsidian.png")),
+    ("xpanes_door_steel_bar.png", include_bytes!("../media/xpanes_door_steel_bar.png")),
+    ("xpanes_item_steel_bar.png", include_bytes!("../media/xpanes_item_steel_bar.png")),
+    ("xpanes_trapdoor_steel_bar.png", include_bytes!("../media/xpanes_trapdoor_steel_bar.png")),
+    ("xpanes_trapdoor_steel_bar_side.png", include_bytes!("../media/xpanes_trapdoor_steel_bar_side.png")),
+    ("xpanes_steel_bar_door_open.ogg", include_bytes!("../media/xpanes_steel_bar_door_open.ogg")),
+    ("xpanes_steel_bar_door_close.ogg", include_bytes!("../media/xpanes_steel_bar_door_close.ogg")),
     ("default_gravel_dig.1.ogg", include_bytes!("../media/default_gravel_dig.1.ogg")),
     ("default_gravel_dig.2.ogg", include_bytes!("../media/default_gravel_dig.2.ogg")),
     ("default_gravel_dug.1.ogg", include_bytes!("../media/default_gravel_dug.1.ogg")),
@@ -4397,7 +4524,10 @@ fn sounds_of(id: u16) -> Sounds {
         id if doors::trapdoor_of(id).is_some_and(|(t, _)| !t.locked) => wood,
         id if doors::trapdoor_of(id).is_some() => sounds_of(CONTENT_STEEL_BLOCK),
         id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_GLASS) => sounds_of(CONTENT_GLASS),
-        id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_STEEL) => sounds_of(CONTENT_STEEL_BLOCK),
+        id if doors::door_of(id).is_some_and(|(d, _)| d.item == ITEM_DOOR_STEEL || d.item == ITEM_DOOR_STEEL_BAR) => sounds_of(CONTENT_STEEL_BLOCK),
+        // Glass panes sound like glass; steel bars like metal.
+        panes::BAR_FLAT | panes::BAR => sounds_of(CONTENT_STEEL_BLOCK),
+        id if panes::is_pane(id) => sounds_of(CONTENT_GLASS),
         // minetest_game's node_sound_water_defaults.
         // Lava: no sounds of its own in minetest_game.
         CONTENT_LAVA | CONTENT_LAVA_FLOWING => Sounds {
@@ -4445,6 +4575,7 @@ fn sounds_of(id: u16) -> Sounds {
 /// A trapdoor item's picture (minetest_game's inventory_image).
 fn trapdoor_image(id: u16) -> &'static str {
     match doors::trapdoor_of(id) {
+        Some((t, _)) if t.closed == panes::BAR_TRAPDOOR => TRAPDOOR_BAR_CLOSED[0],
         Some((t, _)) if t.locked => TRAPDOOR_STEEL_CLOSED[0],
         _ => TRAPDOOR_WOOD_CLOSED[0],
     }
@@ -4565,6 +4696,8 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Rooted => rooted_plant(n.id),
                 Kind::SnowLayer => "default_snowball.png",
                 Kind::Lily => "flowers_waterlily.png",
+                // A pane's item is its picture (xpanes' inventory_image).
+                Kind::Pane => n.tiles[4],
                 _ => "",
             },
             wield_image: match n.kind {
@@ -4579,6 +4712,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Rooted => rooted_plant(n.id),
                 Kind::SnowLayer => "default_snowball.png",
                 Kind::Lily => "flowers_waterlily.png",
+                Kind::Pane => n.tiles[4],
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
@@ -4873,6 +5007,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // blocks with a plant on top.
     let stalk = matches!(n.kind, Kind::Stalk | Kind::Stem);
     let rooted = n.kind == Kind::Rooted;
+    let pane = n.kind == Kind::Pane;
+    let flat_pane = panes::is_flat(n.id);
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -4896,9 +5032,11 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if fence || stalk || n.kind == Kind::Lamp || n.kind == Kind::SnowLayer {
         w.u8(CPT_LIGHT).u8(0);
-    } else if n.kind == Kind::Lily {
+    } else if n.kind == Kind::Lily || flat_pane {
         // Turned any way (facedir), as minetest_game places it.
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
+    } else if pane {
+        w.u8(CPT_LIGHT).u8(0);
     } else if rooted {
         // Kelp's param2 is its height, in sixteenths of a node (leveled).
         w.u8(CPT_LIGHT).u8(if n.id == plants::KELP { CPT2_LEVELED } else { 0 });
@@ -4932,7 +5070,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
         Kind::Lamp => (NDT_GLASSLIKE, ""),
         Kind::SnowLayer => (NDT_NODEBOX, ""),
-        Kind::Lily => (NDT_NODEBOX, ""),
+        Kind::Lily | Kind::Pane => (NDT_NODEBOX, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
@@ -5002,9 +5140,16 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(255) // colour
         .string16("") // palette
         .u8(if liquid && !lava { 3 } else if plant || rooted { 1 } else { 0 }) // waving: water ripples, plants sway
-        .u8(if gate.is_some() { fences::GATE_SIDES } else { 0 }); // connect_sides
-    // connects_to: what a fence joins.
-    let joins = if fence { fence_joins(if fences::is_rail(n.id) { &fences::RAIL_JOINS } else { &fences::JOINS }) } else { Vec::new() };
+        // A gate or a flat pane is joined only on its left and right.
+        .u8(if gate.is_some() || flat_pane { fences::GATE_SIDES } else { 0 }); // connect_sides
+    // connects_to: what a fence or a connected pane joins.
+    let joins = if fence {
+        fence_joins(if fences::is_rail(n.id) { &fences::RAIL_JOINS } else { &fences::JOINS })
+    } else if pane && !flat_pane {
+        fence_joins(&panes::JOINS)
+    } else {
+        Vec::new()
+    };
     w.u16(joins.len() as u16);
     for id in joins {
         w.u16(id);
@@ -5015,7 +5160,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily)) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane)) as u8) // light_propagates
         .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
@@ -5063,6 +5208,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         _ if fence => connected_nodebox(&mut w, fence_box),
         _ if n.kind == Kind::SnowLayer => fixed_nodebox(&mut w, &[SNOW_LAYER_BOX]),
         _ if n.kind == Kind::Lily => fixed_nodebox(&mut w, &[colours::LILY_BOX]),
+        _ if flat_pane => fixed_nodebox(&mut w, &[panes::FLAT_BOX]),
+        _ if pane => connected_nodebox(&mut w, &panes::CONNECTED_BOX),
         _ => regular_nodebox(&mut w), // node_box (unused by meshes)
     }
     if let Some((_, open)) = trapdoor {
@@ -5110,6 +5257,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         connected_nodebox(&mut w, fence_box);
     } else if gate.is_some() {
         fixed_nodebox(&mut w, &[fences::GATE_SELECTION]);
+    } else if flat_pane {
+        fixed_nodebox(&mut w, &[panes::FLAT_BOX]);
+    } else if pane {
+        connected_nodebox(&mut w, &panes::CONNECTED_BOX);
     } else {
         regular_nodebox(&mut w); // selection_box
     }
@@ -5128,6 +5279,11 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         connected_nodebox(&mut w, &fences::FENCE_COLLISION);
     } else if let Some((_, open)) = gate {
         fixed_nodebox(&mut w, fences::gate_collision(open));
+    } else if flat_pane {
+        // Left empty in xpanes, so the node box.
+        fixed_nodebox(&mut w, &[panes::FLAT_BOX]);
+    } else if pane {
+        connected_nodebox(&mut w, &panes::CONNECTED_BOX);
     } else {
         regular_nodebox(&mut w); // collision_box (torches aren't walkable)
     }
@@ -5152,7 +5308,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
             ALPHAMODE_OPAQUE
         } else if liquid {
             ALPHAMODE_BLEND
-        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed || gate.is_some() || stalk || rooted || n.kind == Kind::Lily {
+        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed || gate.is_some() || stalk || rooted || n.kind == Kind::Lily || pane {
             ALPHAMODE_CLIP
         } else {
             ALPHAMODE_OPAQUE

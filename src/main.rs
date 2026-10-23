@@ -19,6 +19,7 @@ mod lcd;
 mod liquids;
 mod messages;
 mod nature;
+mod panes;
 mod plants;
 mod privs;
 mod player;

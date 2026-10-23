@@ -1,0 +1,41 @@
+Glass panes, steel bars, and the steel bar door and trapdoor: textures and
+sounds from Minetest Game's xpanes mod
+(https://github.com/luanti-org/minetest_game, mods/xpanes), unchanged:
+
+  xpanes_bar.png, xpanes_bar_top.png, xpanes_edge.png, xpanes_edge_obsidian.png,
+  xpanes_door_steel_bar.png, xpanes_item_steel_bar.png,
+  xpanes_trapdoor_steel_bar.png, xpanes_trapdoor_steel_bar_side.png,
+  xpanes_steel_bar_door_open.ogg, xpanes_steel_bar_door_close.ogg
+
+Credits, from the xpanes mod's README.md:
+
+xyz (CC BY-SA 3.0):
+
+- All textures not mentioned below (xpanes_edge_obsidian.png).
+
+Gambit (CC BY-SA 3.0):
+
+- `xpanes_bar.png`
+
+paramat (CC BY-SA 3.0):
+
+- `xpanes_bar_top.png`
+
+Krock (CC0 1.0):
+
+- `xpanes_edge.png`
+
+TumeniNodes (CC BY-SA 3.0):
+
+- `xpanes_door_steel_bar.png`
+- `xpanes_item_steel_bar.png`
+- `xpanes_trapdoor_steel_bar.png`
+- `xpanes_trapdoor_steel_bar_side.png`
+- `xpanes_steel_bar_door_close.ogg`
+- `xpanes_steel_bar_door_open.ogg`
+
+Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0):
+https://creativecommons.org/licenses/by-sa/3.0/
+
+CC0 1.0 Universal:
+https://creativecommons.org/publicdomain/zero/1.0/

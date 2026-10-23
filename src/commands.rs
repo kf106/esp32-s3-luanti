@@ -34,6 +34,7 @@ const COMMANDS: &[Command] = &[
     cmd("grantme", "<privilege> [, <privilege2> [<...>]] | all", "Grant privileges to yourself", &[]),
     cmd("haspriv", "<privilege>", "Return list of all online players with privilege", &["basic_privs"]),
     cmd("help", "[all | <cmd>]", "Get help for commands", &[]),
+    cmd("home", "", "Teleport you to your home point", &["home"]),
     cmd("kick", "<name> [<reason>]", "Kick a player", &["kick"]),
     cmd("kill", "[<name>]", "Kill player or yourself", &["server"]),
     cmd("me", "<action>", "Show chat action (e.g., '/me orders a pizza' displays '<player name> orders a pizza')", &["shout"]),
@@ -41,6 +42,7 @@ const COMMANDS: &[Command] = &[
     cmd("privs", "[<name>]", "Show privileges of yourself or another player", &[]),
     cmd("revoke", "<name> (<privilege> [, <privilege2> [<...>]] | all)", "Remove privileges from player", &[]),
     cmd("revokeme", "<privilege> [, <privilege2> [<...>]] | all", "Revoke privileges from yourself", &[]),
+    cmd("sethome", "", "Set your home point", &["home"]),
     cmd("setpassword", "<name> <password>", "Set player's password (sent unencrypted, thus insecure)", &["password"]),
     cmd("status", "", "Show server status", &[]),
     cmd("teleport", "<X>,<Y>,<Z> | <to_name> | <name> <X>,<Y>,<Z> | <name> <to_name>", "Teleport to position or player", &["teleport"]),
@@ -110,6 +112,25 @@ impl Server {
             "revokeme" => Some(self.change_privs(name, name, param, false)),
             "haspriv" => Some(self.cmd_haspriv(param)),
             "help" => Some(self.cmd_help(name, param)),
+            // minetest_game's sethome mod: one home per player, kept in
+            // their player file.
+            "home" => Some(match self.peers.get(&from).and_then(|p| p.home) {
+                Some(home) => {
+                    self.move_player(from, home);
+                    "Teleported to home!".to_string()
+                }
+                None => "Set a home using /sethome".to_string(),
+            }),
+            "sethome" => Some(match self.peers.get_mut(&from) {
+                Some(peer) => {
+                    let pos = peer.pos_bs.map(|v| v / 10.0);
+                    peer.home = Some(pos);
+                    peer.save(&self.players);
+                    info!("{name} set their home at {}", pos_text(pos));
+                    "Home set!".to_string()
+                }
+                None => "Player not found!".to_string(),
+            }),
             "kick" => Some(self.cmd_kick(name, param)),
             "kill" => Some(self.cmd_kill(name, if param.is_empty() { name } else { param })),
             "me" if param.is_empty() => Some("-!- Invalid command usage: /me <action>".to_string()),

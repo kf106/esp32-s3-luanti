@@ -163,6 +163,14 @@ pub const RECIPES: &[Recipe] = &[
     // ingots 1.
     Recipe { width: 3, pattern: &[G("wood"); 6], output: crate::doors::FIRST_TRAPDOOR, count: 2 },
     Recipe { width: 2, pattern: &[I(ITEM_STEEL_INGOT); 4], output: crate::doors::FIRST_TRAPDOOR + 2, count: 1 },
+    // Panes (xpanes): two rows of three glass, obsidian glass or steel
+    // ingots make 16; the steel bars make a door (two columns of three)
+    // and a trapdoor (a square of four).
+    Recipe { width: 3, pattern: &[I(CONTENT_GLASS); 6], output: crate::panes::PANE_FLAT, count: 16 },
+    Recipe { width: 3, pattern: &[I(CONTENT_OBSIDIAN_GLASS); 6], output: crate::panes::OBSIDIAN_PANE_FLAT, count: 16 },
+    Recipe { width: 3, pattern: &[I(ITEM_STEEL_INGOT); 6], output: crate::panes::BAR_FLAT, count: 16 },
+    Recipe { width: 2, pattern: &[I(crate::panes::BAR_FLAT); 6], output: ITEM_DOOR_STEEL_BAR, count: 1 },
+    Recipe { width: 2, pattern: &[I(crate::panes::BAR_FLAT); 4], output: crate::panes::BAR_TRAPDOOR, count: 1 },
     // Farming (farming/init.lua, hoes.lua): hoes, wool and string from
     // cotton, straw from wheat and back.
     Recipe { width: 2, pattern: &hoe(G("wood")), output: TOOL_HOE_WOOD, count: 1 },
@@ -733,6 +741,20 @@ mod tests {
         let (w, a) = (colours::wool(colours::RED), CONTENT_APPLE_WOOD);
         let bed = [(3, w, 1), (4, farming::WOOL_WHITE, 1), (5, w, 1), (6, a, 1), (7, a, 1), (8, a, 1)];
         assert_eq!(result(&grid(&bed)), Some((crate::beds::BED_BOTTOM, 1)));
+    }
+
+    #[test]
+    fn panes() {
+        use crate::panes::*;
+        let rows = |id: u16, top: usize| grid(&(top..top + 6).map(|i| (i, id, 1)).collect::<Vec<_>>());
+        assert_eq!(result(&rows(CONTENT_GLASS, 0)), Some((PANE_FLAT, 16)));
+        assert_eq!(result(&rows(CONTENT_OBSIDIAN_GLASS, 3)), Some((OBSIDIAN_PANE_FLAT, 16)));
+        assert_eq!(result(&rows(ITEM_STEEL_INGOT, 0)), Some((BAR_FLAT, 16)));
+        // Steel ingots in two columns are still a steel door.
+        let cols = |id: u16| grid(&[0, 1, 3, 4, 6, 7].map(|i| (i, id, 1)));
+        assert_eq!(result(&cols(ITEM_STEEL_INGOT)), Some((ITEM_DOOR_STEEL, 1)));
+        assert_eq!(result(&cols(BAR_FLAT)), Some((ITEM_DOOR_STEEL_BAR, 1)));
+        assert_eq!(result(&grid(&[0, 1, 3, 4].map(|i| (i, BAR_FLAT, 1)))), Some((BAR_TRAPDOOR, 1)));
     }
 
     #[test]

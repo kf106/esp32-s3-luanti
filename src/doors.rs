@@ -42,7 +42,7 @@ pub struct Door {
 }
 
 pub const FIRST_DOOR: u16 = crate::stairs::END;
-pub const DOORS: [Door; 3] = [
+pub const DOORS: [Door; 4] = [
     Door {
         item: ITEM_DOOR_WOOD,
         first: FIRST_DOOR,
@@ -64,6 +64,14 @@ pub const DOORS: [Door; 3] = [
         close: ("doors_glass_door_close", 0.25),
         open: ("doors_glass_door_open", 0.3),
     },
+    // xpanes' steel bar door, which came later (panes.rs).
+    Door {
+        item: ITEM_DOOR_STEEL_BAR,
+        first: crate::panes::BAR_DOOR,
+        locked: true,
+        close: ("xpanes_steel_bar_door_close", 0.13),
+        open: ("xpanes_steel_bar_door_open", 0.15),
+    },
 ];
 /// minetest_game's doors:hidden, above every door.
 pub const HIDDEN: u16 = FIRST_DOOR + 12;
@@ -77,7 +85,7 @@ pub struct Trapdoor {
 }
 
 pub const FIRST_TRAPDOOR: u16 = HIDDEN + 1;
-pub const TRAPDOORS: [Trapdoor; 2] = [
+pub const TRAPDOORS: [Trapdoor; 3] = [
     Trapdoor {
         closed: FIRST_TRAPDOOR,
         locked: false,
@@ -89,6 +97,12 @@ pub const TRAPDOORS: [Trapdoor; 2] = [
         locked: true,
         close: ("doors_steel_door_close", 0.2),
         open: ("doors_steel_door_open", 0.2),
+    },
+    Trapdoor {
+        closed: crate::panes::BAR_TRAPDOOR,
+        locked: true,
+        close: ("xpanes_steel_bar_door_close", 0.13),
+        open: ("xpanes_steel_bar_door_open", 0.15),
     },
 ];
 
