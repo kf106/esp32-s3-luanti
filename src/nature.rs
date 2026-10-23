@@ -408,3 +408,69 @@ mod tests {
         assert_eq!(t.pop_due(Instant::now()), None);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Moss
+// ---------------------------------------------------------------------------
+
+/// minetest_game's "Moss growth" ABM: every MOSS_INTERVAL, cobblestone
+/// (and its slab, stairs and wall) with water beside it turns mossy, one
+/// time in MOSS_CHANCE.
+pub const MOSS_INTERVAL: Duration = Duration::from_secs(16);
+pub const MOSS_CHANCE: u32 = 200;
+
+/// How often moss is looked for: MOSS_INTERVAL, or every second with
+/// LUANTI_MOSS_FAST set (for the tests).
+pub fn moss_interval() -> Duration {
+    if std::env::var_os("LUANTI_MOSS_FAST").is_some() { Duration::from_secs(1) } else { MOSS_INTERVAL }
+}
+
+/// One time in how many it grows: MOSS_CHANCE, ten times as often in a
+/// test build (as saplings and crops grow), every time with
+/// LUANTI_MOSS_FAST.
+pub fn moss_chance() -> u32 {
+    if std::env::var_os("LUANTI_MOSS_FAST").is_some() {
+        1
+    } else if TEST_BUILD {
+        MOSS_CHANCE / 10
+    } else {
+        MOSS_CHANCE
+    }
+}
+
+/// What a node turns into when moss grows on it (moss_correspondences).
+pub fn mossy_of(id: u16) -> Option<u16> {
+    use crate::stairs::{EARLY, MOSSY};
+    // Cobblestone is the fifth of the first stair set's materials.
+    const COBBLE: u16 = 4;
+    Some(match id {
+        crate::content::CONTENT_COBBLE => crate::dungeons::MOSSYCOBBLE,
+        crate::fences::WALL_COBBLE => crate::dungeons::WALL_MOSSYCOBBLE,
+        id if id == EARLY.first_stair() + COBBLE => MOSSY.first_stair(),
+        id if id == EARLY.first_slab() + COBBLE => MOSSY.first_slab(),
+        id if id == EARLY.first_inner() + COBBLE => MOSSY.first_inner(),
+        id if id == EARLY.first_outer() + COBBLE => MOSSY.first_outer(),
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod moss_tests {
+    use super::*;
+    use crate::content::*;
+    use crate::stairs::{shape_of, Shape};
+
+    #[test]
+    fn what_moss_grows_on() {
+        assert_eq!(mossy_of(CONTENT_COBBLE), Some(crate::dungeons::MOSSYCOBBLE));
+        assert_eq!(mossy_of(crate::fences::WALL_COBBLE), Some(crate::dungeons::WALL_MOSSYCOBBLE));
+        for shape in [Shape::Stair, Shape::Slab, Shape::Inner, Shape::Outer] {
+            let cobble = crate::stairs::shaped(shape, CONTENT_COBBLE).unwrap();
+            let mossy = mossy_of(cobble).unwrap();
+            let (s, m) = shape_of(mossy).unwrap();
+            assert_eq!((s, m.base), (shape, crate::dungeons::MOSSYCOBBLE));
+        }
+        assert_eq!(mossy_of(CONTENT_STONE), None);
+        assert_eq!(mossy_of(crate::dungeons::MOSSYCOBBLE), None);
+    }
+}

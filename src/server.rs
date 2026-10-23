@@ -490,6 +490,7 @@ pub struct Server {
     liquids_flowed: Instant,
     /// When lava touching water was last looked at.
     lava_cooled: Instant,
+    moss_checked: Instant,
     /// When breath was last lost underwater, and last regained.
     drowned_at: Instant,
     breathed_at: Instant,
@@ -829,6 +830,7 @@ impl Server {
             climbers_checked: Instant::now(),
             liquids_flowed: Instant::now(),
             lava_cooled: Instant::now(),
+            moss_checked: Instant::now(),
             drowned_at: Instant::now(),
             breathed_at: Instant::now(),
             liquid_changes: 0,
@@ -2239,6 +2241,8 @@ impl Server {
                     nature::PLACED_LEAVES
                 } else if farming::is_seed(id) {
                     1 // lying on the floor (wallmounted)
+                } else if id == content::DRY_SHRUB {
+                    content::DRY_SHRUB_PARAM2 // minetest_game's place_param2
                 } else {
                     0
                 };
@@ -2783,6 +2787,24 @@ impl Server {
         }
         for packet in packets {
             self.send_command(addr, 0, &packet);
+        }
+    }
+
+    /// minetest_game's moss growth: cobblestone beside water turns mossy,
+    /// one time in MOSS_CHANCE each time it is looked at, keeping its turn.
+    fn grow_moss(&mut self) {
+        let chance = nature::moss_chance();
+        for pos in self.world.moss_beside_water() {
+            if !self.rng.one_in(chance) {
+                continue;
+            }
+            let (was, param2) = (self.world.node(pos), self.world.param2(pos));
+            let Some(mossy) = nature::mossy_of(was) else {
+                continue;
+            };
+            self.world.set_node(pos, mossy, param2);
+            let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+            self.broadcast_node(p16, &build_addnode(p16, mossy, param2));
         }
     }
 
@@ -4981,6 +5003,10 @@ impl Server {
             self.burn_players();
             // Node changes go to the SD card once a second.
             self.world.flush_log();
+        }
+        if now.duration_since(self.moss_checked) >= nature::moss_interval() {
+            self.moss_checked = now;
+            self.grow_moss();
         }
         if now.duration_since(self.lava_cooled) >= LAVA_COOLING {
             self.lava_cooled = now;

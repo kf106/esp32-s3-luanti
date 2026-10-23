@@ -709,6 +709,25 @@ fn find_plants() {
             }
         }
     }
+    // The nearest dry shrub, and how common they are in the deserts.
+    let (mut desert, mut shrubs) = (0, 0);
+    let mut nearest: Option<(i32, (i32, i32, i32))> = None;
+    for z in (-1500..1500).step_by(3) { for x in (-1500..1500).step_by(3) {
+        let c = terrain::column(x, z);
+        if !matches!(c.biome, terrain::Biome::Desert | terrain::Biome::ColdDesert) || c.height < 1 { continue; }
+        desert += 1;
+        if terrain::plant_on(x, z, &c) == Some(content::DRY_SHRUB) {
+            shrubs += 1;
+            let d = x * x + z * z;
+            if nearest.is_none_or(|(nd, _)| d < nd) { nearest = Some((d, (x, c.height + 1, z))); }
+        }
+    } }
+    println!("dry shrubs on {:.2}% of desert columns", 100.0 * shrubs as f32 / desert.max(1) as f32);
+    if let Some((_, p)) = nearest {
+        assert_eq!(w.node(p), content::DRY_SHRUB);
+        assert_eq!(w.param2(p), content::DRY_SHRUB_PARAM2);
+        found.push(("shrub", p));
+    }
     for (n, p) in &found { println!("FOUND {n} {} {} {}", p.0, p.1, p.2); }
 }
 

@@ -51,6 +51,7 @@ const SEED_HUMIDITY: u32 = 0xC3D4_E5F6;
 const SEED_SEABED: u32 = 0x4A5B_6C7D;
 const SEED_SHORE: u32 = 0x8E9F_A0B1;
 const SEED_FLOWERS: u32 = 0xC2D3_E4F5;
+const SEED_SHRUBS: u32 = 0x0329_5157;
 
 /// Deep caves are flooded with lava up to this height, in about half the
 /// land (where the "lava" noise is positive). Between flooded and dry
@@ -617,6 +618,9 @@ fn seabed(x: i32, z: i32, col: &Column) -> Option<u16> {
 /// The param2 of a generated node, which only kelp has: its height (3 to
 /// 6 nodes, in sixteenths), always within the water above it.
 pub fn generated_param2(x: i32, y: i32, z: i32, id: u16) -> u8 {
+    if id == content::DRY_SHRUB {
+        return content::DRY_SHRUB_PARAM2;
+    }
     if id != plants::KELP {
         return 0;
     }
@@ -987,6 +991,19 @@ pub fn plant_on(x: i32, z: i32, col: &Column) -> Option<u16> {
             Biome::Tundra if noise2(x as f32 / 30.0, z as f32 / 30.0, SEED_SHORE ^ 9) > 0.3 => return Some(CONTENT_SNOW_LAYER),
             _ => {}
         }
+    }
+    // Dry shrubs, here and there in patches, on the desert sand and the
+    // cold desert's silver sand (minetest_game's dry shrub decoration:
+    // noise offset 0, scale 0.02, spread 200, 3 octaves, persistence 0.6).
+    if matches!(col.biome, Biome::Desert | Biome::ColdDesert) && col.height >= 1 && col.cave_top < col.height {
+        let mut sum = 0.0;
+        for (i, (amp, freq)) in [(1.0, 1.0), (0.6, 2.0), (0.36, 4.0)].into_iter().enumerate() {
+            sum += amp * noise2(x as f32 / 200.0 * freq, z as f32 / 200.0 * freq, SEED_SHRUBS.wrapping_add(i as u32));
+        }
+        // Luanti's value noise spreads wider than this gradient noise.
+        let fill = sum * 0.02 * 1.8;
+        let h = hash(x, 0xD5, z, SEED_SHRUBS);
+        return (((h % 10000) as f32) < fill * 10000.0).then_some(content::DRY_SHRUB);
     }
     let grasses = match col.biome {
         // Ferns under the firs (minetest_game's coniferous forest).

@@ -134,6 +134,10 @@ pub enum Kind {
     /// A mese post light: a thin wooden post (nodebox) with mese windows
     /// down its sides, giving light.
     Post,
+    /// Mist (our own, not minetest_game's): a half-see-through cube that
+    /// is walked through, built into and not pointed at, and veils the
+    /// view of a player inside it.
+    Mist,
     /// A bookshelf: a cube turned to face whoever placed it, opened with a
     /// right-click, holding books.
     Shelf,
@@ -265,6 +269,18 @@ pub const MESE_POSTS: [(u16, u16); 5] = [
 ];
 /// minetest_game's bookshelf: holds 16 books.
 pub const CONTENT_BOOKSHELF: u16 = SIGN_STEEL + 1;
+/// minetest_game's cloud: a white block nobody can dig, for admins and
+/// map makers (given with /give).
+pub const CONTENT_CLOUD: u16 = CONTENT_BOOKSHELF + 1;
+/// minetest_game's dry shrub: a small dead bush in the deserts.
+pub const DRY_SHRUB: u16 = CONTENT_CLOUD + 1;
+/// Mist, our own: see Kind::Mist. For admins and map makers, like the
+/// cloud.
+pub const CONTENT_MIST: u16 = DRY_SHRUB + 1;
+/// The grey veil over the view of a player in mist (ARGB).
+const MIST_POST_EFFECT: u32 = 0xA0D8DCE0;
+/// Its param2: drawn as minetest_game places it (meshoptions 4).
+pub const DRY_SHRUB_PARAM2: u8 = 4;
 /// minetest_game's wooden and steel signs.
 pub const SIGN_WOOD: u16 = MESE_POST_ACACIA + 1;
 pub const SIGN_STEEL: u16 = SIGN_WOOD + 1;
@@ -2888,6 +2904,38 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Shelf,
     },
+    // minetest_game's cloud and dry shrub.
+    Node {
+        id: CONTENT_CLOUD,
+        name: "esp:cloud",
+        description: "Cloud",
+        tiles: ["default_cloud.png"; 6],
+        groups: &[("not_in_creative_inventory", 1)],
+        drop: CONTENT_CLOUD,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: DRY_SHRUB,
+        name: "esp:dry_shrub",
+        description: "Dry Shrub",
+        tiles: ["default_dry_shrub.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 3), ("attached_node", 1)],
+        drop: DRY_SHRUB,
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    // Mist (ours): for filling hollows and dungeons with haze.
+    Node {
+        id: CONTENT_MIST,
+        name: "esp:mist",
+        description: "Mist",
+        tiles: ["esp_mist.png"; 6],
+        groups: &[("not_in_creative_inventory", 1)],
+        drop: CONTENT_MIST,
+        drop_count: 1,
+        kind: Kind::Mist,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -3923,7 +3971,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign | Kind::Mist))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -3962,13 +4010,13 @@ pub fn floodable(id: u16) -> bool {
 /// Whether placing a node can replace this one (builtin's buildable_to):
 /// air, an apple mark, or water.
 pub fn buildable_to(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid | Kind::Plant | Kind::SnowLayer | Kind::Lily))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid | Kind::Plant | Kind::SnowLayer | Kind::Lily | Kind::Mist))
 }
 
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
@@ -4454,6 +4502,9 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_large_cactus_seedling.png", include_bytes!("../media/default_large_cactus_seedling.png")),
     ("default_mineral_copper.png", include_bytes!("../media/default_mineral_copper.png")),
     ("default_meselamp.png", include_bytes!("../media/default_meselamp.png")),
+    ("default_cloud.png", include_bytes!("../media/default_cloud.png")),
+    ("esp_mist.png", include_bytes!("../media/esp_mist.png")),
+    ("default_dry_shrub.png", include_bytes!("../media/default_dry_shrub.png")),
     ("default_sign_wood.png", include_bytes!("../media/default_sign_wood.png")),
     ("default_paper.png", include_bytes!("../media/default_paper.png")),
     ("default_book.png", include_bytes!("../media/default_book.png")),
@@ -5204,6 +5255,8 @@ fn farming_box(id: u16) -> [f32; 6] {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, -5.0 / 16.0, 6.0 / 16.0]
     } else if id == farming::JUNGLEGRASS {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, 0.5, 6.0 / 16.0]
+    } else if id == DRY_SHRUB {
+        [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0]
     } else if id == farming::COTTON_WILD {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, 5.0 / 16.0, 6.0 / 16.0]
     } else {
@@ -5303,7 +5356,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let plant = n.kind == Kind::Plant;
     let seed = n.kind == Kind::Seed;
     // Wheat grows as a "#" of pictures (meshoptions; param2 says which shape).
-    let wheat = farming::WHEAT_STAGES.contains(&n.id);
+    let wheat = farming::WHEAT_STAGES.contains(&n.id) || n.id == DRY_SHRUB;
     let bed = beds::is_bed(n.id);
     let wall = n.kind == Kind::Wall;
     // Walls are drawn and joined as fences are, with their own boxes.
@@ -5343,7 +5396,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
     } else if seed {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
-    } else if fence || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Post) {
+    } else if fence || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Post | Kind::Mist) {
         w.u8(CPT_LIGHT).u8(0);
     } else if n.kind == Kind::Lily || flat_pane {
         // Turned any way (facedir), as minetest_game places it.
@@ -5381,7 +5434,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Gate => (NDT_MESH, fences::gate_mesh(n.id)),
         Kind::Stalk | Kind::Stem => (NDT_PLANTLIKE, ""),
         Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
-        Kind::Lamp => (NDT_GLASSLIKE, ""),
+        Kind::Lamp | Kind::Mist => (NDT_GLASSLIKE, ""),
         Kind::SnowLayer => (NDT_NODEBOX, ""),
         Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign => (NDT_NODEBOX, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
@@ -5470,12 +5523,20 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u16(id);
     }
     w
-        .u32(if lava { LAVA_POST_EFFECT } else if liquid { WATER_POST_EFFECT } else { 0 }) // post_effect_color (ARGB)
+        .u32(if lava {
+            LAVA_POST_EFFECT
+        } else if liquid {
+            WATER_POST_EFFECT
+        } else if n.kind == Kind::Mist {
+            MIST_POST_EFFECT
+        } else {
+            0
+        }) // post_effect_color (ARGB)
         .u8(0); // leveled
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign)) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist)) as u8) // light_propagates
         .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
@@ -5486,10 +5547,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // The hidden door node is walkable, as minetest_game's (falling nodes
     // stop on it), though its collision box is tiny.
     w.u8((walkable(n.id) || hidden) as u8) // walkable
-        .u8(if mark || hidden || liquid { 0 } else { POINTABLE })
-        .u8(!(mark || hidden || liquid) as u8) // diggable
+        .u8(if mark || hidden || liquid || n.kind == Kind::Mist { 0 } else { POINTABLE })
+        .u8(!(mark || hidden || liquid || n.kind == Kind::Mist) as u8) // diggable
         .u8(ladder as u8) // climbable
-        .u8((mark || liquid || plant) as u8) // buildable_to
+        .u8((mark || liquid || plant || n.kind == Kind::Mist) as u8) // buildable_to
         .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::Gate | Kind::Bones | Kind::Shelf) as u8) // rightclickable
         .u32(damage_per_second(n.id) as u32); // damage_per_second
 
@@ -5632,7 +5693,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(LEVELED_MAX)
         .u8(if lava {
             ALPHAMODE_OPAQUE
-        } else if liquid {
+        } else if liquid || n.kind == Kind::Mist {
             ALPHAMODE_BLEND
         } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed || gate.is_some() || stalk || rooted || n.kind == Kind::Lily || pane {
             ALPHAMODE_CLIP
@@ -5730,6 +5791,18 @@ impl Media {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mist_and_cloud() {
+        // Mist: walked through, built into, lets the sun through, and
+        // veils the view from inside.
+        assert!(!walkable(CONTENT_MIST) && buildable_to(CONTENT_MIST) && passes_sunlight(CONTENT_MIST));
+        let bytes = serialize_node(def(CONTENT_MIST).unwrap());
+        assert!(bytes.windows(4).any(|w| w == MIST_POST_EFFECT.to_be_bytes()));
+        // Cloud: solid, and nothing digs it.
+        assert!(walkable(CONTENT_CLOUD) && !passes_light(CONTENT_CLOUD));
+        assert!(dig_params(CONTENT_CLOUD, &HAND, 0).is_none());
+    }
 
     /// Nodes are listed in id order without gaps, so `def` finds a node by
     /// indexing (ids 125 to 127 are Luanti's own, so the list must stop

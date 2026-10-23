@@ -86,6 +86,7 @@ pub fn is_dry_grass(id: u16) -> bool {
 /// dug (minetest_game's attached_node).
 pub fn is_attached_plant(id: u16) -> bool {
     crop_of(id).is_some() || is_grass(id) || is_dry_grass(id) || id == COTTON_WILD || id == JUNGLEGRASS || crate::plants::is_small_plant(id)
+        || id == crate::content::DRY_SHRUB
         || crate::colours::is_flower(id)
         || crate::colours::is_mushroom(id)
 }

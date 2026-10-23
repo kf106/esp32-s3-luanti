@@ -339,6 +339,7 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_FIR_SAPLING => 5.0,
         ITEM_STICK => 1.0,
         SIGN_WOOD => 10.0,
+        DRY_SHRUB => 2.0,
         CONTENT_BOOKSHELF => 30.0,
         TOOL_PICK_WOOD | TOOL_AXE_WOOD => 6.0,
         TOOL_SWORD_WOOD => 5.0,

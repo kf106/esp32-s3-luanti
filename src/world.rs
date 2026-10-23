@@ -205,6 +205,9 @@ pub struct World {
     liquid_queue: liquids::Queue,
     /// Lava that touches water, and may cool (see lava_touching_water).
     cooling: FastSet<NodePos>,
+    /// Cobblestone with water beside it, where moss may grow
+    /// (moss_beside_water).
+    moss: FastSet<NodePos>,
     /// Change records not yet appended to the log (see flush_log).
     pending_log: Vec<u8>,
 }
@@ -236,6 +239,7 @@ impl World {
             dungeon_blocks: RefCell::new(FastMap::default()),
             liquid_queue: liquids::Queue::default(),
             cooling: FastSet::default(),
+            moss: FastSet::default(),
             pending_log: Vec::new(),
         };
 
@@ -259,6 +263,11 @@ impl World {
         }
         if !world.state.torch_light.is_empty() {
             info!("World: {} torches lit", world.state.torch_light.len());
+        }
+        // Cobblestone players left beside water, for moss to grow on.
+        let cobble: Vec<NodePos> = world.state.changes.iter().filter(|(_, &id)| crate::nature::mossy_of(id).is_some()).map(|(&p, _)| p).collect();
+        for p in cobble {
+            world.watch_moss(p);
         }
         world.load_metas();
         if records > 2 * world.state.changes.len() + 256 {
@@ -285,6 +294,7 @@ impl World {
             dungeon_blocks: RefCell::new(FastMap::default()),
             liquid_queue: liquids::Queue::default(),
             cooling: FastSet::default(),
+            moss: FastSet::default(),
             pending_log: Vec::new(),
         }
     }
@@ -555,13 +565,15 @@ impl World {
         if let Some(d) = self.dungeon_node(pos) {
             return d.param2;
         }
+        let col = self.column(pos.0, pos.2);
+        // A dry shrub on the ground has its own way of being drawn.
+        if pos.1 == col.height + 1 {
+            let id = self.terrain_node(pos.0, pos.1, pos.2, &col);
+            return terrain::generated_param2(pos.0, pos.1, pos.2, id);
+        }
         // Kelp grows only on lake beds, deep down: most positions can't be
         // kelp, and are answered without generating anything.
-        if pos.1 > terrain::KELP_TOP {
-            return 0;
-        }
-        let col = self.column(pos.0, pos.2);
-        if pos.1 != col.height {
+        if pos.1 > terrain::KELP_TOP || pos.1 != col.height {
             return 0;
         }
         terrain::generated_param2(pos.0, pos.1, pos.2, self.terrain_node(pos.0, pos.1, pos.2, &col))
@@ -665,6 +677,7 @@ impl World {
         liquids::after_change(pos, |p| self.node(p), &mut queue);
         self.liquid_queue = queue;
         self.watch_cooling(pos);
+        self.watch_moss(pos);
     }
 
     /// After a change at `pos`: lava there or beside it that now touches
@@ -677,6 +690,36 @@ impl World {
                 self.cooling.insert(p);
             }
         }
+    }
+
+    /// After a change at `pos`: cobblestone there or beside it that now
+    /// has water beside it is noted, for moss to grow on (minetest_game's
+    /// moss growth ABM, on cobblestone with group:water as a neighbour).
+    fn watch_moss(&mut self, pos: NodePos) {
+        for d in [(0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
+            let p = (pos.0 + d.0, pos.1 + d.1, pos.2 + d.2);
+            if crate::nature::mossy_of(self.node(p)).is_some() && self.beside_water(p) {
+                self.moss.insert(p);
+            }
+        }
+    }
+
+    fn beside_water(&self, p: NodePos) -> bool {
+        [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+            .iter()
+            .any(|d| content::group_of(self.node((p.0 + d.0, p.1 + d.1, p.2 + d.2)), "water") > 0)
+    }
+
+    /// Cobblestone that had water beside it when noted and still does. The
+    /// rest is forgotten.
+    pub fn moss_beside_water(&mut self) -> Vec<NodePos> {
+        let noted: Vec<NodePos> = self.moss.iter().copied().collect();
+        for p in noted {
+            if !(crate::nature::mossy_of(self.node(p)).is_some() && self.beside_water(p)) {
+                self.moss.remove(&p);
+            }
+        }
+        self.moss.iter().copied().collect()
     }
 
     fn touches_water(&self, p: NodePos) -> bool {
@@ -767,6 +810,9 @@ impl World {
             log.extend_from_slice(&record(c.pos, c.id, c.param2));
             if [c.id, c.was].iter().any(|&id| content::is_lava(id) || farming::is_water(id)) {
                 self.watch_cooling(c.pos);
+            }
+            if farming::is_water(c.id) {
+                self.watch_moss(c.pos);
             }
         }
         self.append_log(&log);

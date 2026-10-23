@@ -54,6 +54,7 @@ NETWORK = [
     ("farm", {"LUANTI_GROW_SECS": "2", "LUANTI_SOIL_SECS": "2"}, [], False),
     ("plants", {}, ["{kelp}", "{coral}", "{berries}"], False),
     ("flowers", {}, ["{water}"], False),
+    ("moss", {"LUANTI_MOSS_FAST": "1"}, ["{water}"], False),
     ("dungeon", {}, ["{chest}", "{front}"], False),
 ]
 
