@@ -119,6 +119,9 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(ITEM_MESE_CRYSTAL)], output: ITEM_MESE_FRAGMENT, count: 9 },
     // A mese lamp: glass over a mese crystal.
     Recipe { width: 1, pattern: &[I(CONTENT_GLASS), I(ITEM_MESE_CRYSTAL)], output: CONTENT_MESE_LAMP, count: 1 },
+    // Signs: two rows of planks or steel ingots over a stick make 3.
+    Recipe { width: 3, pattern: &sign(G("wood")), output: SIGN_WOOD, count: 3 },
+    Recipe { width: 3, pattern: &sign(I(ITEM_STEEL_INGOT)), output: SIGN_STEEL, count: 3 },
     // Mese post lights: glass over three mese crystals over planks make 4
     // (default.register_mesepost).
     Recipe { width: 3, pattern: &mese_post(CONTENT_APPLE_WOOD), output: MESE_POST_APPLE, count: 4 },
@@ -321,6 +324,7 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_BIRCH_SAPLING => 4.0,
         CONTENT_FIR_SAPLING => 5.0,
         ITEM_STICK => 1.0,
+        SIGN_WOOD => 10.0,
         TOOL_PICK_WOOD | TOOL_AXE_WOOD => 6.0,
         TOOL_SWORD_WOOD => 5.0,
         TOOL_SHOVEL_WOOD => 4.0,
@@ -359,6 +363,11 @@ const fn gate(planks: u16) -> [Ingredient; 6] {
 }
 
 /// minetest_game's ladder shape: two sides joined in the middle.
+/// A sign of `m`.
+const fn sign(m: Ingredient) -> [Ingredient; 9] {
+    [m, m, m, m, m, m, E, G("stick"), E]
+}
+
 /// A mese post light of `wood`.
 const fn mese_post(wood: u16) -> [Ingredient; 9] {
     [E, I(CONTENT_GLASS), E, I(ITEM_MESE_CRYSTAL), I(ITEM_MESE_CRYSTAL), I(ITEM_MESE_CRYSTAL), E, I(wood), E]
@@ -771,6 +780,12 @@ mod tests {
         assert_eq!(result(&rows(CONTENT_DESERT_COBBLE, 0)), Some((crate::fences::WALL_DESERT_COBBLE, 6)));
         assert_eq!(result(&rows(crate::dungeons::MOSSYCOBBLE, 0)), Some((crate::dungeons::WALL_MOSSYCOBBLE, 6)));
         assert_eq!(cook_result(crate::dungeons::MOSSYCOBBLE), Some((CONTENT_STONE, 3.0)));
+        // Signs: two rows of planks or steel ingots over a stick make 3.
+        let planks = grid(&[(0, CONTENT_FIR_WOOD, 1), (1, CONTENT_FIR_WOOD, 1), (2, CONTENT_FIR_WOOD, 1), (3, CONTENT_APPLE_WOOD, 1), (4, CONTENT_APPLE_WOOD, 1), (5, CONTENT_APPLE_WOOD, 1), (7, ITEM_STICK, 1)]);
+        assert_eq!(result(&planks), Some((SIGN_WOOD, 3)));
+        let steel = grid(&[(0, ITEM_STEEL_INGOT, 1), (1, ITEM_STEEL_INGOT, 1), (2, ITEM_STEEL_INGOT, 1), (3, ITEM_STEEL_INGOT, 1), (4, ITEM_STEEL_INGOT, 1), (5, ITEM_STEEL_INGOT, 1), (7, ITEM_STICK, 1)]);
+        assert_eq!(result(&steel), Some((SIGN_STEEL, 3)));
+        assert_eq!(burn_time(SIGN_WOOD), 10.0);
         // Mese post lights: glass, three mese crystals, planks, in a column
         // through the middle.
         for (post, wood) in MESE_POSTS {

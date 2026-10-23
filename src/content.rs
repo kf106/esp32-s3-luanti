@@ -134,6 +134,10 @@ pub enum Kind {
     /// A mese post light: a thin wooden post (nodebox) with mese windows
     /// down its sides, giving light.
     Post,
+    /// A sign: a thin board (a wallmounted nodebox) on a wall, floor or
+    /// ceiling, walked through, with text (meta.rs) its right-click
+    /// edits.
+    Sign,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -254,6 +258,16 @@ pub const MESE_POSTS: [(u16, u16); 5] = [
     (MESE_POST_FIR, CONTENT_FIR_WOOD),
     (MESE_POST_JUNGLE, CONTENT_JUNGLE_WOOD),
     (MESE_POST_ACACIA, CONTENT_ACACIA_WOOD),
+];
+/// minetest_game's wooden and steel signs.
+pub const SIGN_WOOD: u16 = MESE_POST_ACACIA + 1;
+pub const SIGN_STEEL: u16 = SIGN_WOOD + 1;
+/// A sign's board: on the ceiling, on the floor, and on a wall (the -X
+/// side; the client turns it).
+const SIGN_BOXES: [[f32; 6]; 3] = [
+    [-0.4375, 0.4375, -0.3125, 0.4375, 0.5, 0.3125],
+    [-0.4375, -0.5, -0.3125, 0.4375, -0.4375, 0.3125],
+    [-0.5, -0.3125, -0.4375, -0.4375, 0.3125, 0.4375],
 ];
 /// The post: 4/16 of a node square, full height.
 const MESE_POST_BOX: [f32; 6] = [-2.0 / 16.0, -0.5, -2.0 / 16.0, 2.0 / 16.0, 0.5, 2.0 / 16.0];
@@ -2832,6 +2846,27 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Post,
     },
+    // minetest_game's signs (default.register_sign).
+    Node {
+        id: SIGN_WOOD,
+        name: "esp:sign_wall_wood",
+        description: "Wooden Sign",
+        tiles: ["default_sign_wall_wood.png"; 6],
+        groups: &[("choppy", 2), ("attached_node", 1), ("flammable", 2), ("oddly_breakable_by_hand", 3)],
+        drop: SIGN_WOOD,
+        drop_count: 1,
+        kind: Kind::Sign,
+    },
+    Node {
+        id: SIGN_STEEL,
+        name: "esp:sign_wall_steel",
+        description: "Steel Sign",
+        tiles: ["default_sign_wall_steel.png"; 6],
+        groups: &[("cracky", 2), ("attached_node", 1)],
+        drop: SIGN_STEEL,
+        drop_count: 1,
+        kind: Kind::Sign,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -3845,7 +3880,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -3890,7 +3925,7 @@ pub fn buildable_to(id: u16) -> bool {
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
@@ -3926,7 +3961,16 @@ pub fn is_torch(id: u16) -> bool {
 /// Nodes that hang on what they were placed against (param2 says which
 /// way): torches and ladders.
 pub fn is_wallmounted(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Ladder))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Ladder | Kind::Sign))
+}
+
+pub fn is_sign(id: u16) -> bool {
+    def(id).is_some_and(|n| n.kind == Kind::Sign)
+}
+
+/// Nodes that keep metadata (meta.rs): signs.
+pub fn takes_meta(id: u16) -> bool {
+    is_sign(id)
 }
 
 pub fn is_sapling(id: u16) -> bool {
@@ -4365,6 +4409,10 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_large_cactus_seedling.png", include_bytes!("../media/default_large_cactus_seedling.png")),
     ("default_mineral_copper.png", include_bytes!("../media/default_mineral_copper.png")),
     ("default_meselamp.png", include_bytes!("../media/default_meselamp.png")),
+    ("default_sign_wood.png", include_bytes!("../media/default_sign_wood.png")),
+    ("default_sign_steel.png", include_bytes!("../media/default_sign_steel.png")),
+    ("default_sign_wall_wood.png", include_bytes!("../media/default_sign_wall_wood.png")),
+    ("default_sign_wall_steel.png", include_bytes!("../media/default_sign_wall_steel.png")),
     ("default_mese_post_light_side.png", include_bytes!("../media/default_mese_post_light_side.png")),
     ("default_mese_post_light_side_dark.png", include_bytes!("../media/default_mese_post_light_side_dark.png")),
     ("flowers_rose.png", include_bytes!("../media/flowers_rose.png")),
@@ -4694,6 +4742,8 @@ fn sounds_of(id: u16) -> Sounds {
         | CONTENT_JUNGLE_TREE | CONTENT_JUNGLE_WOOD | CONTENT_ACACIA_TREE | CONTENT_ACACIA_WOOD => wood,
         id if is_chest(id) => wood,
         id if def(id).is_some_and(|n| n.kind == Kind::Post) => wood,
+        SIGN_WOOD => wood,
+        SIGN_STEEL => sounds_of(CONTENT_STEEL_BLOCK),
         CONTENT_LADDER_WOOD => wood,
         // minetest_game's node_sound_glass_defaults and _metal_defaults.
         CONTENT_GLASS | CONTENT_MESE_LAMP | CONTENT_OBSIDIAN_GLASS => Sounds {
@@ -4882,6 +4932,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Lily => "flowers_waterlily.png",
                 // A pane's item is its picture (xpanes' inventory_image).
                 Kind::Pane => n.tiles[4],
+                Kind::Sign => sign_image(n.id),
                 _ => "",
             },
             wield_image: match n.kind {
@@ -4897,6 +4948,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::SnowLayer => "default_snowball.png",
                 Kind::Lily => "flowers_waterlily.png",
                 Kind::Pane => n.tiles[4],
+                Kind::Sign => sign_image(n.id),
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
@@ -5118,6 +5170,22 @@ fn apple_selection_box(w: &mut Writer) {
     }
 }
 
+/// A sign's picture in the inventory and the hand.
+fn sign_image(id: u16) -> &'static str {
+    if id == SIGN_STEEL { "default_sign_steel.png" } else { "default_sign_wood.png" }
+}
+
+/// A wallmounted nodebox: its box on the ceiling, on the floor, and on
+/// the -X wall.
+fn wallmounted_nodebox(w: &mut Writer, boxes: &[[f32; 6]; 3]) {
+    w.u8(6).u8(NODEBOX_WALLMOUNTED);
+    for b in boxes {
+        for v in b {
+            w.f32(v * 10.0); // in BS units, as all node boxes
+        }
+    }
+}
+
 fn regular_nodebox(w: &mut Writer) {
     w.u8(6).u8(NODEBOX_REGULAR);
 }
@@ -5201,7 +5269,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let rooted = n.kind == Kind::Rooted;
     let pane = n.kind == Kind::Pane;
     let flat_pane = panes::is_flat(n.id);
-    if torch {
+    if torch || n.kind == Kind::Sign {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
         w.u8(CPT_LIGHT).u8(0);
@@ -5262,7 +5330,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
         Kind::Lamp => (NDT_GLASSLIKE, ""),
         Kind::SnowLayer => (NDT_NODEBOX, ""),
-        Kind::Lily | Kind::Pane | Kind::Post => (NDT_NODEBOX, ""),
+        Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign => (NDT_NODEBOX, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
@@ -5354,7 +5422,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post)) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign)) as u8) // light_propagates
         .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
@@ -5403,6 +5471,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         _ if n.kind == Kind::SnowLayer => fixed_nodebox(&mut w, &[SNOW_LAYER_BOX]),
         _ if n.kind == Kind::Lily => fixed_nodebox(&mut w, &[colours::LILY_BOX]),
         _ if n.kind == Kind::Post => fixed_nodebox(&mut w, &[MESE_POST_BOX]),
+        _ if n.kind == Kind::Sign => wallmounted_nodebox(&mut w, &SIGN_BOXES),
         _ if flat_pane => fixed_nodebox(&mut w, &[panes::FLAT_BOX]),
         _ if pane => connected_nodebox(&mut w, &panes::CONNECTED_BOX),
         _ => regular_nodebox(&mut w), // node_box (unused by meshes)
@@ -5438,6 +5507,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         fixed_nodebox(&mut w, &[colours::LILY_SELECTION]);
     } else if n.kind == Kind::Post {
         fixed_nodebox(&mut w, &[MESE_POST_BOX]);
+    } else if n.kind == Kind::Sign {
+        // builtin's register_node: a nodebox's selection box is its node box.
+        wallmounted_nodebox(&mut w, &SIGN_BOXES);
     } else if stalk {
         let r = if n.kind == Kind::Stem { 7.0 / 16.0 } else { 6.0 / 16.0 };
         fixed_nodebox(&mut w, &[[-r, -0.5, -r, r, 0.5, r]]);

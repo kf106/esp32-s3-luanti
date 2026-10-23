@@ -22,6 +22,7 @@ pub const TOSERVER_DAMAGE: u16 = 0x35;
 pub const TOSERVER_RESPAWN_LEGACY: u16 = 0x38;
 pub const TOSERVER_INVENTORY_ACTION: u16 = 0x31;
 pub const TOSERVER_INVENTORY_FIELDS: u16 = 0x3c;
+pub const TOSERVER_NODEMETA_FIELDS: u16 = 0x3b;
 pub const TOSERVER_CHAT_MESSAGE: u16 = 0x32;
 pub const TOSERVER_PLAYERITEM: u16 = 0x37;
 
@@ -31,6 +32,7 @@ pub const TOCLIENT_AUTH_ACCEPT: u16 = 0x03;
 pub const TOCLIENT_ACCESS_DENIED: u16 = 0x0A;
 pub const TOCLIENT_BLOCKDATA: u16 = 0x20;
 pub const TOCLIENT_ADDNODE: u16 = 0x21;
+pub const TOCLIENT_NODEMETA_CHANGED: u16 = 0x59;
 pub const TOCLIENT_REMOVENODE: u16 = 0x22;
 pub const TOCLIENT_INVENTORY: u16 = 0x27;
 pub const TOCLIENT_TIME_OF_DAY: u16 = 0x29;
@@ -1088,10 +1090,21 @@ pub fn parse_interact(payload: &[u8]) -> Option<Interact> {
 /// TOCLIENT_ADDNODE: position, MapNode (param0 u16, param1, param2), then
 /// whether to keep the node's metadata.
 pub fn build_addnode(pos: [i16; 3], id: u16, param2: u8) -> Vec<u8> {
+    addnode(pos, id, param2, false)
+}
+
+/// TOCLIENT_ADDNODE that leaves the client's copy of the node's metadata
+/// alone: for putting back what the client predicted wrongly, where the
+/// node itself is unchanged.
+pub fn build_addnode_keeping_meta(pos: [i16; 3], id: u16, param2: u8) -> Vec<u8> {
+    addnode(pos, id, param2, true)
+}
+
+fn addnode(pos: [i16; 3], id: u16, param2: u8, keep_metadata: bool) -> Vec<u8> {
     let mut w = Writer::new(TOCLIENT_ADDNODE);
     w.i16(pos[0]).i16(pos[1]).i16(pos[2]);
     w.u16(id).u8(0).u8(param2); // param1 0: the client recalculates light itself
-    w.u8(0); // keep_metadata: no
+    w.u8(keep_metadata as u8);
     w.into_inner()
 }
 
@@ -1262,6 +1275,24 @@ pub fn build_inventory_formspec(skin: &SkinChoice) -> Vec<u8> {
     let mut w = Writer::new(TOCLIENT_INVENTORY_FORMSPEC);
     w.bytes32(fs.as_bytes());
     w.into_inner()
+}
+
+/// TOSERVER_NODEMETA_FIELDS: the node, the form's name (unused), then
+/// (field name, value) pairs from a node's own formspec (a sign's text
+/// box).
+pub fn parse_nodemeta_fields(payload: &[u8]) -> Option<([i16; 3], Vec<(String, String)>)> {
+    let mut r = Reader::new(payload);
+    r.u16()?;
+    let pos = [r.i16()?, r.i16()?, r.i16()?];
+    r.string16()?;
+    let count = r.u16()?;
+    let mut fields = Vec::new();
+    for _ in 0..count {
+        let name = r.string16()?;
+        let value = String::from_utf8_lossy(r.bytes32()?).into_owned();
+        fields.push((name, value));
+    }
+    Some((pos, fields))
 }
 
 /// TOSERVER_INVENTORY_FIELDS: the formspec's name ("" for the inventory

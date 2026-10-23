@@ -21,6 +21,7 @@ mod items;
 mod lcd;
 mod liquids;
 mod messages;
+mod meta;
 mod nature;
 mod panes;
 mod plants;

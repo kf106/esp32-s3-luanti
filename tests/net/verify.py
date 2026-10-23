@@ -75,16 +75,19 @@ def tile(r):
     if flags & 16: r.u8()
     if flags & 32: r.u8()
     return name, flags, anim
+def in_bs(b):
+    # Boxes go in BS units (10 to a node): one in node units is tiny.
+    assert max(abs(v) for v in b) >= 2, ("box in node units, not BS?", b)
 def nodebox(r):
     assert r.u8() == 6
     t = r.u8()
     if t == 2:  # NODEBOX_WALLMOUNTED: top, bottom, side boxes (v3f32 min, max each)
         boxes = [[r.f32() for _ in range(6)] for _ in range(3)]
-        for b in boxes: assert all(b[i] < b[i + 3] for i in range(3)), b
+        for b in boxes: assert all(b[i] < b[i + 3] for i in range(3)), b; in_bs(b)
         return boxes
     if t == 1:  # NODEBOX_FIXED: u16 count, then boxes
         boxes = [[r.f32() for _ in range(6)] for _ in range(r.u16())]
-        for b in boxes: assert all(b[i] < b[i + 3] for i in range(3)), b
+        for b in boxes: assert all(b[i] < b[i + 3] for i in range(3)), b; in_bs(b)
         return boxes
     if t == 4:  # NODEBOX_CONNECTED: 15 lists
         lists = [[[r.f32() for _ in range(6)] for _ in range(r.u16())] for _ in range(15)]

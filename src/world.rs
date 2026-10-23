@@ -40,6 +40,7 @@ use crate::content::{self, TORCH_LIGHT};
 use crate::dungeons;
 use crate::farming;
 use crate::liquids;
+use crate::meta;
 use crate::messages::Writer;
 use crate::storage;
 use crate::terrain::{self, Column, GENERATOR_VERSION};
@@ -169,6 +170,8 @@ pub struct State {
     /// Map blocks containing any changes, so unchanged blocks skip the
     /// per-node lookups.
     changed_blocks: FastSet<BlockPos>,
+    /// Node metadata (meta.rs): a sign's text.
+    metas: FastMap<NodePos, Arc<meta::Fields>>,
     /// Counts changes; a block built from a snapshot is tagged with it.
     version: u64,
     /// The latest changes and their versions, oldest first.
@@ -186,6 +189,8 @@ pub struct World {
     /// The change log on the SD card; None for a copy that only builds
     /// map blocks.
     log_path: Option<PathBuf>,
+    /// Where node metadata is saved (meta.rs), beside the log.
+    meta_path: Option<PathBuf>,
     /// Terrain caches (filled on demand; each World is used by one thread).
     /// Block columns carry the order they were made in, so the oldest can go.
     block_columns: RefCell<FastMap<(i16, i16), (u32, Arc<BlockColumn>)>>,
@@ -222,6 +227,7 @@ impl World {
         let mut world = Self {
             state: Arc::new(State::default()),
             log_path: Some(log_path.clone()),
+            meta_path: Some(dir.join("meta.txt")),
             block_columns: RefCell::new(FastMap::default()),
             columns_made: Cell::new(0),
             column_limit: SERVER_COLUMNS,
@@ -254,6 +260,7 @@ impl World {
         if !world.state.torch_light.is_empty() {
             info!("World: {} torches lit", world.state.torch_light.len());
         }
+        world.load_metas();
         if records > 2 * world.state.changes.len() + 256 {
             if let Err(e) = world.compact(&log_path) {
                 warn!("Compacting {}: {e}", log_path.display());
@@ -269,6 +276,7 @@ impl World {
         Self {
             state: Arc::new(State::default()),
             log_path: None,
+            meta_path: None,
             block_columns: RefCell::new(FastMap::default()),
             columns_made: Cell::new(0),
             column_limit: BUILDER_COLUMNS,
@@ -571,6 +579,72 @@ impl World {
         self.generated(x, y, z, col)
     }
 
+    // -----------------------------------------------------------------------
+    // Node metadata
+    // -----------------------------------------------------------------------
+
+    /// A node's metadata, if it has any.
+    pub fn meta(&self, pos: NodePos) -> Option<Arc<meta::Fields>> {
+        self.state.metas.get(&pos).cloned()
+    }
+
+    /// Set a node's metadata (None or no values: remove it), and save it.
+    /// Blocks built from here on carry it.
+    pub fn set_meta(&mut self, pos: NodePos, fields: Option<meta::Fields>) {
+        let st = Arc::make_mut(&mut self.state);
+        match fields.filter(|f| !f.is_empty()) {
+            Some(f) => st.metas.insert(pos, Arc::new(f)),
+            None => st.metas.remove(&pos),
+        };
+        st.version += 1;
+        let version = st.version;
+        st.recent.push_back((version, pos));
+        if st.recent.len() > RECENT_CHANGES {
+            st.recent.pop_front();
+        }
+        self.save_metas();
+    }
+
+    fn save_metas(&self) {
+        let Some(path) = &self.meta_path else {
+            return;
+        };
+        let mut all: Vec<(NodePos, &meta::Fields)> = self.state.metas.iter().map(|(p, f)| (*p, &**f)).collect();
+        all.sort_by_key(|(p, _)| *p);
+        if let Err(e) = storage::write(path, meta::format(&all).as_bytes()) {
+            warn!("Saving {}: {e}", path.display());
+        }
+    }
+
+    /// Read the saved metadata, keeping only that of nodes that still take
+    /// it (a world started afresh has lost its signs).
+    fn load_metas(&mut self) {
+        let Some(path) = self.meta_path.clone() else {
+            return;
+        };
+        let Ok(data) = storage::read(&path) else {
+            return;
+        };
+        let mut kept = 0;
+        for (pos, fields) in meta::parse(&String::from_utf8_lossy(&data)) {
+            if content::takes_meta(self.node(pos)) {
+                Arc::make_mut(&mut self.state).metas.insert(pos, Arc::new(fields));
+                kept += 1;
+            }
+        }
+        if kept > 0 {
+            info!("World: metadata for {kept} nodes");
+        }
+    }
+
+    /// The metadata in a map block.
+    fn metas_in_block(&self, b: BlockPos) -> Vec<(NodePos, &meta::Fields)> {
+        let mut found: Vec<(NodePos, &meta::Fields)> =
+            self.state.metas.iter().filter(|(p, _)| block_of_node(**p) == b).map(|(p, f)| (*p, &**f)).collect();
+        found.sort_by_key(|(p, _)| *p);
+        found
+    }
+
     /// Whether a dungeon's loot chest stands at `pos`, as generated.
     pub fn is_dungeon_chest(&self, pos: NodePos) -> bool {
         !self.state.changes.contains_key(&pos) && self.dungeon_node(pos).is_some_and(|d| d.id == content::CONTENT_CHEST)
@@ -626,7 +700,14 @@ impl World {
     /// Change a node in memory: light, and the version clients' blocks are
     /// checked against.
     fn change(&mut self, pos: NodePos, id: u16, param2: u8) {
-        let was_torch = content::light_source(self.node(pos)) > 0;
+        let was = self.node(pos);
+        let was_torch = content::light_source(was) > 0;
+        // A different node loses the old one's metadata (Luanti's
+        // set_node; swapping a node for itself keeps it).
+        if id != was && self.state.metas.contains_key(&pos) {
+            Arc::make_mut(&mut self.state).metas.remove(&pos);
+            self.save_metas();
+        }
         self.apply(pos, id, param2);
         self.relight(pos, was_torch, content::light_source(id) > 0);
         let st = Arc::make_mut(&mut self.state);
@@ -946,7 +1027,8 @@ impl World {
         // param1: day light in the low nibble, night light in the high
         w.raw(&light);
         w.raw(&param2);
-        w.u8(0); // node metadata: none
+        let metas = if self.state.metas.is_empty() { Vec::new() } else { self.metas_in_block(pos) };
+        meta::write_block_list(&mut w, &metas);
         w.into_inner()
     }
 

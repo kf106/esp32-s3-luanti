@@ -31,6 +31,7 @@ use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
 use crate::dungeons;
+use crate::meta;
 use crate::clock::{self, Clock};
 use crate::colours;
 use crate::furnace::{self, FurnaceList, Furnaces, Lists, Place};
@@ -1125,6 +1126,7 @@ impl Server {
             TOSERVER_INTERACT
                 | TOSERVER_INVENTORY_ACTION
                 | TOSERVER_INVENTORY_FIELDS
+                | TOSERVER_NODEMETA_FIELDS
                 | TOSERVER_CHAT_MESSAGE
                 | TOSERVER_DAMAGE
                 | TOSERVER_RESPAWN_LEGACY
@@ -1152,6 +1154,7 @@ impl Server {
             // they use, so the server needn't keep it.
             TOSERVER_PLAYERITEM => {}
             TOSERVER_INVENTORY_FIELDS => self.on_inventory_fields(from, payload),
+            TOSERVER_NODEMETA_FIELDS => self.on_nodemeta_fields(from, payload),
             TOSERVER_CHAT_MESSAGE => self.on_chat(from, payload),
             // Window size and similar client details: nothing to do.
             0x0053 => {}
@@ -2179,7 +2182,7 @@ impl Server {
                 // A sapling stands on the node below it, which must be solid
                 // (builtin's check_attached_node, as the client checks).
                 let below = (above[0] as i32, above[1] as i32 - 1, above[2] as i32);
-                let supported = if torch {
+                let supported = if torch || content::is_sign(id) {
                     content::walkable(support)
                 } else if farming::is_seed(id) {
                     // A seed goes on soil, directly on top (farming's
@@ -2240,6 +2243,11 @@ impl Server {
                 self.broadcast_node(above, &build_addnode(above, node, param2));
                 // A pane, or a pane beside it, takes its new shape.
                 self.update_panes_near(node_pos(above));
+                // A sign gets its text box (minetest_game's on_construct).
+                if content::is_sign(node) {
+                    self.world.set_meta(node_pos(above), Some(meta::new_sign()));
+                    self.broadcast_meta(node_pos(above));
+                }
                 // Built into lava: the client lit the block up as the lava
                 // went; send it again with the server's light.
                 if content::is_lava(target) {
@@ -2934,14 +2942,14 @@ impl Server {
     }
 
     /// Remove what was attached to the node at `pos` (just removed):
-    /// torches hanging on it, and a sapling standing on it. They drop as
+    /// torches and signs hanging on it, and a sapling standing on it. They drop as
     /// items where they were.
     fn drop_attached(&mut self, pos: [i16; 3]) {
         for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
             let n = [pos[0] + dx, pos[1] + dy, pos[2] + dz];
             let np = (n[0] as i32, n[1] as i32, n[2] as i32);
             let id = self.world.node(np);
-            let attached = if content::is_torch(id) {
+            let attached = if content::is_torch(id) || content::is_sign(id) {
                 let s = content::wallmounted_support(self.world.param2(np));
                 (np.0 + s.0, np.1 + s.1, np.2 + s.2) == (pos[0] as i32, pos[1] as i32, pos[2] as i32)
             } else {
@@ -4282,8 +4290,51 @@ impl Server {
     fn resend_node(&mut self, addr: SocketAddr, pos: [i16; 3]) {
         let id = self.world.node((pos[0] as i32, pos[1] as i32, pos[2] as i32));
         let p2 = self.world.param2((pos[0] as i32, pos[1] as i32, pos[2] as i32));
-        let packet = if id == world::CONTENT_AIR { build_removenode(pos) } else { build_addnode(pos, id, p2) };
+        // The node is as the client last had it, metadata and all.
+        let packet = if id == world::CONTENT_AIR { build_removenode(pos) } else { build_addnode_keeping_meta(pos, id, p2) };
         self.send_command(addr, BLOCK_CHANNEL, &packet);
+    }
+
+    /// Send a node's metadata, as it now is, to everyone who has its block
+    /// (Luanti's sendMetadataChanged).
+    fn broadcast_meta(&mut self, pos: NodePos) {
+        let fields = self.world.meta(pos).map(|f| (*f).clone()).unwrap_or_default();
+        let packet = meta::build_changed(&[(pos, &fields)]);
+        self.broadcast_node([pos.0 as i16, pos.1 as i16, pos.2 as i16], &packet);
+    }
+
+    /// TOSERVER_NODEMETA_FIELDS: a node's own form was sent: a sign's
+    /// new text (minetest_game's on_receive_fields). Only from a player
+    /// who may interact, within reach.
+    fn on_nodemeta_fields(&mut self, from: SocketAddr, payload: &[u8]) {
+        let Some((p, fields)) = parse_nodemeta_fields(payload) else {
+            return;
+        };
+        let pos = (p[0] as i32, p[1] as i32, p[2] as i32);
+        let Some(peer) = self.peers.get(&from) else {
+            return;
+        };
+        let name = peer.display_name().to_string();
+        let body = [peer.pos_bs[0] / 10.0, peer.pos_bs[1] / 10.0 + 1.0, peer.pos_bs[2] / 10.0];
+        let near = (0..3).map(|i| (p[i] as f32 - body[i]).powi(2)).sum::<f32>().sqrt() <= MAX_INTERACT_DISTANCE;
+        if !peer.ready || !peer.privs.has("interact") || !near || !content::is_sign(self.world.node(pos)) {
+            info!("{name}: ignored fields for {pos:?}");
+            return;
+        }
+        let get = |k: &str| fields.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        // Only when the form closes (minetest_game's workaround for
+        // Luanti issue 16187).
+        let (Some(_), Some(text)) = (get("quit"), get("text")) else {
+            return;
+        };
+        let current = self.world.meta(pos).map(|f| (*f).clone()).unwrap_or_else(meta::new_sign);
+        let Some(updated) = meta::write_sign(&current, text) else {
+            self.tell(from, "Text too long");
+            return;
+        };
+        info!("{name} wrote {:?} to the sign at {pos:?}", updated["text"]);
+        self.world.set_meta(pos, Some(updated));
+        self.broadcast_meta(pos);
     }
 
     fn on_deleted_blocks(&mut self, from: SocketAddr, payload: &[u8]) {
