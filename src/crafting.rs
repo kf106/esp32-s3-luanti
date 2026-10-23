@@ -7,6 +7,7 @@
 use crate::content::{self, *};
 use crate::farming;
 use crate::fences;
+use crate::plants;
 use crate::inventory::Stack;
 
 pub const GRID_WIDTH: usize = 3;
@@ -40,6 +41,17 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(CONTENT_APPLE_TREE)], output: CONTENT_APPLE_WOOD, count: 4 },
     Recipe { width: 1, pattern: &[I(CONTENT_JUNGLE_TREE)], output: CONTENT_JUNGLE_WOOD, count: 4 },
     Recipe { width: 1, pattern: &[I(CONTENT_ACACIA_TREE)], output: CONTENT_ACACIA_WOOD, count: 4 },
+    // A bush stem to one plank of its wood.
+    Recipe { width: 1, pattern: &[I(plants::BUSH_STEM)], output: CONTENT_APPLE_WOOD, count: 1 },
+    Recipe { width: 1, pattern: &[I(plants::ACACIA_BUSH_STEM)], output: CONTENT_ACACIA_WOOD, count: 1 },
+    Recipe { width: 1, pattern: &[I(plants::FIR_BUSH_STEM)], output: CONTENT_FIR_WOOD, count: 1 },
+    // Five cactus in a plus: a large cactus seedling.
+    Recipe {
+        width: 3,
+        pattern: &[E, I(plants::CACTUS), E, I(plants::CACTUS), I(plants::CACTUS), I(plants::CACTUS), E, I(plants::CACTUS), E],
+        output: plants::LARGE_CACTUS_SEEDLING,
+        count: 1,
+    },
     // Any planks to four sticks.
     Recipe { width: 1, pattern: &[G("wood")], output: ITEM_STICK, count: 4 },
     // Coal lump on a stick: four torches.
@@ -196,6 +208,18 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_ACACIA_WOOD => 8.0,
         CONTENT_JUNGLE_SAPLING | CONTENT_ACACIA_SAPLING => 6.0,
         farming::JUNGLEGRASS => 3.0,
+        plants::BUSH_LEAVES | plants::BLUEBERRY_LEAVES | plants::BLUEBERRY_LEAVES_WITH_BERRIES | plants::ACACIA_BUSH_LEAVES
+        | plants::FIR_BUSH_NEEDLES => 4.0,
+        plants::BUSH_STEM => 7.0,
+        plants::ACACIA_BUSH_STEM => 8.0,
+        plants::FIR_BUSH_STEM => 6.0,
+        plants::BUSH_SAPLING => 3.0,
+        plants::ACACIA_BUSH_SAPLING => 4.0,
+        plants::FIR_BUSH_SAPLING => 2.0,
+        plants::CACTUS => 15.0,
+        plants::LARGE_CACTUS_SEEDLING => 5.0,
+        plants::PAPYRUS => 3.0,
+        id if id == plants::FERN[0] || id == plants::MARRAM[0] => 2.0,
         CONTENT_TORCH => 4.0,
         CONTENT_BIRCH_SAPLING => 4.0,
         CONTENT_FIR_SAPLING => 5.0,
@@ -531,6 +555,11 @@ mod tests {
         assert_eq!(result(&grid(&[(4, CONTENT_ACACIA_TREE, 1)])), Some((CONTENT_ACACIA_WOOD, 4)));
         assert_eq!(burn_time(fences::GATE_JUNGLE), 9.0);
         assert_eq!(burn_time(crate::stairs::LATER.first_slab() + 1), 4.0);
+        let c = plants::CACTUS;
+        let plus = [(1, c, 1), (3, c, 1), (4, c, 1), (5, c, 1), (7, c, 1)];
+        assert_eq!(result(&grid(&plus)), Some((plants::LARGE_CACTUS_SEEDLING, 1)));
+        assert_eq!(result(&grid(&[(0, plants::FIR_BUSH_STEM, 1)])), Some((CONTENT_FIR_WOOD, 1)));
+        assert_eq!(burn_time(plants::CACTUS), 15.0);
     }
 
     #[test]

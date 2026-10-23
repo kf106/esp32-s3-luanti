@@ -22,6 +22,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::content::{self, *};
+use crate::plants;
 use crate::terrain::{Tree, TreeKind, TREE_REACH};
 use crate::world::{NodePos, CONTENT_AIR};
 
@@ -39,6 +40,8 @@ pub enum Job {
     Regrow,
     /// Try to grow a seed or crop a stage (farming.rs).
     Crop,
+    /// Try to grow blueberries again on a picked bush (plants.rs).
+    Berries,
 }
 
 /// Node timers (minetest_game's are per node; here they are kept in one
@@ -136,12 +139,12 @@ pub const GROW_RETRY: Duration = Duration::from_secs(300);
 /// An apple mark in the dark tries again after 200 seconds.
 pub const REGROW_RETRY: Duration = Duration::from_secs(200);
 
-/// What a leaf gives when dug or decayed: a sapling one time in
-/// SAPLING_RARITY, otherwise the leaf (minetest_game's drop table, which
-/// gives one item).
+/// What a leaf gives when dug or decayed: a sapling now and then (one
+/// time in SAPLING_RARITY for trees, 5 for bushes), otherwise the leaf
+/// (minetest_game's drop table, which gives one item).
 pub fn leaf_drop(leaf: u16, rng: &mut Rng) -> u16 {
-    match content::tree_of_leaves(leaf) {
-        Some((sapling, _)) if rng.one_in(SAPLING_RARITY) => sapling,
+    match content::sapling_of_leaves(leaf) {
+        Some((sapling, rarity)) if rng.one_in(rarity) => sapling,
         _ => leaf,
     }
 }
@@ -205,18 +208,27 @@ pub fn should_decay(pos: NodePos, node: &dyn Fn(NodePos) -> (u16, u8)) -> bool {
     param2 != PLACED_LEAVES && !around(pos, LEAF_DECAY_RADIUS).any(|p| node(p).0 == trunk)
 }
 
-/// minetest_game's can_grow: soil under the sapling, and light 13 or
-/// more on it, which (torches giving 12) means daylight reaching it.
+/// minetest_game's can_grow: soil under the sapling (sand under a large
+/// cactus seedling), and light 13 or more on it, which (torches giving
+/// 12) means daylight reaching it.
 pub fn can_grow(pos: NodePos, node: &dyn Fn(NodePos) -> u16, sky_above: bool, daytime: bool) -> bool {
-    content::is_sapling(node(pos)) && content::group_of(node((pos.0, pos.1 - 1, pos.2)), "soil") > 0 && sky_above && daytime
+    let sapling = node(pos);
+    let ground = if sapling == plants::LARGE_CACTUS_SEEDLING { "sand" } else { "soil" };
+    content::is_sapling(sapling) && content::group_of(node((pos.0, pos.1 - 1, pos.2)), ground) > 0 && sky_above && daytime
 }
 
-/// The nodes of the tree a sapling at `pos` grows into: the trunk replaces
-/// the sapling, air and leaves; leaves fill only air (minetest_game's
+/// The nodes of the tree (or bush, or large cactus) a sapling at `pos`
+/// grows into: what grows at `pos` replaces the sapling, the trunk also
+/// replaces leaves, and the rest fills only air (minetest_game's
 /// tree schematics, which aren't force-placed). The tree is like the ones
 /// the map generator makes; `height` is its trunk length.
 pub fn grow(pos: NodePos, sapling: u16, height: i32, node: &dyn Fn(NodePos) -> u16) -> Vec<(NodePos, u16)> {
     let kind = match sapling {
+        plants::BUSH_SAPLING => TreeKind::Bush,
+        plants::BLUEBERRY_SAPLING => TreeKind::BlueberryBush,
+        plants::ACACIA_BUSH_SAPLING => TreeKind::AcaciaBush,
+        plants::FIR_BUSH_SAPLING => TreeKind::FirBush,
+        plants::LARGE_CACTUS_SEEDLING => TreeKind::LargeCactus,
         CONTENT_FIR_SAPLING => TreeKind::Fir,
         CONTENT_APPLE_SAPLING => TreeKind::Apple,
         CONTENT_JUNGLE_SAPLING => TreeKind::Jungle,
@@ -232,8 +244,10 @@ pub fn grow(pos: NodePos, sapling: u16, height: i32, node: &dyn Fn(NodePos) -> u
                     continue;
                 };
                 let here = node((x, y, z));
-                let trunk = content::is_trunk(id);
-                let fits = here == CONTENT_AIR || (trunk && ((x, y, z) == pos || content::is_leaves(here)));
+                let trunk = content::is_trunk(id) || id == plants::CACTUS;
+                // The sapling itself always goes (a blueberry bush has no
+                // stem to replace it with: its middle leaves do).
+                let fits = here == CONTENT_AIR || (x, y, z) == pos || (trunk && content::is_leaves(here));
                 if fits && here != id {
                     out.push(((x, y, z), id));
                 }
@@ -250,6 +264,9 @@ pub fn tree_height(sapling: u16, rng: &mut Rng) -> i32 {
         CONTENT_APPLE_SAPLING => rng.range(4, 5) as i32,
         CONTENT_JUNGLE_SAPLING => rng.range(8, 12) as i32,
         CONTENT_ACACIA_SAPLING => rng.range(5, 6) as i32,
+        // Bushes are a node tall (their stem); a large cactus 5.
+        plants::LARGE_CACTUS_SEEDLING => 5,
+        id if content::is_sapling(id) && id >= plants::CACTUS => 1,
         _ => rng.range(5, 7) as i32,
     }
 }
@@ -317,6 +334,32 @@ mod tests {
             assert!(tree.iter().filter(|(_, id)| *id == leaves).count() > 20);
             assert!(tree.iter().all(|(_, id)| *id == trunk || *id == leaves));
         }
+    }
+
+    #[test]
+    fn bushes_and_large_cactus() {
+        let ground = |g: u16, sapling: u16| {
+            move |p: NodePos| match p.1 {
+                0 => g,
+                1 if p.0 == 0 && p.2 == 0 => sapling,
+                _ => CONTENT_AIR,
+            }
+        };
+        let node = ground(CONTENT_GRASS, plants::BUSH_SAPLING);
+        let bush = grow((0, 1, 0), plants::BUSH_SAPLING, 1, &node);
+        assert!(bush.contains(&((0, 1, 0), plants::BUSH_STEM)) && bush.contains(&((0, 2, 0), plants::BUSH_LEAVES)));
+        assert!(bush.iter().all(|((x, _, z), _)| x.abs() <= 1 && z.abs() <= 1));
+        let node = ground(CONTENT_GRASS, plants::BLUEBERRY_SAPLING);
+        let berries = grow((0, 1, 0), plants::BLUEBERRY_SAPLING, 1, &node);
+        assert!(berries.contains(&((0, 1, 0), plants::BLUEBERRY_LEAVES_WITH_BERRIES)));
+        // A large cactus seedling needs sand.
+        let node = ground(CONTENT_GRASS, plants::LARGE_CACTUS_SEEDLING);
+        assert!(!can_grow((0, 1, 0), &node, true, true));
+        let node = ground(CONTENT_SAND, plants::LARGE_CACTUS_SEEDLING);
+        assert!(can_grow((0, 1, 0), &node, true, true));
+        let cactus = grow((0, 1, 0), plants::LARGE_CACTUS_SEEDLING, 6, &node);
+        assert!(cactus.contains(&((0, 1, 0), plants::CACTUS)) && cactus.contains(&((0, 6, 0), plants::CACTUS)));
+        assert!(cactus.len() >= 12, "trunk and arms: {}", cactus.len());
     }
 
     #[test]

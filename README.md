@@ -4,7 +4,7 @@
 
 A standard, unmodified Luanti client connects to it over Wi-Fi as it would to any server. The board can join your access point, or run as its own free-standing hotspot. You can create an account, log in, explore a generated world with hills, forests, lakes, caves, lava and ores, dig and build, craft, smelt, farm, sleep through the night, and see the other players; testing shows it handles about six players. The world, accounts, inventories and player positions are stored on a microSD card. The board's small LCD shows the server's status.
 
-**Why "minetest" and not "luanti"?** When Minetest became Luanti, the point was to separate the engine (Luanti) from the game (Minetest Game). This project was first called esp32-s3-luanti, but it is really the other half: the server doesn't run Lua and can't load games or mods. It speaks Luanti's network protocol so that a normal client can connect, and everything else is Minetest Game (its nodes, recipes, furnace, doors, farming, beds and so on), built in, in under 20,000 lines of Rust. So it was renamed. The old GitHub link redirects here.
+**Why "minetest" and not "luanti"?** When Minetest became Luanti, the point was to separate the engine (Luanti) from the game (Minetest Game). This project was first called esp32-s3-luanti, but it is really the other half: the server doesn't run Lua and can't load games or mods. It speaks Luanti's network protocol so that a normal client can connect, and everything else is Minetest Game (its nodes, recipes, furnace, doors, farming, beds and so on), built in, in about 20,000 lines of Rust. So it was renamed. The old GitHub link redirects here.
 
 It covers roughly half of Minetest Game so far: see [What works](#what-works) and [What doesn't (yet)](#what-doesnt-yet).
 
@@ -77,6 +77,11 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 - **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. Water flows as in Luanti: dig beside or under a lake and it runs in, up to 8 nodes across flat ground, getting shallower as it goes, and falls down any hole; take the source away and the flow drains. Two sources with a gap between make a third, so a lake never runs dry. Water washes torches out. It spreads a node a second; the server looks at up to 1,000 places a second, so a flood into a big cave takes a while. Where more than 8 nodes in a map block change at once, the block is sent again whole rather than node by node, to spare the radio; while water is moving the log says how much every 10 s ("Liquids: ...").
 - **Drowning:** as in Luanti, with your head in water (or lava) you lose a breath every 2 s, and with all 10 gone 1 HP every 2 s. Out of it, a breath comes back every half second. Luanti's bubbles show above the hotbar while your breath isn't full.
 - **Lava:** Minetest Game's lava, in deep caves (see above) or poured from a bucket. It flows like water, but creeps (its depth changes a level at a time), never makes new sources, and burns 8 HP a second while you stand in it. Lava touching water cools: a lava source into obsidian (a steel pickaxe digs it), flowing lava into stone, with a hiss. It glows in the dark but lights nothing around it: the client draws lava bright by itself, and the server spends no time spreading its light. So that what players see stays the same, a change to lava is always sent as its whole map block, never node by node.
+- **Other plants, as in Minetest Game:**
+  - **Cactus** grows in the desert, with the odd large one with arms; **papyrus** on the swampy shores of the rainforest and savanna. Planted ones grow a node at a time, up to 4 tall, in daylight: cactus on sand, papyrus on dirt with water within 3 nodes. Digging papyrus takes the papyrus above it too. Five cactus in a plus make a large cactus seedling, which grows into a large cactus on sand.
+  - **Bushes:** plain and blueberry bushes in the grassland, fir bushes among the firs and in the snow, acacia bushes on the savanna. Their leaves give a bush sapling one time in 5, their stems a plank. Pick blueberries for 2 HP each; the bush bears again 5 to 25 minutes later.
+  - **Ferns** under the firs and **marram grass** on sandy lake shores.
+  - **Kelp** on the beds of deep, cool lakes, up to 6 nodes tall, and **corals** (green, pink, cyan, brown, orange) in warm lakes. Digging kelp leaves the sand and gives the kelp, which goes back into sand with water above; a coral leaves its skeleton.
 - **Farming:** Minetest Game's wheat and cotton.
   - Tall grass grows on grassland; digging it gives a wheat seed one time in five. Jungle grass in the rainforest gives a cotton seed one time in eight. Wild cotton grows in patches on grassland and savanna and gives cotton seeds.
   - A hoe (two planks, stones or steel ingots over two sticks, like Minetest Game's) turns dirt, grass or rainforest litter into soil with a left-click (not savanna dirt: Minetest Game makes that dry soil, which we don't have yet). Soil within 3 nodes of water turns wet; without water it dries, and bare dry soil turns back into dirt.
@@ -123,7 +128,7 @@ Other ESP32-S3 boards with PSRAM and an SD card should work with pin changes. Th
 
 ## What doesn't (yet)
 
-- Much of Minetest Game is still missing: copper, tin, gold, mese and diamond (so no bronze, mese or diamond tools), cactus, papyrus and other plants, gravel, clay and the other desert and snow blocks, falling sand and gravel, flowers, dyes and coloured wool, signs, bookshelves, TNT and fire, bones, boats, carts, keys, walls, glass panes, dungeons, weather and creative mode.
+- Much of Minetest Game is still missing: copper, tin, gold, mese and diamond (so no bronze, mese or diamond tools), gravel, clay and the other desert and snow blocks, falling sand and gravel, flowers, dyes and coloured wool, signs, bookshelves, TNT and fire, bones, boats, carts, keys, walls, glass panes, dungeons, weather and creative mode.
 - No admin commands.
 - No Lua mods: the game content is built in.
 - One world per SD card.
@@ -280,6 +285,7 @@ src/doors.rs       doors and trapdoors
 src/farming.rs     farming: soil, seeds, crops, hoes
 src/beds.rs        beds, sleeping and respawn points
 src/fences.rs      fences, fence rails and fence gates
+src/plants.rs      cactus, papyrus, bushes, ferns, marram grass, kelp, corals
 src/liquids.rs     flowing water and lava
 src/player.rs      saved player state
 src/skins.rs       player skins

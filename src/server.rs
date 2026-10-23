@@ -22,6 +22,7 @@ use crate::beds;
 use crate::doors::{self, Door};
 use crate::farming;
 use crate::fences;
+use crate::plants;
 use crate::stairs;
 use crate::status::{self, SharedStatus};
 use crate::chest::{self, Chests};
@@ -450,6 +451,9 @@ pub struct Server {
     /// Farmed soil, looked after every farming::SOIL_INTERVAL.
     fields: BTreeSet<NodePos>,
     fields_checked: Instant,
+    /// Cactus and papyrus players planted, which grow (plants.rs).
+    climbers: BTreeSet<NodePos>,
+    climbers_checked: Instant,
     /// When the liquids last flowed.
     liquids_flowed: Instant,
     /// When lava touching water was last looked at.
@@ -735,6 +739,14 @@ impl Server {
         if nature::TEST_BUILD {
             info!("Test build: saplings, apples and crops grow ten times faster");
         }
+        // Planted cactus and papyrus carry on growing; picked blueberry
+        // bushes bear again.
+        let climbers: BTreeSet<NodePos> = world.changed_nodes(plants::is_climber).into_iter().collect();
+        for pos in world.changed_nodes(|id| id == plants::BLUEBERRY_LEAVES) {
+            if world.param2(pos) != nature::PLACED_LEAVES {
+                timers.start(pos, Job::Berries, nature::grow_delay(&mut rng));
+            }
+        }
         // Chests left open when the server stopped are closed again
         // (minetest_game's "close opened chests on load").
         let mut world = world;
@@ -776,6 +788,8 @@ impl Server {
             night_skip_at: None,
             fields,
             fields_checked: Instant::now(),
+            climbers,
+            climbers_checked: Instant::now(),
             liquids_flowed: Instant::now(),
             lava_cooled: Instant::now(),
             drowned_at: Instant::now(),
@@ -1872,6 +1886,15 @@ impl Server {
                     self.broadcast_node(under, &build_addnode(under, content::CONTENT_APPLE_MARK, 0));
                     let after = nature::grow_delay(&mut self.rng);
                     self.timers.start(node_pos(under), Job::Regrow, after);
+                } else if let Some(left) = plants::after_dig(current) {
+                    // Kelp leaves its sand, a coral its skeleton, picked
+                    // blueberries their leaves, which bear again later.
+                    self.world.set_node(node_pos(under), left, 0);
+                    self.broadcast_node(under, &build_addnode(under, left, 0));
+                    if left == plants::BLUEBERRY_LEAVES {
+                        let after = nature::grow_delay(&mut self.rng);
+                        self.timers.start(node_pos(under), Job::Berries, after);
+                    }
                 } else {
                     self.world.set_node(node_pos(under), world::CONTENT_AIR, 0);
                     self.broadcast_node(under, &build_removenode(under));
@@ -1894,13 +1917,25 @@ impl Server {
                 }
                 // Its leaves may now decay (minetest_game's leafdecay).
                 self.start_leaf_decay(node_pos(under), current);
+                // Papyrus above dug papyrus goes too, to the digger
+                // (default.dig_up).
+                let world = &self.world;
+                let up = plants::dug_up(node_pos(under), current, &|p| world.node(p));
+                for p in &up {
+                    let p16 = [p.0 as i16, p.1 as i16, p.2 as i16];
+                    self.world.set_node(*p, world::CONTENT_AIR, 0);
+                    self.broadcast_node(p16, &build_removenode(p16));
+                }
+                let mut drops = self.drops(current);
+                if !up.is_empty() {
+                    drops.push((plants::PAPYRUS, up.len() as u16));
+                }
                 // The drop goes into the digger's inventory; what doesn't
                 // fit is dropped where the node was (builtin's
                 // handle_node_drops). Leaves sometimes give a sapling.
                 if farming::is_soil(current) {
                     self.fields.remove(&node_pos(under));
                 }
-                let drops = self.drops(current);
                 for (item, count) in drops {
                     let left = match self.peers.get_mut(&from) {
                         Some(peer) => peer.inventory.add(Stack::new(item, count)),
@@ -1967,6 +2002,16 @@ impl Server {
                     let place = DoorPlace { under, above, look: look_dir(pitch, yaw), slot };
                     if in_reach(above) {
                         self.place_door(from, door, place);
+                    }
+                    return;
+                }
+                // Kelp goes into sand under water, a coral into coral
+                // skeleton (their on_place): into the node pointed at.
+                if let Some(id) = wielded.filter(|s| slot < HOTBAR_SIZE && plants::is_rooted(s.id)).map(|s| s.id) {
+                    if in_reach(under) {
+                        self.place_rooted(from, id, slot, under);
+                    } else {
+                        self.resend_node(from, under);
                     }
                     return;
                 }
@@ -2051,7 +2096,13 @@ impl Server {
                 // The item is always the floor torch; on a wall or ceiling
                 // it becomes that torch node (minetest_game's on_place).
                 // Tall grass comes up any of its five heights.
-                let node = if id == farming::GRASS[0] || id == farming::DRY_GRASS[0] { farming::placed_grass(id, &mut self.rng) } else { content::torch_variant(id, param2) };
+                let node = if id == farming::GRASS[0] || id == farming::DRY_GRASS[0] {
+                    farming::placed_grass(id, &mut self.rng)
+                } else if plants::is_small_plant(id) {
+                    plants::placed_size(id, self.rng.next())
+                } else {
+                    content::torch_variant(id, param2)
+                };
                 // Water would wash a torch straight out again (it is
                 // floodable), so it stays in the hand.
                 let flooded = content::floodable(id) && content::is_liquid(target);
@@ -2076,6 +2127,9 @@ impl Server {
                 if content::is_sapling(node) {
                     let after = nature::grow_delay(&mut self.rng);
                     self.timers.start(node_pos(above), Job::Grow, after);
+                }
+                if plants::is_climber(node) {
+                    self.climbers.insert(node_pos(above));
                 }
                 if farming::is_seed(node) {
                     let after = farming::grow_delay(&mut self.rng);
@@ -2798,6 +2852,7 @@ impl Server {
                 Job::Grow => self.grow_sapling(pos),
                 Job::Regrow => self.regrow_apple(pos),
                 Job::Crop => self.grow_crop(pos),
+                Job::Berries => self.grow_berries(pos),
             }
         }
     }
@@ -2821,6 +2876,71 @@ impl Server {
             let at = [pos.0 as f32 + r(&mut self.rng), pos.1 as f32 + r(&mut self.rng), pos.2 as f32 + r(&mut self.rng)];
             self.spawn_item(Stack::new(drop, 1), (at, [0.0; 3]));
         }
+    }
+
+    /// A picked blueberry bush's leaves bear berries again, when light
+    /// enough (daylight reaching them); otherwise they wait 200 s more.
+    fn grow_berries(&mut self, pos: NodePos) {
+        if self.world.node(pos) != plants::BLUEBERRY_LEAVES {
+            return;
+        }
+        let lit = (6000..18000).contains(&self.time_of_day()) && self.world.highest_solid(pos.0, pos.2) <= pos.1;
+        if !lit {
+            self.timers.start(pos, Job::Berries, nature::quick(plants::BERRIES_RETRY));
+            return;
+        }
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.world.set_node(pos, plants::BLUEBERRY_LEAVES_WITH_BERRIES, 0);
+        self.broadcast_node(p16, &build_addnode(p16, plants::BLUEBERRY_LEAVES_WITH_BERRIES, 0));
+    }
+
+    /// The "Grow cactus" and "Grow papyrus" ABMs, for what players
+    /// planted: now and then one grows a node, on its ground, in daylight.
+    fn tend_climbers(&mut self) {
+        let daytime = (6000..18000).contains(&self.time_of_day());
+        for pos in self.climbers.clone() {
+            if !plants::is_climber(self.world.node(pos)) {
+                self.climbers.remove(&pos);
+                continue;
+            }
+            if !self.rng.one_in(plants::CLIMB_CHANCE) {
+                continue;
+            }
+            let world = &self.world;
+            let lit = |p: NodePos| daytime && world.highest_solid(p.0, p.2) < p.1;
+            let Some(next) = plants::climb(pos, &|p| world.node(p), &lit) else {
+                continue;
+            };
+            let id = self.world.node(pos);
+            let p16 = [next.0 as i16, next.1 as i16, next.2 as i16];
+            self.world.set_node(next, id, 0);
+            self.broadcast_node(p16, &build_addnode(p16, id, 0));
+        }
+    }
+
+    /// Kelp or a coral put into the node pointed at: kelp into sand with
+    /// water 4 to 6 nodes up (its height, picked at random), a coral into
+    /// coral skeleton with water above.
+    fn place_rooted(&mut self, from: SocketAddr, id: u16, slot: usize, under: [i16; 3]) {
+        let pos = (under[0] as i32, under[1] as i32, under[2] as i32);
+        let height = self.rng.range(4, 6) as i32;
+        let world = &self.world;
+        let node = |p: NodePos| world.node(p);
+        let param2 = if id == plants::KELP { plants::kelp_place(pos, height, &node) } else { plants::coral_place(id, pos, &node).then_some(0) };
+        let Some(param2) = param2 else {
+            return;
+        };
+        let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
+        info!("{name} placed {} at {under:?}", content::name_of(id));
+        self.edit_event(&name, "placed", id);
+        if let Some(peer) = self.peers.get_mut(&from) {
+            peer.inventory.take_one(slot);
+        }
+        self.inventory_changed(from);
+        self.world.set_node(pos, id, param2);
+        self.broadcast_node(under, &build_addnode(under, id, param2));
+        let (sound, gain) = content::place_sound(id);
+        self.play_sound_near(-1, sound, gain, under.map(|v| v as f32 * 10.0), HEARING);
     }
 
     /// minetest_game's apple_mark timer: an apple grows again if apple
@@ -2940,6 +3060,7 @@ impl Server {
         let food = peer.inventory.get(slot).filter(|_| slot < HOTBAR_SIZE).and_then(|s| match s.id {
             id if content::is_apple(id) => Some((id, content::APPLE_HP)),
             content::ITEM_BREAD => Some((content::ITEM_BREAD, content::BREAD_HP)),
+            content::ITEM_BLUEBERRIES => Some((content::ITEM_BLUEBERRIES, plants::BLUEBERRY_HP)),
             _ => None,
         });
         let Some((food, heals)) = food else {
@@ -4303,6 +4424,10 @@ impl Server {
         if now.duration_since(self.fields_checked) >= farming::soil_check().0 {
             self.fields_checked = now;
             self.tend_fields();
+        }
+        if now.duration_since(self.climbers_checked) >= plants::CLIMB_INTERVAL {
+            self.climbers_checked = now;
+            self.tend_climbers();
         }
         self.update_power_saving();
         self.run_timers();

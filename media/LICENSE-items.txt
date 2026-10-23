@@ -15,7 +15,15 @@ default_acacia_leaves.png, default_acacia_wood.png and default_acacia_sapling.pn
 savanna and rainforest textures default_dry_dirt.png, default_dry_grass.png,
 default_dry_grass_side.png, default_dry_grass_1.png to default_dry_grass_5.png,
 default_rainforest_litter.png, default_rainforest_litter_side.png and
-default_junglegrass.png are from the
+default_junglegrass.png, and the plant textures default_cactus_top.png,
+default_cactus_side.png, default_large_cactus_seedling.png, default_papyrus.png,
+default_bush_stem.png, default_leaves_simple.png, default_bush_sapling.png,
+default_blueberry_bush_leaves.png, default_blueberry_overlay.png,
+default_blueberry_bush_sapling.png, default_blueberries.png, default_acacia_bush_stem.png,
+default_acacia_leaves_simple.png, default_acacia_bush_sapling.png,
+default_pine_bush_stem.png, default_pine_bush_sapling.png, default_fern_1.png to
+default_fern_3.png, default_marram_grass_1.png to default_marram_grass_3.png,
+default_kelp.png and default_coral_*.png are from the
 default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
 mods/default/textures), unmodified and under their original names. Their licence and
 credits, from that mod's license.txt:

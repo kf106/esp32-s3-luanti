@@ -78,7 +78,7 @@ pub fn is_dry_grass(id: u16) -> bool {
 /// Plants standing on the node below, which fall off (and drop) when it is
 /// dug (minetest_game's attached_node).
 pub fn is_attached_plant(id: u16) -> bool {
-    crop_of(id).is_some() || is_grass(id) || is_dry_grass(id) || id == COTTON_WILD || id == JUNGLEGRASS
+    crop_of(id).is_some() || is_grass(id) || is_dry_grass(id) || id == COTTON_WILD || id == JUNGLEGRASS || crate::plants::is_small_plant(id)
 }
 
 pub fn is_soil(id: u16) -> bool {
@@ -199,6 +199,10 @@ pub fn drops(id: u16, rng: &mut Rng) -> Vec<(u16, u16)> {
     // (farming/init.lua's override), otherwise itself.
     if is_dry_grass(id) {
         return vec![(DRY_GRASS[0], 1)];
+    }
+    // So do ferns and marram grass.
+    if let Some(item) = crate::plants::small_plant_drop(id) {
+        return vec![(item, 1)];
     }
     match id {
         JUNGLEGRASS => vec![(if rng.one_in(8) { SEED_COTTON } else { JUNGLEGRASS }, 1)],

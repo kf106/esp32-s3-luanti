@@ -9,6 +9,7 @@
 //! plain + and *, so it gives identical results on any machine.
 
 use crate::farming;
+use crate::plants;
 use crate::content::{
     self, CONTENT_ACACIA_LEAVES, CONTENT_ACACIA_TREE, CONTENT_APPLE, CONTENT_APPLE_LEAVES, CONTENT_APPLE_TREE, CONTENT_BIRCH_LEAVES,
     CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_DRY_DIRT, CONTENT_DRY_GRASS, CONTENT_FIR_NEEDLES, CONTENT_FIR_TREE, CONTENT_GRASS,
@@ -21,6 +22,11 @@ use crate::world::CONTENT_AIR;
 /// aside rather than mixed with new terrain (see World::open).
 /// 3: savanna and rainforest, with acacia and jungle trees, in part of
 /// what was desert.
+///
+/// The plants added after that (bushes, cacti, papyrus, ferns, marram
+/// grass, kelp and corals) came without a bump: they only fill air, or
+/// replace the top of a lake bed or swampy shore, so a world's changes
+/// still fit around them.
 pub const GENERATOR_VERSION: u32 = 3;
 
 const SEED_HILLS: u32 = 0x1A2B_3C4D;
@@ -36,6 +42,8 @@ const SEED_GRASS: u32 = 0x2F40_5162;
 const SEED_COTTON: u32 = 0x7384_95A6;
 const SEED_LAVA: u32 = 0xB7C8_D9EA;
 const SEED_HUMIDITY: u32 = 0xC3D4_E5F6;
+const SEED_SEABED: u32 = 0x4A5B_6C7D;
+const SEED_SHORE: u32 = 0x8E9F_A0B1;
 
 /// Deep caves are flooded with lava up to this height, in about half the
 /// land (where the "lava" noise is positive). Between flooded and dry
@@ -255,6 +263,15 @@ fn layer(y: i32, col: &Column) -> u16 {
     if depth < 0 {
         return CONTENT_AIR;
     }
+    // The rainforest's and savanna's shores are swampy dirt where papyrus
+    // grows (minetest_game's rainforest_swamp and savanna_shore).
+    if (0..=WATER_LEVEL).contains(&col.height) && matches!(col.biome, Biome::Rainforest | Biome::Savanna) {
+        return match depth {
+            0..=3 if col.biome == Biome::Savanna => CONTENT_DRY_DIRT,
+            0..=3 => CONTENT_DIRT,
+            _ => CONTENT_STONE,
+        };
+    }
     // Lake beds and shores are sand, as Minetest Game's beaches.
     if col.height <= WATER_LEVEL && col.biome != Biome::Desert {
         return match depth {
@@ -411,7 +428,48 @@ pub fn finish(x: i32, y: i32, z: i32, col: &Column, is_cave: impl FnOnce() -> bo
             return ore;
         }
     }
+    if y == col.height {
+        if let Some(id) = seabed(x, z, col) {
+            return id;
+        }
+    }
     base
+}
+
+/// Kelp grows on lake beds this deep or deeper.
+pub const KELP_TOP: i32 = -5;
+
+/// What grows on a lake bed (minetest_game's coral reef and kelp
+/// decorations): corals in warm water 2 to 8 nodes deep, kelp in cool
+/// water 6 or more deep, in patches.
+fn seabed(x: i32, z: i32, col: &Column) -> Option<u16> {
+    if col.height > -2 {
+        return None;
+    }
+    let h = hash(x, 0x5EA, z, SEED_SEABED);
+    let warm = matches!(col.biome, Biome::Desert | Biome::Savanna | Biome::Rainforest);
+    if warm && col.height >= -8 {
+        if noise2(x as f32 / 50.0, z as f32 / 50.0, SEED_SEABED) < 0.15 || h % 3 != 0 {
+            return None;
+        }
+        const CORALS: [u16; 6] =
+            [plants::CORAL_GREEN, plants::CORAL_PINK, plants::CORAL_CYAN, plants::CORAL_BROWN, plants::CORAL_ORANGE, plants::CORAL_SKELETON];
+        return Some(CORALS[((h >> 8) % 6) as usize]);
+    }
+    if !warm && col.height <= KELP_TOP && noise2(x as f32 / 200.0, z as f32 / 200.0, SEED_SEABED ^ 1) > 0.0 && h % 5 == 0 {
+        return Some(plants::KELP);
+    }
+    None
+}
+
+/// The param2 of a generated node, which only kelp has: its height (3 to
+/// 6 nodes, in sixteenths), always within the water above it.
+pub fn generated_param2(x: i32, y: i32, z: i32, id: u16) -> u8 {
+    if id != plants::KELP {
+        return 0;
+    }
+    let height = 3 + (hash(x, y, z, SEED_SEABED ^ 2) % 4) as i32;
+    (height.min(WATER_LEVEL - y) * 16) as u8
 }
 
 /// The generated node at one position. `sample` gives the cave noises at
@@ -459,6 +517,15 @@ pub enum TreeKind {
     Apple,
     Jungle,
     Acacia,
+    // minetest_game's bushes, cactus and papyrus (plants.rs): grown like
+    // trees, from patches or saplings.
+    Bush,
+    BlueberryBush,
+    AcaciaBush,
+    FirBush,
+    Cactus,
+    LargeCactus,
+    Papyrus,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -485,6 +552,10 @@ impl Tree {
             // minetest_game's apple tree: leaves one node above the trunk's
             // top and its last node.
             TreeKind::Apple | TreeKind::Acacia => self.height + 2,
+            TreeKind::Bush | TreeKind::AcaciaBush | TreeKind::FirBush => 2,
+            TreeKind::BlueberryBush => 1,
+            TreeKind::Cactus | TreeKind::Papyrus => self.height,
+            TreeKind::LargeCactus => 6,
             _ => self.height + 1,
         }
     }
@@ -533,6 +604,56 @@ impl Tree {
                     _ => dx * dx + dz * dz <= r * r,
                 };
                 leafy.then_some(CONTENT_FIR_NEEDLES)
+            }
+            TreeKind::Bush | TreeKind::AcaciaBush | TreeKind::FirBush => {
+                // minetest_game's bush schematics: a stem, leaves round it
+                // (the corners now and then) and a few on top; the acacia
+                // bush is fuller on top and sparser round its stem.
+                let (stem, leaves) = match self.kind {
+                    TreeKind::Bush => (plants::BUSH_STEM, plants::BUSH_LEAVES),
+                    TreeKind::AcaciaBush => (plants::ACACIA_BUSH_STEM, plants::ACACIA_BUSH_LEAVES),
+                    _ => (plants::FIR_BUSH_STEM, plants::FIR_BUSH_NEEDLES),
+                };
+                let (ax, az) = (dx.abs(), dz.abs());
+                if ax > 1 || az > 1 {
+                    return None;
+                }
+                let maybe = || hash(x, y, z, SEED_TREES ^ 8) % 2 == 0;
+                let acacia = self.kind == TreeKind::AcaciaBush;
+                let leafy = match (dy, ax + az) {
+                    (1, 0) => return Some(stem),
+                    (1, 1) => !acacia || maybe(),
+                    (1, _) => maybe(),
+                    (_, 0) => true,
+                    (_, 1) => acacia || maybe(),
+                    _ => maybe(),
+                };
+                leafy.then_some(leaves)
+            }
+            TreeKind::BlueberryBush => {
+                // A single layer of leaves, berries on them.
+                let leafy = dx.abs() <= 1 && dz.abs() <= 1 && ((dx, dz) == (0, 0) || hash(x, y, z, SEED_TREES ^ 9) % 3 != 0);
+                leafy.then_some(plants::BLUEBERRY_LEAVES_WITH_BERRIES)
+            }
+            TreeKind::Cactus => trunk.then_some(plants::CACTUS),
+            TreeKind::Papyrus => trunk.then_some(plants::PAPYRUS),
+            TreeKind::LargeCactus => {
+                // minetest_game's large cactus: a trunk with two arms that
+                // bend up, along x or z.
+                let along_x = hash(self.x, self.ground, self.z, SEED_TREES ^ 10) % 2 == 0;
+                let (a, b) = if along_x { (dx, dz) } else { (dz, dx) };
+                if b != 0 {
+                    return None;
+                }
+                let arm_tip = || hash(x, y, z, SEED_TREES ^ 11) % 2 == 0;
+                let cactus = match dy {
+                    1 | 2 | 6 => a == 0,
+                    3 => a.abs() <= 2,
+                    4 => a.abs() != 1,
+                    5 => a == 0 || (a.abs() == 2 && arm_tip()),
+                    _ => false,
+                };
+                cactus.then_some(plants::CACTUS)
             }
             TreeKind::Jungle => {
                 if trunk {
@@ -618,9 +739,25 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
     let z = cz * TREE_CELL + ((h >> 8) % TREE_CELL as u32) as i32;
     let col = column(x, z);
     // At a cave entrance the ground may be hollowed out.
-    // Nor in lakes or on their sandy shores.
-    if col.cave_top >= col.height || col.height >= TREE_LINE || col.height <= WATER_LEVEL {
+    if col.cave_top >= col.height || col.height >= TREE_LINE {
         return None;
+    }
+    let roll = (h >> 16) % 100;
+    // Papyrus on the rainforest's and savanna's swampy shores.
+    if col.height == WATER_LEVEL && matches!(col.biome, Biome::Rainforest | Biome::Savanna) {
+        return (roll < 60).then(|| Tree { x, z, ground: col.height, kind: TreeKind::Papyrus, height: 2 + ((h >> 24) % 3) as i32 });
+    }
+    // Nor in lakes or on their sandy shores.
+    if col.height <= WATER_LEVEL {
+        return None;
+    }
+    // Cacti in the desert, now and then a large one.
+    if col.biome == Biome::Desert {
+        return match roll {
+            0..=3 => Some(Tree { x, z, ground: col.height, kind: TreeKind::Cactus, height: 2 + ((h >> 24) % 4) as i32 }),
+            4..=5 => Some(Tree { x, z, ground: col.height, kind: TreeKind::LargeCactus, height: 6 }),
+            _ => None,
+        };
     }
     let kind = match col.biome {
         Biome::Desert => return None,
@@ -639,14 +776,27 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
         TreeKind::Acacia => 5 + ((forest - 0.05) * 60.0).clamp(0.0, 10.0) as u32,
         _ => 4 + ((forest - 0.05) * 300.0).clamp(0.0, 66.0) as u32,
     };
-    let roll = (h >> 16) % 100;
     // Apple trees came later: they grow only in lowland patches that had
     // no tree, so the trees of worlds made before stay as they were. About
     // one lowland tree in three is an apple tree.
+    // Bushes grow in some of the patches left over: plain and blueberry
+    // bushes in the lowland grass, fir bushes higher up and in the snow
+    // (where blueberries grow too), acacia bushes on the savanna.
+    let spare = roll.saturating_sub(chance + chance / 2);
+    let bush = || match (kind, (h >> 4) % 100) {
+        (TreeKind::Birch, 0..=2) => Some(TreeKind::Bush),
+        (TreeKind::Birch, 3..=4) => Some(TreeKind::BlueberryBush),
+        (TreeKind::Fir, 0..=2) => Some(TreeKind::FirBush),
+        (TreeKind::Fir, 3) if col.biome == Biome::Snow => Some(TreeKind::BlueberryBush),
+        (TreeKind::Acacia, 0..=3) => Some(TreeKind::AcaciaBush),
+        _ => None,
+    };
     let kind = if roll < chance {
         kind
     } else if kind == TreeKind::Birch && roll < chance + chance / 2 {
         TreeKind::Apple
+    } else if let Some(b) = bush().filter(|_| spare > 0) {
+        b
     } else {
         return None;
     };
@@ -657,18 +807,27 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
         TreeKind::Apple => 4 + ((h >> 24) % 2) as i32,
         TreeKind::Jungle => 8 + ((h >> 24) % 5) as i32,
         TreeKind::Acacia => 5 + ((h >> 24) % 2) as i32,
+        _ => 1,
     };
     Some(Tree { x, z, ground: col.height, kind, height })
 }
 
-/// The plant growing on the grassland surface of a column, if any: tall
-/// grass in drifts that come and go across the land (minetest_game's grass
-/// decorations, five heights), and here and there a patch of wild cotton
-/// (minetest_game grows it in savanna, which we don't have). Not on sand,
-/// snow or a cave mouth. It stands in the node above the surface, which
-/// was empty in worlds made before.
+/// The plant growing on the surface of a column, if any: tall grass in
+/// drifts that come and go across the land (minetest_game's grass
+/// decorations, five heights), dry grass on the savanna, jungle grass in
+/// the rainforest, ferns under the firs, marram grass on sandy shores, and
+/// here and there a patch of wild cotton. Not on snow or a cave mouth. It
+/// stands in the node above the surface.
 pub fn plant_on(x: i32, z: i32, col: &Column) -> Option<u16> {
+    // Marram grass on the grassland's sandy shores (minetest_game's dunes).
+    if col.height == WATER_LEVEL && col.biome == Biome::Grassland && col.cave_top < col.height {
+        let h = hash(x, 0x3A2, z, SEED_SHORE);
+        let patch = noise2(x as f32 / 16.0, z as f32 / 16.0, SEED_SHORE) > 0.1;
+        return (patch && h % 3 == 0).then(|| plants::MARRAM[((h >> 8) % 3) as usize]);
+    }
     let grasses = match col.biome {
+        // Ferns under the firs (minetest_game's coniferous forest).
+        Biome::Grassland if col.height >= FIR_LINE => [plants::FERN[0], plants::FERN[1], plants::FERN[2], plants::FERN[2], plants::FERN[1]],
         Biome::Grassland => farming::GRASS,
         Biome::Savanna => farming::DRY_GRASS,
         Biome::Rainforest => [farming::JUNGLEGRASS; 5],

@@ -17,6 +17,7 @@ use crate::beds;
 use crate::doors;
 use crate::farming;
 use crate::fences;
+use crate::plants;
 use crate::stairs;
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,13 @@ pub enum Kind {
     /// A fence gate, closed or open: a model turned by facedir, opened and
     /// closed with a right-click.
     Gate,
+    /// Papyrus: plantlike, walked through, not built over.
+    Stalk,
+    /// A bush's stem: plantlike and larger than its node, but solid.
+    Stem,
+    /// Kelp and corals: a block with a plant growing out of its top
+    /// (plantlike_rooted), drawn through the water above.
+    Rooted,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -201,6 +209,7 @@ pub const ITEM_BREAD: u16 = 0x100B;
 pub const ITEM_COTTON: u16 = 0x100C;
 pub const ITEM_STRING: u16 = 0x100D;
 pub const ITEM_BUCKET_LAVA: u16 = 0x100E;
+pub const ITEM_BLUEBERRIES: u16 = 0x100F;
 /// Health bread gives (minetest_game's item_eat(5)).
 pub const BREAD_HP: u16 = 5;
 /// Tools have ids from 0x2000 up.
@@ -1443,6 +1452,295 @@ pub const NODES: &[Node] = &[
     shaped!(stairs::LATER.first_inner() + 1, "stair_inner_acacia_wood", "Inner Acacia Wood Stair", "default_acacia_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
     shaped!(stairs::LATER.first_outer() + 0, "stair_outer_jungle_wood", "Outer Jungle Wood Stair", "default_junglewood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
     shaped!(stairs::LATER.first_outer() + 1, "stair_outer_acacia_wood", "Outer Acacia Wood Stair", "default_acacia_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    // minetest_game's cactus, papyrus, bushes, ferns, marram grass, kelp
+    // and corals (plants.rs; CC BY-SA 3.0, see media/LICENSE-items.txt).
+    Node {
+        id: plants::CACTUS,
+        name: "esp:cactus",
+        description: "Cactus",
+        tiles: [
+            "default_cactus_top.png",
+            "default_cactus_top.png",
+            "default_cactus_side.png",
+            "default_cactus_side.png",
+            "default_cactus_side.png",
+            "default_cactus_side.png",
+        ],
+        groups: &[("choppy", 3)],
+        drop: plants::CACTUS,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: plants::PAPYRUS,
+        name: "esp:papyrus",
+        description: "Papyrus",
+        tiles: ["default_papyrus.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 2)],
+        drop: plants::PAPYRUS,
+        drop_count: 1,
+        kind: Kind::Stalk,
+    },
+    Node {
+        id: plants::BUSH_STEM,
+        name: "esp:bush_stem",
+        description: "Bush Stem",
+        tiles: ["default_bush_stem.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 1), ("flammable", 2)],
+        drop: plants::BUSH_STEM,
+        drop_count: 1,
+        kind: Kind::Stem,
+    },
+    Node {
+        id: plants::BUSH_LEAVES,
+        name: "esp:bush_leaves",
+        description: "Bush Leaves",
+        tiles: ["default_leaves_simple.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 2), ("leaves", 1)],
+        drop: plants::BUSH_LEAVES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    Node {
+        id: plants::BUSH_SAPLING,
+        name: "esp:bush_sapling",
+        description: "Bush Sapling",
+        tiles: ["default_bush_sapling.png"; 6],
+        groups: &[("snappy", 2), ("dig_immediate", 3), ("flammable", 2), ("attached_node", 1), ("sapling", 1)],
+        drop: plants::BUSH_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
+    Node {
+        id: plants::BLUEBERRY_LEAVES_WITH_BERRIES,
+        name: "esp:blueberry_bush_leaves_with_berries",
+        description: "Blueberry Bush Leaves with Berries",
+        tiles: ["default_blueberry_bush_leaves.png^default_blueberry_overlay.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 2), ("leaves", 1), ("dig_immediate", 3)],
+        drop: ITEM_BLUEBERRIES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    Node {
+        id: plants::BLUEBERRY_LEAVES,
+        name: "esp:blueberry_bush_leaves",
+        description: "Blueberry Bush Leaves",
+        tiles: ["default_blueberry_bush_leaves.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 2), ("leaves", 1)],
+        drop: plants::BLUEBERRY_LEAVES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    Node {
+        id: plants::BLUEBERRY_SAPLING,
+        name: "esp:blueberry_bush_sapling",
+        description: "Blueberry Bush Sapling",
+        tiles: ["default_blueberry_bush_sapling.png"; 6],
+        groups: &[("snappy", 2), ("dig_immediate", 3), ("flammable", 2), ("attached_node", 1), ("sapling", 1)],
+        drop: plants::BLUEBERRY_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
+    Node {
+        id: plants::ACACIA_BUSH_STEM,
+        name: "esp:acacia_bush_stem",
+        description: "Acacia Bush Stem",
+        tiles: ["default_acacia_bush_stem.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 1), ("flammable", 2)],
+        drop: plants::ACACIA_BUSH_STEM,
+        drop_count: 1,
+        kind: Kind::Stem,
+    },
+    Node {
+        id: plants::ACACIA_BUSH_LEAVES,
+        name: "esp:acacia_bush_leaves",
+        description: "Acacia Bush Leaves",
+        tiles: ["default_acacia_leaves_simple.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 2), ("leaves", 1)],
+        drop: plants::ACACIA_BUSH_LEAVES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    Node {
+        id: plants::ACACIA_BUSH_SAPLING,
+        name: "esp:acacia_bush_sapling",
+        description: "Acacia Bush Sapling",
+        tiles: ["default_acacia_bush_sapling.png"; 6],
+        groups: &[("snappy", 2), ("dig_immediate", 3), ("flammable", 2), ("attached_node", 1), ("sapling", 1)],
+        drop: plants::ACACIA_BUSH_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
+    Node {
+        id: plants::FIR_BUSH_STEM,
+        name: "esp:fir_bush_stem",
+        description: "Fir Bush Stem",
+        tiles: ["default_pine_bush_stem.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 1), ("flammable", 2)],
+        drop: plants::FIR_BUSH_STEM,
+        drop_count: 1,
+        kind: Kind::Stem,
+    },
+    Node {
+        id: plants::FIR_BUSH_NEEDLES,
+        name: "esp:fir_bush_needles",
+        description: "Fir Bush Needles",
+        tiles: ["esp_fir_needles.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 2), ("leaves", 1)],
+        drop: plants::FIR_BUSH_NEEDLES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    Node {
+        id: plants::FIR_BUSH_SAPLING,
+        name: "esp:fir_bush_sapling",
+        description: "Fir Bush Sapling",
+        tiles: ["default_pine_bush_sapling.png"; 6],
+        groups: &[("snappy", 2), ("dig_immediate", 3), ("flammable", 2), ("attached_node", 1), ("sapling", 1)],
+        drop: plants::FIR_BUSH_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
+    Node {
+        id: plants::FERN[0],
+        name: "esp:fern_1",
+        description: "Fern",
+        tiles: ["default_fern_1.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 3), ("flora", 1), ("grass", 1), ("fern", 1), ("attached_node", 1)],
+        drop: plants::FERN[0],
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: plants::FERN[1],
+        name: "esp:fern_2",
+        description: "Fern",
+        tiles: ["default_fern_2.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 3), ("flora", 1), ("grass", 1), ("fern", 1), ("attached_node", 1), ("not_in_creative_inventory", 1)],
+        drop: plants::FERN[0],
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: plants::FERN[2],
+        name: "esp:fern_3",
+        description: "Fern",
+        tiles: ["default_fern_3.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 3), ("flora", 1), ("grass", 1), ("fern", 1), ("attached_node", 1), ("not_in_creative_inventory", 1)],
+        drop: plants::FERN[0],
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: plants::MARRAM[0],
+        name: "esp:marram_grass_1",
+        description: "Marram Grass",
+        tiles: ["default_marram_grass_1.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 3), ("flora", 1), ("grass", 1), ("marram_grass", 1), ("attached_node", 1)],
+        drop: plants::MARRAM[0],
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: plants::MARRAM[1],
+        name: "esp:marram_grass_2",
+        description: "Marram Grass",
+        tiles: ["default_marram_grass_2.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 3), ("flora", 1), ("grass", 1), ("marram_grass", 1), ("attached_node", 1), ("not_in_creative_inventory", 1)],
+        drop: plants::MARRAM[0],
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: plants::MARRAM[2],
+        name: "esp:marram_grass_3",
+        description: "Marram Grass",
+        tiles: ["default_marram_grass_3.png"; 6],
+        groups: &[("snappy", 3), ("flammable", 3), ("flora", 1), ("grass", 1), ("marram_grass", 1), ("attached_node", 1), ("not_in_creative_inventory", 1)],
+        drop: plants::MARRAM[0],
+        drop_count: 1,
+        kind: Kind::Plant,
+    },
+    Node {
+        id: plants::KELP,
+        name: "esp:sand_with_kelp",
+        description: "Kelp",
+        tiles: ["esp_sand.png"; 6],
+        groups: &[("snappy", 3)],
+        drop: plants::KELP,
+        drop_count: 1,
+        kind: Kind::Rooted,
+    },
+    Node {
+        id: plants::CORAL_GREEN,
+        name: "esp:coral_green",
+        description: "Green Coral",
+        tiles: ["default_coral_skeleton.png"; 6],
+        groups: &[("snappy", 3)],
+        drop: plants::CORAL_GREEN,
+        drop_count: 1,
+        kind: Kind::Rooted,
+    },
+    Node {
+        id: plants::CORAL_PINK,
+        name: "esp:coral_pink",
+        description: "Pink Coral",
+        tiles: ["default_coral_skeleton.png"; 6],
+        groups: &[("snappy", 3)],
+        drop: plants::CORAL_PINK,
+        drop_count: 1,
+        kind: Kind::Rooted,
+    },
+    Node {
+        id: plants::CORAL_CYAN,
+        name: "esp:coral_cyan",
+        description: "Cyan Coral",
+        tiles: ["default_coral_skeleton.png"; 6],
+        groups: &[("snappy", 3)],
+        drop: plants::CORAL_CYAN,
+        drop_count: 1,
+        kind: Kind::Rooted,
+    },
+    Node {
+        id: plants::CORAL_BROWN,
+        name: "esp:coral_brown",
+        description: "Brown Coral",
+        tiles: ["default_coral_brown.png"; 6],
+        groups: &[("cracky", 3)],
+        drop: plants::CORAL_SKELETON,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: plants::CORAL_ORANGE,
+        name: "esp:coral_orange",
+        description: "Orange Coral",
+        tiles: ["default_coral_orange.png"; 6],
+        groups: &[("cracky", 3)],
+        drop: plants::CORAL_SKELETON,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: plants::CORAL_SKELETON,
+        name: "esp:coral_skeleton",
+        description: "Coral Skeleton",
+        tiles: ["default_coral_skeleton.png"; 6],
+        groups: &[("cracky", 3)],
+        drop: plants::CORAL_SKELETON,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: plants::LARGE_CACTUS_SEEDLING,
+        name: "esp:large_cactus_seedling",
+        description: "Large Cactus Seedling",
+        tiles: ["default_large_cactus_seedling.png"; 6],
+        groups: &[("choppy", 3), ("dig_immediate", 3), ("attached_node", 1)],
+        drop: plants::LARGE_CACTUS_SEEDLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -1644,6 +1942,14 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Lava Bucket",
         image: "bucket_lava.png",
         groups: &[("tool", 1)],
+    },
+    // minetest_game's blueberries, eaten for 2 HP.
+    CraftItem {
+        id: ITEM_BLUEBERRIES,
+        name: "esp:blueberries",
+        description: "Blueberries",
+        image: "default_blueberries.png",
+        groups: &[("food_blueberries", 1), ("food_berry", 1)],
     },
     // farming's (see media/LICENSE-farming.txt).
     CraftItem {
@@ -2048,7 +2354,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -2092,12 +2398,12 @@ pub fn buildable_to(id: u16) -> bool {
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -2149,6 +2455,9 @@ pub fn tree_of_leaves(id: u16) -> Option<(u16, u16)> {
         CONTENT_APPLE_LEAVES => Some((CONTENT_APPLE_SAPLING, CONTENT_APPLE_TREE)),
         CONTENT_JUNGLE_LEAVES => Some((CONTENT_JUNGLE_SAPLING, CONTENT_JUNGLE_TREE)),
         CONTENT_ACACIA_LEAVES => Some((CONTENT_ACACIA_SAPLING, CONTENT_ACACIA_TREE)),
+        plants::BUSH_LEAVES => Some((plants::BUSH_SAPLING, plants::BUSH_STEM)),
+        plants::ACACIA_BUSH_LEAVES => Some((plants::ACACIA_BUSH_SAPLING, plants::ACACIA_BUSH_STEM)),
+        plants::FIR_BUSH_NEEDLES => Some((plants::FIR_BUSH_SAPLING, plants::FIR_BUSH_STEM)),
         _ => None,
     }
 }
@@ -2165,6 +2474,19 @@ pub fn decay_trunk(id: u16) -> Option<u16> {
 /// Whether a node is a trunk whose digging may make leaves decay.
 pub fn is_trunk(id: u16) -> bool {
     matches!(id, CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_APPLE_TREE | CONTENT_JUNGLE_TREE | CONTENT_ACACIA_TREE)
+        || matches!(id, plants::BUSH_STEM | plants::ACACIA_BUSH_STEM | plants::FIR_BUSH_STEM)
+}
+
+/// The sapling leaves give now and then, and how rarely (one time in
+/// so many): SAPLING_RARITY for trees, 5 for bushes (minetest_game's
+/// drop tables). Blueberry bush leaves have no stem to decay without,
+/// but give saplings all the same.
+pub fn sapling_of_leaves(id: u16) -> Option<(u16, u32)> {
+    match id {
+        plants::BUSH_LEAVES | plants::ACACIA_BUSH_LEAVES | plants::FIR_BUSH_NEEDLES => tree_of_leaves(id).map(|(s, _)| (s, 5)),
+        plants::BLUEBERRY_LEAVES => Some((plants::BLUEBERRY_SAPLING, 5)),
+        _ => tree_of_leaves(id).map(|(s, _)| (s, SAPLING_RARITY)),
+    }
 }
 
 pub fn is_apple(id: u16) -> bool {
@@ -2520,6 +2842,35 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_dry_grass_4.png", include_bytes!("../media/default_dry_grass_4.png")),
     ("default_dry_grass_5.png", include_bytes!("../media/default_dry_grass_5.png")),
     ("default_junglegrass.png", include_bytes!("../media/default_junglegrass.png")),
+    ("default_cactus_top.png", include_bytes!("../media/default_cactus_top.png")),
+    ("default_cactus_side.png", include_bytes!("../media/default_cactus_side.png")),
+    ("default_papyrus.png", include_bytes!("../media/default_papyrus.png")),
+    ("default_bush_stem.png", include_bytes!("../media/default_bush_stem.png")),
+    ("default_leaves_simple.png", include_bytes!("../media/default_leaves_simple.png")),
+    ("default_bush_sapling.png", include_bytes!("../media/default_bush_sapling.png")),
+    ("default_blueberry_bush_leaves.png", include_bytes!("../media/default_blueberry_bush_leaves.png")),
+    ("default_blueberry_overlay.png", include_bytes!("../media/default_blueberry_overlay.png")),
+    ("default_blueberry_bush_sapling.png", include_bytes!("../media/default_blueberry_bush_sapling.png")),
+    ("default_blueberries.png", include_bytes!("../media/default_blueberries.png")),
+    ("default_acacia_bush_stem.png", include_bytes!("../media/default_acacia_bush_stem.png")),
+    ("default_acacia_leaves_simple.png", include_bytes!("../media/default_acacia_leaves_simple.png")),
+    ("default_acacia_bush_sapling.png", include_bytes!("../media/default_acacia_bush_sapling.png")),
+    ("default_pine_bush_stem.png", include_bytes!("../media/default_pine_bush_stem.png")),
+    ("default_pine_bush_sapling.png", include_bytes!("../media/default_pine_bush_sapling.png")),
+    ("default_fern_1.png", include_bytes!("../media/default_fern_1.png")),
+    ("default_fern_2.png", include_bytes!("../media/default_fern_2.png")),
+    ("default_fern_3.png", include_bytes!("../media/default_fern_3.png")),
+    ("default_marram_grass_1.png", include_bytes!("../media/default_marram_grass_1.png")),
+    ("default_marram_grass_2.png", include_bytes!("../media/default_marram_grass_2.png")),
+    ("default_marram_grass_3.png", include_bytes!("../media/default_marram_grass_3.png")),
+    ("default_kelp.png", include_bytes!("../media/default_kelp.png")),
+    ("default_coral_green.png", include_bytes!("../media/default_coral_green.png")),
+    ("default_coral_pink.png", include_bytes!("../media/default_coral_pink.png")),
+    ("default_coral_cyan.png", include_bytes!("../media/default_coral_cyan.png")),
+    ("default_coral_brown.png", include_bytes!("../media/default_coral_brown.png")),
+    ("default_coral_orange.png", include_bytes!("../media/default_coral_orange.png")),
+    ("default_coral_skeleton.png", include_bytes!("../media/default_coral_skeleton.png")),
+    ("default_large_cactus_seedling.png", include_bytes!("../media/default_large_cactus_seedling.png")),
     ("default_grass_2.png", include_bytes!("../media/default_grass_2.png")),
     ("default_grass_3.png", include_bytes!("../media/default_grass_3.png")),
     ("default_grass_4.png", include_bytes!("../media/default_grass_4.png")),
@@ -2722,6 +3073,22 @@ fn sounds_of(id: u16) -> Sounds {
         },
         id if is_torch(id) => wood,
         id if beds::is_bed(id) => wood,
+        // Cactus and bush stems sound like wood; kelp like sand, corals like
+        // stone, but dug like plants (plants.rs).
+        plants::CACTUS | plants::LARGE_CACTUS_SEEDLING | plants::BUSH_STEM | plants::ACACIA_BUSH_STEM | plants::FIR_BUSH_STEM => wood,
+        plants::PAPYRUS | plants::BUSH_LEAVES | plants::BUSH_SAPLING | plants::BLUEBERRY_LEAVES_WITH_BERRIES | plants::BLUEBERRY_LEAVES
+        | plants::BLUEBERRY_SAPLING | plants::ACACIA_BUSH_LEAVES | plants::ACACIA_BUSH_SAPLING | plants::FIR_BUSH_NEEDLES
+        | plants::FIR_BUSH_SAPLING => sounds_of(CONTENT_BIRCH_LEAVES),
+        plants::KELP => Sounds {
+            dig: ("default_dig_snappy", 0.2),
+            dug: ("default_grass_footstep", 0.25),
+            ..sounds_of(CONTENT_SAND)
+        },
+        plants::CORAL_GREEN | plants::CORAL_PINK | plants::CORAL_CYAN => Sounds {
+            dig: ("default_dig_snappy", 0.2),
+            dug: ("default_grass_footstep", 0.25),
+            ..stone
+        },
         id if fences::burn_time(id) > 0.0 || fences::is_gate(id) => wood,
         // stone, sandstone, ores
         _ => stone,
@@ -2733,6 +3100,16 @@ fn trapdoor_image(id: u16) -> &'static str {
     match doors::trapdoor_of(id) {
         Some((t, _)) if t.locked => TRAPDOOR_STEEL_CLOSED[0],
         _ => TRAPDOOR_WOOD_CLOSED[0],
+    }
+}
+
+/// The plant growing out of kelp or a coral.
+fn rooted_plant(id: u16) -> &'static str {
+    match id {
+        plants::CORAL_GREEN => "default_coral_green.png",
+        plants::CORAL_PINK => "default_coral_pink.png",
+        plants::CORAL_CYAN => "default_coral_cyan.png",
+        _ => "default_kelp.png",
     }
 }
 
@@ -2834,6 +3211,8 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Trapdoor => trapdoor_image(n.id),
                 Kind::Bed => bed_image(n.id),
                 Kind::Fence => fence_image(n.id),
+                Kind::Stalk | Kind::Stem => n.tiles[0],
+                Kind::Rooted => rooted_plant(n.id),
                 _ => "",
             },
             wield_image: match n.kind {
@@ -2844,12 +3223,15 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Trapdoor => trapdoor_image(n.id),
                 Kind::Bed => bed_image(n.id),
                 Kind::Fence => fence_image(n.id),
+                Kind::Stalk | Kind::Stem => n.tiles[0],
+                Kind::Rooted => rooted_plant(n.id),
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
             // A bed is placed as two nodes, or not at all (its on_place):
             // the client doesn't guess.
-            place_prediction: if n.kind == Kind::Bed { "" } else { n.name },
+            // Nor are kelp and corals, which go into the node pointed at.
+            place_prediction: if matches!(n.kind, Kind::Bed | Kind::Rooted) { "" } else { n.name },
             tool_capabilities: Vec::new(),
             place_sound: sounds_of(n.id).place,
             stack_max: stack_max(n.id),
@@ -2873,7 +3255,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             groups: c.groups,
             // The empty bucket is used (left-click) to scoop water; bread
             // is eaten.
-            usable: matches!(c.id, ITEM_BUCKET_EMPTY | ITEM_BREAD),
+            usable: matches!(c.id, ITEM_BUCKET_EMPTY | ITEM_BREAD | ITEM_BLUEBERRIES),
             liquids_pointable: liquids_pointable(c.id),
         });
     }
@@ -2918,6 +3300,8 @@ const POINTABLE: u8 = 1;
 const ALPHAMODE_OPAQUE: u8 = 2;
 const ALPHAMODE_CLIP: u8 = 1;
 const NDT_MESH: u8 = 16;
+const NDT_PLANTLIKE_ROOTED: u8 = 17;
+const CPT2_LEVELED: u8 = 5;
 const NDT_PLANTLIKE: u8 = 9;
 const NDT_AIRLIKE: u8 = 1;
 const NDT_SIGNLIKE: u8 = 8;
@@ -3032,7 +3416,9 @@ const CHEST_OPEN_MESH: &str = "chest_open.obj";
 /// tufts of grass, taller wild cotton, and crops and seeds flat on the
 /// ground.
 fn farming_box(id: u16) -> [f32; 6] {
-    if farming::is_grass(id) || farming::is_dry_grass(id) {
+    if plants::is_small_plant(id) {
+        [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, -0.25, 6.0 / 16.0]
+    } else if farming::is_grass(id) || farming::is_dry_grass(id) {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, -5.0 / 16.0, 6.0 / 16.0]
     } else if id == farming::JUNGLEGRASS {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, 0.5, 6.0 / 16.0]
@@ -3124,6 +3510,10 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     let fence = n.kind == Kind::Fence;
     let gate = fences::gate_of(n.id);
     let fence_box = if fences::is_rail(n.id) { &fences::RAIL_BOX } else { &fences::FENCE_BOX };
+    // Papyrus and bush stems: plants, the stems solid; kelp and corals:
+    // blocks with a plant on top.
+    let stalk = matches!(n.kind, Kind::Stalk | Kind::Stem);
+    let rooted = n.kind == Kind::Rooted;
     if torch {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
     } else if leaves {
@@ -3145,8 +3535,11 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
     } else if seed {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
-    } else if fence {
+    } else if fence || stalk {
         w.u8(CPT_LIGHT).u8(0);
+    } else if rooted {
+        // Kelp's param2 is its height, in sixteenths of a node (leveled).
+        w.u8(CPT_LIGHT).u8(if n.id == plants::KELP { CPT2_LEVELED } else { 0 });
     } else if shaped.is_some() || door.is_some() || hidden || trapdoor.is_some() || bed || gate.is_some() {
         w.u8(CPT_LIGHT).u8(CPT2_FACEDIR);
     } else {
@@ -3173,11 +3566,20 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Bed | Kind::BedTop => (NDT_NODEBOX, ""),
         Kind::Fence => (NDT_NODEBOX, ""),
         Kind::Gate => (NDT_MESH, fences::gate_mesh(n.id)),
+        Kind::Stalk | Kind::Stem => (NDT_PLANTLIKE, ""),
+        Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
     // Jungle grass is drawn larger than its node (minetest_game's 1.69).
-    let scale = if n.id == farming::JUNGLEGRASS { 1.69 } else { 1.0 };
+    // So are bush stems (1.41).
+    let scale = if n.id == farming::JUNGLEGRASS {
+        1.69
+    } else if n.kind == Kind::Stem {
+        1.41
+    } else {
+        1.0
+    };
     w.u8(drawtype).string16(mesh).f32(scale); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
     // the Lua API defaults them.
@@ -3192,7 +3594,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL | culling
     } else if gate.is_some() {
         TILE_FLAG_TILEABLE_HORIZONTAL | TILE_FLAG_TILEABLE_VERTICAL | TILE_FLAG_BACKFACE_CULLING
-    } else if sapling || ladder || plant || seed {
+    } else if sapling || ladder || plant || seed || stalk {
         0
     } else {
         TILE_FLAG_BACKFACE_CULLING
@@ -3223,6 +3625,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
             0 if flowing && lava => animated_tile(&mut w, LAVA_FLOWING_TILE, 0, 3.3),
             1 if flowing && lava => animated_tile(&mut w, LAVA_FLOWING_TILE, TILE_FLAG_BACKFACE_CULLING, 3.3),
             0 if flowing => animated_tile(&mut w, WATER_FLOWING_TILE, 0, 0.5),
+            // The plant growing out of kelp and corals, seen from both sides.
+            0 if rooted => tile(&mut w, rooted_plant(n.id), TILE_FLAG_TILEABLE_VERTICAL),
             1 if flowing => animated_tile(&mut w, WATER_FLOWING_TILE, TILE_FLAG_BACKFACE_CULLING, 0.5),
             _ => tile(&mut w, "", flags), // special tiles
         }
@@ -3232,7 +3636,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(255)
         .u8(255) // colour
         .string16("") // palette
-        .u8(if liquid && !lava { 3 } else if plant { 1 } else { 0 }) // waving: water ripples, plants sway
+        .u8(if liquid && !lava { 3 } else if plant || rooted { 1 } else { 0 }) // waving: water ripples, plants sway
         .u8(if gate.is_some() { fences::GATE_SIDES } else { 0 }); // connect_sides
     // connects_to: what a fence joins.
     let joins = if fence { fence_joins(if fences::is_rail(n.id) { &fences::RAIL_JOINS } else { &fences::JOINS }) } else { Vec::new() };
@@ -3246,7 +3650,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some()) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk) as u8) // light_propagates
         .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
@@ -3319,6 +3723,17 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         fixed_nodebox(&mut w, &[farming_box(n.id)]);
     } else if bed {
         fixed_nodebox(&mut w, &[beds::selection_box(n.id)]);
+    } else if stalk {
+        let r = if n.kind == Kind::Stem { 7.0 / 16.0 } else { 6.0 / 16.0 };
+        fixed_nodebox(&mut w, &[[-r, -0.5, -r, r, 0.5, r]]);
+    } else if rooted {
+        // The block, and the plant above it.
+        let plant = if n.id == plants::KELP {
+            [-2.0 / 16.0, 0.5, -2.0 / 16.0, 2.0 / 16.0, 3.5, 2.0 / 16.0]
+        } else {
+            [-4.0 / 16.0, 0.5, -4.0 / 16.0, 4.0 / 16.0, 1.5, 4.0 / 16.0]
+        };
+        fixed_nodebox(&mut w, &[[-0.5, -0.5, -0.5, 0.5, 0.5, 0.5], plant]);
     } else if fence {
         // builtin's register_node: a nodebox's selection box is its node box.
         connected_nodebox(&mut w, fence_box);
@@ -3353,13 +3768,17 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // A steel door's owner alone can dig it, so the client doesn't guess
     // that it went (minetest_game's node_dig_prediction = "").
-    w.string16(if doors::is_locked(n.id) { "" } else { "air" }) // node_dig_prediction
+    w.string16(match plants::after_dig(n.id) {
+        _ if doors::is_locked(n.id) => "",
+        Some(left) => name_of(left),
+        None => "air",
+    }) // node_dig_prediction
         .u8(LEVELED_MAX)
         .u8(if lava {
             ALPHAMODE_OPAQUE
         } else if liquid {
             ALPHAMODE_BLEND
-        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed || gate.is_some() {
+        } else if torch || leaves || sapling || mark || glass || ladder || doorway || trapdoor.is_some() || plant || seed || bed || gate.is_some() || stalk || rooted {
             ALPHAMODE_CLIP
         } else {
             ALPHAMODE_OPAQUE

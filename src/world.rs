@@ -454,10 +454,11 @@ impl World {
     fn apply(&mut self, pos: NodePos, id: u16, param2: u8) {
         let col = self.column(pos.0, pos.2);
         let generated = self.generated(pos.0, pos.1, pos.2, &col);
+        let generated_param2 = terrain::generated_param2(pos.0, pos.1, pos.2, generated);
         let st = Arc::make_mut(&mut self.state);
         // Kept even if the change is undone; it only costs some lookups.
         st.changed_blocks.insert(block_of_node(pos));
-        if id == generated && param2 == 0 {
+        if id == generated && param2 == generated_param2 {
             st.changes.remove(&pos);
         } else {
             st.changes.insert(pos, id);
@@ -473,8 +474,22 @@ impl World {
         }
     }
 
+    /// A node's param2: as a player left it, or as generated (only kelp
+    /// has one, its height).
     pub fn param2(&self, pos: NodePos) -> u8 {
-        self.state.param2s.get(&pos).copied().unwrap_or(0)
+        if let Some(&p) = self.state.param2s.get(&pos) {
+            return p;
+        }
+        // Kelp grows only on lake beds, deep down: most positions can't be
+        // kelp, and are answered without generating anything.
+        if pos.1 > terrain::KELP_TOP || self.state.changes.contains_key(&pos) {
+            return 0;
+        }
+        let col = self.column(pos.0, pos.2);
+        if pos.1 != col.height {
+            return 0;
+        }
+        terrain::generated_param2(pos.0, pos.1, pos.2, self.generated(pos.0, pos.1, pos.2, &col))
     }
 
     pub fn node(&self, pos: NodePos) -> u16 {
@@ -752,9 +767,10 @@ impl World {
                     };
                     let i = idx(x, y, z);
                     param0[i] = id;
-                    if changed {
-                        param2[i] = self.param2((wx, wy, wz));
-                    }
+                    param2[i] = match change {
+                        Some(_) => self.param2((wx, wy, wz)),
+                        None => terrain::generated_param2(wx, wy, wz, id),
+                    };
                     if content::passes_light(id) {
                         any_air |= id == CONTENT_AIR;
                         any_solid |= id != CONTENT_AIR; // flag 0x02 means "not all air"
