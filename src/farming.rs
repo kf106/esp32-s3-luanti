@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Keir Finlow-Bates
+// Based on minetest_game's farming mod (mods/farming, MIT licence):
+//   Copyright (C) 2012-2016 PilzAdam
+//   Copyright (C) 2014-2016 webdesigner97
+//   Copyright (C) 2012-2016 Various Minetest Game developers and contributors
+
 //! Farming, as minetest_game's farming mod (mods/farming): hoes turn dirt
 //! into soil, which is wet with water within 3 nodes and dries out (and
 //! turns back to dirt if nothing is planted) without; seeds planted on soil

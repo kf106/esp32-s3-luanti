@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Keir Finlow-Bates
+// Based on minetest_game's beds mod (mods/beds, MIT licence):
+//   Copyright (C) 2014-2016 BlockMen
+//   Copyright (C) 2014-2016 Various Minetest Game developers and contributors
+
 //! Beds, as minetest_game's beds mod (mods/beds): a simple bed and a fancy
 //! bed, each two nodes long (a bottom, which is the item, and a top),
 //! placed the way the player looks. Right-clicking one at night lies the

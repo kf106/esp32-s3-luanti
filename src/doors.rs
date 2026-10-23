@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Keir Finlow-Bates
+// Based on minetest_game's doors mod (mods/doors, MIT licence):
+//   Copyright (C) 2012-2016 PilzAdam
+//   Copyright (C) 2014-2016 BlockMen
+//   Copyright (C) 2015-2016 sofar (sofar@foo-projects.org)
+//   Copyright (C) 2012-2016 Various Minetest Game developers and contributors
+
 //! Doors and trapdoors, as minetest_game's doors mod (mods/doors/init.lua):
 //! wooden, glass and steel doors, two nodes tall, and wooden and steel
 //! trapdoors, opened and closed with a right-click. Steel ones belong to

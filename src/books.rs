@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from minetest_game's books (mods/default/craftitems.lua):
+//   Copyright (C) 2011-2018 celeron55, Perttu Ahola <celeron55@gmail.com>
+//   Copyright (C) 2011-2018 Various Minetest Game developers and contributors
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Writing in books, as minetest_game's (mods/default/craftitems.lua):
 //! using a book (left-click with it in hand) opens a window with a title
 //! and a text to write; saving turns it into a "book with text", which

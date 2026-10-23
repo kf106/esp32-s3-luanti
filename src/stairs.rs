@@ -1,3 +1,12 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from minetest_game's stairs mod (mods/stairs/init.lua):
+//   Copyright (C) 2011-2017 Kahrl <kahrl@gmx.net>
+//   Copyright (C) 2011-2017 celeron55, Perttu Ahola <celeron55@gmail.com>
+//   Copyright (C) 2012-2017 Various Minetest Game developers and contributors
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Stairs and slabs, as minetest_game's stairs mod (mods/stairs/init.lua):
 //! a stair and a slab for each building block, crafted from it and back,
 //! turned to face the player who places them, and upside down when placed

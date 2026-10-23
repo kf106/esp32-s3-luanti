@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from Luanti's ServerMap::transformLiquidsLocal (src/servermap.cpp):
+//   Copyright (C) 2010-2024 celeron55, Perttu Ahola <celeron55@gmail.com>
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Flowing liquids (water and lava), as the Luanti engine does them
 //! (ServerMap::transformLiquidsLocal in src/servermap.cpp).
 //!

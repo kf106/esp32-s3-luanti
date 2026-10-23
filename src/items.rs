@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from Luanti's dropped item entity (builtin/game/item_entity.lua):
+//   Copyright (C) 2010-2024 celeron55, Perttu Ahola <celeron55@gmail.com>, and Luanti contributors
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Dropped items lying in the world, like builtin's "__builtin:item"
 //! entity: thrown by a player (or knocked off a wall), they fall and come to
 //! rest on the ground, merge with matching items nearby, and are picked up

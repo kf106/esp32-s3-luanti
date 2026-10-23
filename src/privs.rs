@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from Luanti's privileges and their chat commands (builtin/game/privileges.lua,
+// builtin/game/chat.lua):
+//   Copyright (C) 2010-2024 celeron55, Perttu Ahola <celeron55@gmail.com>, and Luanti contributors
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Privileges, as Luanti's (builtin/game/privileges.lua and chat.lua):
 //! what each player may do, the server's administrator, and the ban list.
 //!

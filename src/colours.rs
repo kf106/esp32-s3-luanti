@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Keir Finlow-Bates
+// Based on minetest_game's flowers, dye and wool mods (MIT licence):
+//   Copyright (C) 2012-2016 Ironzorg, VanessaE
+//   Copyright (C) 2012-2016 Perttu Ahola (celeron55) <celeron55@gmail.com>
+//   Copyright (C) 2012-2016 Various Minetest Game developers and contributors
+
 //! minetest_game's flowers, dyes and wool (mods/flowers, mods/dye,
 //! mods/wool): eight flowers and two mushrooms growing wild, and a
 //! waterlily on still water; a dye of each of 15 colours, four from a

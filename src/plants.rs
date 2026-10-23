@@ -1,3 +1,12 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from minetest_game's cactus, papyrus, bushes, kelp and corals
+// (mods/default/nodes.lua, functions.lua):
+//   Copyright (C) 2011-2018 celeron55, Perttu Ahola <celeron55@gmail.com>
+//   Copyright (C) 2011-2018 Various Minetest Game developers and contributors
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! minetest_game's other plants (mods/default/nodes.lua, functions.lua):
 //! cactus and papyrus, which grow upwards; the bushes, with blueberries
 //! that grow back; ferns and marram grass; and under water, kelp and

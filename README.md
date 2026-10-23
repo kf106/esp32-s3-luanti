@@ -465,7 +465,17 @@ place, before and after a change.
 
 ## Licence
 
-The code is released under the [MIT licence](LICENSE).
+The code is released under the [MIT licence](LICENSE), except for the files that are translations of Luanti's or Minetest Game's own code, which keep their licence, the [GNU LGPL, version 2.1 or later](COPYING.LESSER):
+
+- `src/dungeons.rs` (Luanti's dungeon generator, with Minetest Game's dungeon loot)
+- `src/liquids.rs` (Luanti's flowing liquids)
+- `src/commands.rs` and `src/privs.rs` (Luanti's chat commands and privileges)
+- `src/items.rs` (Luanti's dropped items)
+- `src/crafting.rs` (Luanti's recipe matching, with Minetest Game's recipes)
+- `src/meta.rs` and `src/jsonstring.rs` (Luanti's node metadata and item strings, with Minetest Game's signs)
+- `src/books.rs`, `src/furnace.rs`, `src/stairs.rs`, `src/nature.rs` and `src/plants.rs` (Minetest Game's books, furnace, stairs, leaf decay and saplings, and plants)
+
+Each says so at its top, with the original copyright holders. The firmware built from all of it is a combined work; as the full source is here, anyone can change and rebuild the LGPL parts, as that licence asks. Files based on Minetest Game mods under the MIT licence (`src/bones.rs`, `src/panes.rs`, `src/doors.rs`, `src/beds.rs`, `src/farming.rs`, `src/colours.rs`) stay MIT, crediting those mods' authors at their top.
 
 The media in `media/` have their own licences:
 - **From [Minetest Game](https://github.com/luanti-org/minetest_game), CC BY-SA 3.0:** the player model `character.b3d`, the default skin `character.png`, the torch models and textures, and the item and tool pictures (`default_*.png`, `gui_*.png`). Also the doors, gate, farming and bed media (`doors_*`, `door_*.b3d`, `default_fence_overlay.png`, `default_fence_rail_overlay.png`, `farming_*`, `default_grass_*.png`, `wool_*.png`, `beds_*.png`), the flower and dye pictures (`flowers_*.png`, `dye_*.png`), the pane and steel bar media (`xpanes_*`), and the bones textures (`bones_*.png`). Their credits are in `media/LICENSE-character.txt`, `media/LICENSE-torch.txt`, `media/LICENSE-items.txt`, `media/LICENSE-doors.txt`, `media/LICENSE-farming.txt`, `media/LICENSE-beds.txt`, `media/LICENSE-flowers.txt`, `media/LICENSE-xpanes.txt` and `media/LICENSE-bones.txt`. If you redistribute these files, the CC BY-SA terms apply to them, whatever you do with the code.

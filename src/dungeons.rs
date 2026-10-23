@@ -1,3 +1,17 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from Luanti's src/mapgen/dungeongen.cpp and MapgenBasic::generateDungeons
+// in src/mapgen/mapgen.cpp, and minetest_game's dungeon materials
+// (mods/default/mapgen.lua):
+//   Copyright (C) 2010-2018 celeron55, Perttu Ahola <celeron55@gmail.com>
+//   Copyright (C) 2013-2018 kwolekr, Ryan Kwolek <kwolekr@minetest.net>
+//   Copyright (C) 2015-2018 paramat
+//   Copyright (C) 2011-2018 Various Minetest Game developers and contributors
+// The loot chests are translated from minetest_game's dungeon_loot mod
+// (MIT licence): Copyright (C) 2017 sfan5.
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Dungeons, as Luanti's dungeon generator (src/mapgen/dungeongen.cpp,
 //! and MapgenBasic::generateDungeons in mapgen.cpp), with minetest_game's
 //! dungeon materials (mods/default/mapgen.lua) and loot chests

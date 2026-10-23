@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Keir Finlow-Bates
+// Based on minetest_game's xpanes mod (mods/xpanes, MIT licence):
+//   Copyright (C) 2014-2016 xyz
+//   Copyright (C) 2014-2016 BlockMen
+//   Copyright (C) 2016 Auke Kok <sofar@foo-projects.org>
+//   Copyright (C) 2014-2016 Various Minetest Game developers and contributors
+
 //! Glass panes, obsidian glass panes and steel bars, as minetest_game's
 //! xpanes mod (mods/xpanes/init.lua), with its steel bar door and
 //! trapdoor.

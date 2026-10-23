@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from minetest_game's furnace (mods/default/furnace.lua):
+//   Copyright (C) 2011-2018 celeron55, Perttu Ahola <celeron55@gmail.com>
+//   Copyright (C) 2011-2018 Various Minetest Game developers and contributors
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Furnaces, as minetest_game's (mods/default/furnace.lua): a block with
 //! its own inventory of three lists, "src" (what to smelt, 1 slot), "fuel"
 //! (1 slot) and "dst" (the results, 2x2).

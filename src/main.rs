@@ -19,6 +19,7 @@ mod furnace;
 mod indicator;
 mod inventory;
 mod items;
+mod jsonstring;
 mod lcd;
 mod liquids;
 mod messages;

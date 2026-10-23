@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Keir Finlow-Bates
+// Based on minetest_game's bones mod (mods/bones, MIT licence):
+//   Copyright (C) 2012-2016 PilzAdam
+//   Copyright (C) 2012-2016 Various Minetest Game developers and contributors
+
 //! Bones, as minetest_game's bones mod (mods/bones/init.lua): when a
 //! player dies with anything in their inventory, a bones block is left
 //! where they died, holding it all.

@@ -1,3 +1,12 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from minetest_game's leaf decay and saplings (mods/default/functions.lua,
+// trees.lua, nodes.lua):
+//   Copyright (C) 2011-2018 celeron55, Perttu Ahola <celeron55@gmail.com>
+//   Copyright (C) 2011-2018 Various Minetest Game developers and contributors
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Leaf decay and saplings, as minetest_game has them (functions.lua,
 //! trees.lua, nodes.lua):
 //!

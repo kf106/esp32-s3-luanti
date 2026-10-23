@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2026 Keir Finlow-Bates
+// Translated from Luanti's built-in chat commands (builtin/game/chat.lua):
+//   Copyright (C) 2010-2024 celeron55, Perttu Ahola <celeron55@gmail.com>, and Luanti contributors
+// Licensed under the GNU Lesser General Public License, version 2.1 or (at
+// your option) any later version: see COPYING.LESSER.
+
 //! Chat commands, as Luanti's built-in ones (builtin/game/chat.lua), with
 //! the same names, parameters, privileges and replies, for the commands
 //! that make sense here. A child of server.rs, so it works on the server
