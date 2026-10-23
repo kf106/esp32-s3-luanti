@@ -138,6 +138,15 @@ ask(boss, "/time", "Current time is 6:0")
 pleb.cmds.clear()
 ask(boss, "/teleport Pleb 10,20,30", "Teleporting Pleb to (10.0, 20.0, 30.0).")
 mv = pleb.wait_for(0x34); print("  Pleb moved to", struct.unpack_from(">fff", mv, 2)); assert struct.unpack_from(">fff", mv, 2) == (100.0, 200.0, 300.0)
+# The others see Pleb there too (their client's next report matches, so
+# it isn't relayed as a move).
+boss.wait_for(0x32, 5, cond=lambda m: struct.pack(">fff", 100.0, 200.0, 300.0) in m); print("  Boss sees Pleb there")
+# Summoned beside someone standing on the ground (their client reports
+# their feet a hair below its top): beside them, not inside them.
+x, y, z = boss.pos_bs; boss.pos_bs = (x, (round(y / 10 - 0.5) + 0.5) * 10 - 0.001, z); boss.playerpos(); boss.pump(0.3)
+pleb.cmds.clear(); ask(boss, "/teleport Pleb Boss", "Teleporting Pleb to Boss at")
+mv = struct.unpack_from(">fff", pleb.wait_for(0x34), 2); print("  Boss at", boss.pos_bs, "Pleb summoned to", mv)
+assert abs(mv[0] - x) + abs(mv[2] - z) >= 9.9
 ask(boss, "/teleport Pleb", "Teleporting Boss to Pleb at")
 ask(boss, "/clearinv Pleb", "Cleared Pleb's inventory.")
 print("ITEMS, TIME AND TELEPORT OK")

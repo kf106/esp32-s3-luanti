@@ -1729,6 +1729,22 @@ impl Server {
         }
     }
 
+    /// Tell everyone else where a player the server has just moved now is
+    /// (teleported, respawned, in or out of bed). Their client's next
+    /// position report matches what the server set, so it doesn't count
+    /// as a move to relay, and the others would go on seeing them where
+    /// they were.
+    pub(super) fn announce_position(&mut self, addr: SocketAddr) {
+        let Some(peer) = self.peers.get(&addr) else {
+            return;
+        };
+        let packet = build_object_messages(&[(peer.id, update_position_message(peer.pos_bs, [0.0; 3], peer.yaw))]);
+        let others: Vec<SocketAddr> = self.peers.iter().filter(|(a, p)| **a != addr && p.ready).map(|(a, _)| *a).collect();
+        for other in others {
+            self.send_command(other, 0, &packet);
+        }
+    }
+
     fn on_playerpos(&mut self, from: SocketAddr, payload: &[u8]) {
         let Some(pp) = parse_playerpos(payload) else {
             return;
@@ -2462,6 +2478,7 @@ impl Server {
         let texture = self.skin_texture(&skin);
         self.send_command(from, 0, &build_object_messages(&[(id, physics_override_message(true))]));
         self.send_command(from, 0, &build_move_player(pos_bs, pitch, yaw));
+        self.announce_position(from);
         self.send_command(from, 0, &build_local_player_animations(false));
         self.send_command(from, 0, &build_hud_set_flags(0, HUD_FLAG_WIELDITEM_VISIBLE));
         let lay = build_object_messages(&[
@@ -2493,6 +2510,7 @@ impl Server {
         let texture = self.skin_texture(&skin);
         if move_back {
             self.send_command(from, 0, &build_move_player(was.from_bs, pitch, yaw));
+            self.announce_position(from);
         }
         self.send_command(from, 0, &build_object_messages(&[(id, physics_override_message(false))]));
         self.send_command(from, 0, &build_local_player_animations(true));
@@ -3756,6 +3774,7 @@ impl Server {
         self.send_breath(from);
         self.send_command(from, 0, &build_move_player(spawn_bs, 0.0, 0.0));
         self.plan_blocks(from, spawn, MAX_VIEW_RADIUS);
+        self.announce_position(from);
     }
 
     /// Rearranging items in the inventory window. The client has already

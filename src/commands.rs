@@ -366,6 +366,7 @@ impl Server {
         peer.save(&self.players);
         self.send_command(addr, 0, &build_move_player(pos_bs, pitch, yaw));
         self.plan_blocks(addr, pos, MAX_VIEW_RADIUS);
+        self.announce_position(addr);
     }
 
     /// A player's position, in nodes.
@@ -385,7 +386,8 @@ impl Server {
     }
 
     /// Next to another player: the first of the four places beside them
-    /// that isn't solid, or where they stand (find_free_position_near).
+    /// with room to stand, or where they stand (find_free_position_near,
+    /// with the fix below).
     fn teleport_to_player(&mut self, who: &str, target: &str) -> String {
         if who.eq_ignore_ascii_case(target) {
             return "One does not teleport to oneself.".to_string();
@@ -397,10 +399,16 @@ impl Server {
             return format!("Cannot get target player with name {target}.");
         };
         let at = self.position(to);
+        // The node the body is in: a little above the feet. (Luanti looks
+        // at the node at the feet, and a player standing on the ground is
+        // reported a hair below its top, so it finds the ground beside
+        // them solid every way, and puts the newcomer inside them.) And
+        // room for the head.
+        let open = |x: i32, y: i32, z: i32| !content::walkable(self.world.node((x, y, z))) && !content::walkable(self.world.node((x, y + 1, z)));
         let free = [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0]]
             .iter()
             .map(|d| [at[0] + d[0], at[1], at[2] + d[2]])
-            .find(|p| !content::walkable(self.world.node((p[0].round() as i32, p[1].round() as i32, p[2].round() as i32))))
+            .find(|p| open(p[0].round() as i32, (p[1] + 0.6).round() as i32, p[2].round() as i32))
             .unwrap_or(at);
         self.move_player(addr, free);
         format!("Teleporting {who} to {target} at {}.", pos_text(free))

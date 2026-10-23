@@ -666,7 +666,7 @@ pub fn properties_message(p: &Props) -> Vec<u8> {
 }
 
 /// The Luanti engine's default player properties (PlayerSAO's
-/// constructor), with player_api's model wearing `skin` (a texture). For
+/// constructor), but physical, with player_api's model wearing `skin` (a texture). For
 /// the local player the client also takes its collision box, eye height
 /// and zoom from these. Sent again when the player changes skin, and when
 /// they lie down in a bed or get up: player_api's "lay" animation has a
@@ -679,7 +679,11 @@ pub fn player_properties_message(skin: &str, lying: bool) -> Vec<u8> {
     };
     properties_message(&Props {
         hp_max: PLAYER_MAX_HP,
-        physical: false,
+        // Solid to other players' clients, so players can't walk through
+        // each other. (Luanti leaves players non-physical, so they can.)
+        // Not while lying in bed, so a bed beside someone asleep can still
+        // be reached.
+        physical: !lying,
         collisionbox,
         selectionbox: [-0.3, 0.0, -0.3, 0.3, 1.77, 0.3],
         visual: "mesh",
@@ -1496,4 +1500,16 @@ pub fn build_chat_message(kind: u8, sender: &str, text: &str) -> Vec<u8> {
         .map_or(0, |d| d.as_secs());
     w.u64(now);
     w.into_inner()
+}
+
+#[cfg(test)]
+mod player_tests {
+    use super::*;
+
+    #[test]
+    fn players_are_solid_except_in_bed() {
+        // AO_CMD_SET_PROPERTIES, version, hp_max (u16), then physical.
+        assert_eq!(player_properties_message("character.png", false)[4], 1);
+        assert_eq!(player_properties_message("character.png", true)[4], 0);
+    }
 }
