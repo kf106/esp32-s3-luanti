@@ -38,6 +38,8 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(CONTENT_BIRCH_TREE)], output: CONTENT_BIRCH_WOOD, count: 4 },
     Recipe { width: 1, pattern: &[I(CONTENT_FIR_TREE)], output: CONTENT_FIR_WOOD, count: 4 },
     Recipe { width: 1, pattern: &[I(CONTENT_APPLE_TREE)], output: CONTENT_APPLE_WOOD, count: 4 },
+    Recipe { width: 1, pattern: &[I(CONTENT_JUNGLE_TREE)], output: CONTENT_JUNGLE_WOOD, count: 4 },
+    Recipe { width: 1, pattern: &[I(CONTENT_ACACIA_TREE)], output: CONTENT_ACACIA_WOOD, count: 4 },
     // Any planks to four sticks.
     Recipe { width: 1, pattern: &[G("wood")], output: ITEM_STICK, count: 4 },
     // Coal lump on a stick: four torches.
@@ -129,14 +131,20 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 3, pattern: &fence(CONTENT_APPLE_WOOD), output: fences::FENCE_APPLE, count: 4 },
     Recipe { width: 3, pattern: &fence(CONTENT_FIR_WOOD), output: fences::FENCE_FIR, count: 4 },
     Recipe { width: 3, pattern: &fence(CONTENT_BIRCH_WOOD), output: fences::FENCE_BIRCH, count: 4 },
+    Recipe { width: 3, pattern: &fence(CONTENT_JUNGLE_WOOD), output: fences::FENCE_JUNGLE, count: 4 },
+    Recipe { width: 3, pattern: &fence(CONTENT_ACACIA_WOOD), output: fences::FENCE_ACACIA, count: 4 },
     // Rails: two planks above two more, a row apart, make 16
     // (default.register_fence_rail).
     Recipe { width: 2, pattern: &rail(CONTENT_APPLE_WOOD), output: fences::RAIL_APPLE, count: 16 },
     Recipe { width: 2, pattern: &rail(CONTENT_FIR_WOOD), output: fences::RAIL_FIR, count: 16 },
     Recipe { width: 2, pattern: &rail(CONTENT_BIRCH_WOOD), output: fences::RAIL_BIRCH, count: 16 },
+    Recipe { width: 2, pattern: &rail(CONTENT_JUNGLE_WOOD), output: fences::RAIL_JUNGLE, count: 16 },
+    Recipe { width: 2, pattern: &rail(CONTENT_ACACIA_WOOD), output: fences::RAIL_ACACIA, count: 16 },
     Recipe { width: 3, pattern: &gate(CONTENT_APPLE_WOOD), output: fences::GATE_APPLE, count: 1 },
     Recipe { width: 3, pattern: &gate(CONTENT_FIR_WOOD), output: fences::GATE_FIR, count: 1 },
     Recipe { width: 3, pattern: &gate(CONTENT_BIRCH_WOOD), output: fences::GATE_BIRCH, count: 1 },
+    Recipe { width: 3, pattern: &gate(CONTENT_JUNGLE_WOOD), output: fences::GATE_JUNGLE, count: 1 },
+    Recipe { width: 3, pattern: &gate(CONTENT_ACACIA_WOOD), output: fences::GATE_ACACIA, count: 1 },
     // A bucket: three steel ingots in a V (bucket mod).
     Recipe {
         width: 3,
@@ -181,7 +189,13 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_BIRCH_TREE => 22.0,
         CONTENT_FIR_WOOD => 6.0,
         CONTENT_BIRCH_WOOD => 5.0,
-        CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES => 4.0,
+        CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES | CONTENT_JUNGLE_LEAVES | CONTENT_ACACIA_LEAVES => 4.0,
+        CONTENT_JUNGLE_TREE => 38.0,
+        CONTENT_ACACIA_TREE => 34.0,
+        CONTENT_JUNGLE_WOOD => 9.0,
+        CONTENT_ACACIA_WOOD => 8.0,
+        CONTENT_JUNGLE_SAPLING | CONTENT_ACACIA_SAPLING => 6.0,
+        farming::JUNGLEGRASS => 3.0,
         CONTENT_TORCH => 4.0,
         CONTENT_BIRCH_SAPLING => 4.0,
         CONTENT_FIR_SAPLING => 5.0,
@@ -196,7 +210,7 @@ pub fn burn_time(id: u16) -> f32 {
         ITEM_WHEAT | ITEM_COTTON | ITEM_STRING => 1.0,
         TOOL_HOE_WOOD => 5.0,
         farming::STRAW => 3.0,
-        id if id == farming::GRASS[0] => 2.0,
+        id if id == farming::GRASS[0] || id == farming::DRY_GRASS[0] => 2.0,
         crate::doors::FIRST_TRAPDOOR => 7.0,
         // A lava bucket burns for a minute (the bucket mod), leaving the
         // empty bucket (see furnace.rs).
@@ -511,6 +525,12 @@ mod tests {
         let rail = [(0, a, 1), (1, a, 1), (6, a, 1), (7, a, 1)];
         assert_eq!(result(&grid(&rail)), Some((fences::RAIL_APPLE, 16)));
         assert_eq!(burn_time(fences::RAIL_BIRCH), 3.0);
+        let j = CONTENT_JUNGLE_WOOD;
+        let rail = [(0, j, 1), (1, j, 1), (6, j, 1), (7, j, 1)];
+        assert_eq!(result(&grid(&rail)), Some((fences::RAIL_JUNGLE, 16)));
+        assert_eq!(result(&grid(&[(4, CONTENT_ACACIA_TREE, 1)])), Some((CONTENT_ACACIA_WOOD, 4)));
+        assert_eq!(burn_time(fences::GATE_JUNGLE), 9.0);
+        assert_eq!(burn_time(crate::stairs::LATER.first_slab() + 1), 4.0);
     }
 
     #[test]

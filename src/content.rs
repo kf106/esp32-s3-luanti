@@ -6,6 +6,7 @@
 //! with optional sections that the client only reads if present, so we write
 //! up to the last section we need and let the client fill in defaults.
 
+use std::borrow::Cow;
 use std::fs;
 
 use log::{info, warn};
@@ -154,6 +155,19 @@ pub const CONTENT_WATER_FLOWING: u16 = 99;
 pub const CONTENT_LAVA: u16 = 135;
 pub const CONTENT_LAVA_FLOWING: u16 = 136;
 pub const CONTENT_OBSIDIAN: u16 = 137;
+/// minetest_game's jungle and acacia trees, and the ground of the
+/// rainforest and savanna, after the fences.
+pub const CONTENT_JUNGLE_TREE: u16 = 150;
+pub const CONTENT_JUNGLE_LEAVES: u16 = 151;
+pub const CONTENT_JUNGLE_WOOD: u16 = 152;
+pub const CONTENT_JUNGLE_SAPLING: u16 = 153;
+pub const CONTENT_ACACIA_TREE: u16 = 154;
+pub const CONTENT_ACACIA_LEAVES: u16 = 155;
+pub const CONTENT_ACACIA_WOOD: u16 = 156;
+pub const CONTENT_ACACIA_SAPLING: u16 = 157;
+pub const CONTENT_DRY_DIRT: u16 = 158;
+pub const CONTENT_DRY_GRASS: u16 = 159;
+pub const CONTENT_LITTER: u16 = 160;
 /// Light lava glows with (minetest_game's LIGHT_MAX - 1). Only the client
 /// uses it, to draw lava bright: the server spreads no light from lava.
 const LAVA_GLOW: u8 = 13;
@@ -1194,7 +1208,245 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Fence,
     },
+    // minetest_game's jungle and acacia trees (CC BY-SA 3.0, see
+    // media/LICENSE-items.txt), with the rainforest and savanna ground and
+    // grasses they grow among.
+    Node {
+        id: CONTENT_JUNGLE_TREE,
+        name: "esp:jungle_tree",
+        description: "Jungle Tree",
+        tiles: [
+            "default_jungletree_top.png",
+            "default_jungletree_top.png",
+            "default_jungletree.png",
+            "default_jungletree.png",
+            "default_jungletree.png",
+            "default_jungletree.png",
+        ],
+        groups: &[("tree", 1), ("choppy", 2), ("oddly_breakable_by_hand", 1), ("flammable", 2)],
+        drop: CONTENT_JUNGLE_TREE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_JUNGLE_LEAVES,
+        name: "esp:jungle_leaves",
+        description: "Jungle Tree Leaves",
+        tiles: ["default_jungleleaves.png"; 6],
+        groups: &[("snappy", 3), ("leaves", 1), ("flammable", 2)],
+        drop: CONTENT_JUNGLE_LEAVES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    Node {
+        id: CONTENT_JUNGLE_WOOD,
+        name: "esp:jungle_wood",
+        description: "Jungle Wood Planks",
+        tiles: ["default_junglewood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("wood", 1)],
+        drop: CONTENT_JUNGLE_WOOD,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_JUNGLE_SAPLING,
+        name: "esp:jungle_sapling",
+        description: "Jungle Tree Sapling",
+        tiles: ["default_junglesapling.png"; 6],
+        groups: SAPLING_GROUPS,
+        drop: CONTENT_JUNGLE_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
+    Node {
+        id: CONTENT_ACACIA_TREE,
+        name: "esp:acacia_tree",
+        description: "Acacia Tree",
+        tiles: [
+            "default_acacia_tree_top.png",
+            "default_acacia_tree_top.png",
+            "default_acacia_tree.png",
+            "default_acacia_tree.png",
+            "default_acacia_tree.png",
+            "default_acacia_tree.png",
+        ],
+        groups: &[("tree", 1), ("choppy", 2), ("oddly_breakable_by_hand", 1), ("flammable", 2)],
+        drop: CONTENT_ACACIA_TREE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_ACACIA_LEAVES,
+        name: "esp:acacia_leaves",
+        description: "Acacia Tree Leaves",
+        tiles: ["default_acacia_leaves.png"; 6],
+        groups: &[("snappy", 3), ("leaves", 1), ("flammable", 2)],
+        drop: CONTENT_ACACIA_LEAVES,
+        drop_count: 1,
+        kind: Kind::Leaves,
+    },
+    Node {
+        id: CONTENT_ACACIA_WOOD,
+        name: "esp:acacia_wood",
+        description: "Acacia Wood Planks",
+        tiles: ["default_acacia_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("wood", 1)],
+        drop: CONTENT_ACACIA_WOOD,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_ACACIA_SAPLING,
+        name: "esp:acacia_sapling",
+        description: "Acacia Tree Sapling",
+        tiles: ["default_acacia_sapling.png"; 6],
+        groups: SAPLING_GROUPS,
+        drop: CONTENT_ACACIA_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
+    Node {
+        id: CONTENT_DRY_DIRT,
+        name: "esp:dry_dirt",
+        description: "Savanna Dirt",
+        tiles: ["default_dry_dirt.png"; 6],
+        groups: &[("crumbly", 3), ("soil", 1)],
+        drop: CONTENT_DRY_DIRT,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_DRY_GRASS,
+        name: "esp:dry_dirt_with_dry_grass",
+        description: "Savanna Dirt with Savanna Grass",
+        tiles: [
+            "default_dry_grass.png",
+            "default_dry_dirt.png",
+            "default_dry_dirt.png^default_dry_grass_side.png",
+            "default_dry_dirt.png^default_dry_grass_side.png",
+            "default_dry_dirt.png^default_dry_grass_side.png",
+            "default_dry_dirt.png^default_dry_grass_side.png",
+        ],
+        groups: &[("crumbly", 3), ("soil", 1)],
+        drop: CONTENT_DRY_DIRT,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: CONTENT_LITTER,
+        name: "esp:dirt_with_rainforest_litter",
+        description: "Dirt with Rainforest Litter",
+        tiles: [
+            "default_rainforest_litter.png",
+            "esp_dirt.png",
+            "esp_dirt.png^default_rainforest_litter_side.png",
+            "esp_dirt.png^default_rainforest_litter_side.png",
+            "esp_dirt.png^default_rainforest_litter_side.png",
+            "esp_dirt.png^default_rainforest_litter_side.png",
+        ],
+        groups: &[("crumbly", 3), ("soil", 1)],
+        drop: CONTENT_DIRT,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    plant!(farming::DRY_GRASS[0], "dry_grass_1", "Savanna Grass", "default_dry_grass_1.png", DRY_GRASS_GROUPS),
+    plant!(farming::DRY_GRASS[1], "dry_grass_2", "Savanna Grass", "default_dry_grass_2.png", DRY_GRASS_GROUPS),
+    plant!(farming::DRY_GRASS[2], "dry_grass_3", "Savanna Grass", "default_dry_grass_3.png", DRY_GRASS_GROUPS),
+    plant!(farming::DRY_GRASS[3], "dry_grass_4", "Savanna Grass", "default_dry_grass_4.png", DRY_GRASS_GROUPS),
+    plant!(farming::DRY_GRASS[4], "dry_grass_5", "Savanna Grass", "default_dry_grass_5.png", DRY_GRASS_GROUPS),
+    plant!(farming::JUNGLEGRASS, "junglegrass", "Jungle Grass", "default_junglegrass.png", &[("snappy", 3), ("flora", 1), ("attached_node", 1), ("grass", 1), ("junglegrass", 1), ("flammable", 1)]),
+    Node {
+        id: fences::FENCE_JUNGLE,
+        name: "esp:fence_jungle_wood",
+        description: "Jungle Wood Fence",
+        tiles: ["default_junglewood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::FENCE_JUNGLE,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    Node {
+        id: fences::FENCE_ACACIA,
+        name: "esp:fence_acacia_wood",
+        description: "Acacia Wood Fence",
+        tiles: ["default_acacia_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::FENCE_ACACIA,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    Node {
+        id: fences::GATE_JUNGLE,
+        name: "esp:gate_jungle_wood_closed",
+        description: "Jungle Wood Fence Gate",
+        tiles: ["default_junglewood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::GATE_JUNGLE,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::GATE_JUNGLE + 1,
+        name: "esp:gate_jungle_wood_open",
+        description: "Jungle Wood Fence Gate",
+        tiles: ["default_junglewood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1), ("not_in_creative_inventory", 1)],
+        drop: fences::GATE_JUNGLE,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::GATE_ACACIA,
+        name: "esp:gate_acacia_wood_closed",
+        description: "Acacia Wood Fence Gate",
+        tiles: ["default_acacia_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::GATE_ACACIA,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::GATE_ACACIA + 1,
+        name: "esp:gate_acacia_wood_open",
+        description: "Acacia Wood Fence Gate",
+        tiles: ["default_acacia_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1), ("not_in_creative_inventory", 1)],
+        drop: fences::GATE_ACACIA,
+        drop_count: 1,
+        kind: Kind::Gate,
+    },
+    Node {
+        id: fences::RAIL_JUNGLE,
+        name: "esp:fence_rail_jungle_wood",
+        description: "Jungle Wood Fence Rail",
+        tiles: ["default_junglewood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::RAIL_JUNGLE,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    Node {
+        id: fences::RAIL_ACACIA,
+        name: "esp:fence_rail_acacia_wood",
+        description: "Acacia Wood Fence Rail",
+        tiles: ["default_acacia_wood.png"; 6],
+        groups: &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("fence", 1)],
+        drop: fences::RAIL_ACACIA,
+        drop_count: 1,
+        kind: Kind::Fence,
+    },
+    shaped!(stairs::LATER.first_stair() + 0, "stair_jungle_wood", "Jungle Wood Stair", "default_junglewood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    shaped!(stairs::LATER.first_stair() + 1, "stair_acacia_wood", "Acacia Wood Stair", "default_acacia_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    shaped!(stairs::LATER.first_slab() + 0, "slab_jungle_wood", "Jungle Wood Slab", "default_junglewood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("slab", 1)]),
+    shaped!(stairs::LATER.first_slab() + 1, "slab_acacia_wood", "Acacia Wood Slab", "default_acacia_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("slab", 1)]),
+    shaped!(stairs::LATER.first_inner() + 0, "stair_inner_jungle_wood", "Inner Jungle Wood Stair", "default_junglewood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    shaped!(stairs::LATER.first_inner() + 1, "stair_inner_acacia_wood", "Inner Acacia Wood Stair", "default_acacia_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    shaped!(stairs::LATER.first_outer() + 0, "stair_outer_jungle_wood", "Outer Jungle Wood Stair", "default_junglewood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
+    shaped!(stairs::LATER.first_outer() + 1, "stair_outer_acacia_wood", "Outer Acacia Wood Stair", "default_acacia_wood.png", &[("choppy", 2), ("oddly_breakable_by_hand", 2), ("flammable", 2), ("stair", 1)]),
 ];
+
+/// minetest_game's savanna grass groups.
+const DRY_GRASS_GROUPS: &[(&str, i16)] = &[("snappy", 3), ("flora", 1), ("attached_node", 1), ("grass", 1), ("dry_grass", 1), ("flammable", 1)];
 
 /// minetest_game's tall grass groups.
 const GRASS_GROUPS: &[(&str, i16)] = &[("snappy", 3), ("flora", 1), ("attached_node", 1), ("grass", 1), ("normal_grass", 1), ("flammable", 1)];
@@ -1895,6 +2147,8 @@ pub fn tree_of_leaves(id: u16) -> Option<(u16, u16)> {
         CONTENT_BIRCH_LEAVES => Some((CONTENT_BIRCH_SAPLING, CONTENT_BIRCH_TREE)),
         CONTENT_FIR_NEEDLES => Some((CONTENT_FIR_SAPLING, CONTENT_FIR_TREE)),
         CONTENT_APPLE_LEAVES => Some((CONTENT_APPLE_SAPLING, CONTENT_APPLE_TREE)),
+        CONTENT_JUNGLE_LEAVES => Some((CONTENT_JUNGLE_SAPLING, CONTENT_JUNGLE_TREE)),
+        CONTENT_ACACIA_LEAVES => Some((CONTENT_ACACIA_SAPLING, CONTENT_ACACIA_TREE)),
         _ => None,
     }
 }
@@ -1910,7 +2164,7 @@ pub fn decay_trunk(id: u16) -> Option<u16> {
 
 /// Whether a node is a trunk whose digging may make leaves decay.
 pub fn is_trunk(id: u16) -> bool {
-    matches!(id, CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_APPLE_TREE)
+    matches!(id, CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_APPLE_TREE | CONTENT_JUNGLE_TREE | CONTENT_ACACIA_TREE)
 }
 
 pub fn is_apple(id: u16) -> bool {
@@ -2245,6 +2499,27 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("farming_cotton_7.png", include_bytes!("../media/farming_cotton_7.png")),
     ("farming_cotton_8.png", include_bytes!("../media/farming_cotton_8.png")),
     ("default_grass_1.png", include_bytes!("../media/default_grass_1.png")),
+    ("default_jungletree.png", include_bytes!("../media/default_jungletree.png")),
+    ("default_jungletree_top.png", include_bytes!("../media/default_jungletree_top.png")),
+    ("default_jungleleaves.png", include_bytes!("../media/default_jungleleaves.png")),
+    ("default_junglewood.png", include_bytes!("../media/default_junglewood.png")),
+    ("default_junglesapling.png", include_bytes!("../media/default_junglesapling.png")),
+    ("default_acacia_tree.png", include_bytes!("../media/default_acacia_tree.png")),
+    ("default_acacia_tree_top.png", include_bytes!("../media/default_acacia_tree_top.png")),
+    ("default_acacia_leaves.png", include_bytes!("../media/default_acacia_leaves.png")),
+    ("default_acacia_wood.png", include_bytes!("../media/default_acacia_wood.png")),
+    ("default_acacia_sapling.png", include_bytes!("../media/default_acacia_sapling.png")),
+    ("default_dry_dirt.png", include_bytes!("../media/default_dry_dirt.png")),
+    ("default_dry_grass.png", include_bytes!("../media/default_dry_grass.png")),
+    ("default_dry_grass_side.png", include_bytes!("../media/default_dry_grass_side.png")),
+    ("default_rainforest_litter.png", include_bytes!("../media/default_rainforest_litter.png")),
+    ("default_rainforest_litter_side.png", include_bytes!("../media/default_rainforest_litter_side.png")),
+    ("default_dry_grass_1.png", include_bytes!("../media/default_dry_grass_1.png")),
+    ("default_dry_grass_2.png", include_bytes!("../media/default_dry_grass_2.png")),
+    ("default_dry_grass_3.png", include_bytes!("../media/default_dry_grass_3.png")),
+    ("default_dry_grass_4.png", include_bytes!("../media/default_dry_grass_4.png")),
+    ("default_dry_grass_5.png", include_bytes!("../media/default_dry_grass_5.png")),
+    ("default_junglegrass.png", include_bytes!("../media/default_junglegrass.png")),
     ("default_grass_2.png", include_bytes!("../media/default_grass_2.png")),
     ("default_grass_3.png", include_bytes!("../media/default_grass_3.png")),
     ("default_grass_4.png", include_bytes!("../media/default_grass_4.png")),
@@ -2377,6 +2652,9 @@ fn sounds_of(id: u16) -> Sounds {
         CONTENT_DIRT => dirt(("default_dirt_footstep", 0.25)),
         CONTENT_GRASS => dirt(("default_grass_footstep", 0.25)),
         CONTENT_SNOW => dirt(("default_snow_footstep", 0.2)),
+        // minetest_game's savanna grass and rainforest litter: grass steps.
+        CONTENT_DRY_GRASS | CONTENT_LITTER => dirt(("default_grass_footstep", 0.4)),
+        CONTENT_DRY_DIRT => dirt(("default_dirt_footstep", 0.25)),
         CONTENT_SAND => Sounds {
             footstep: ("default_sand_footstep", 0.05),
             dig: GROUP_DIG,
@@ -2399,13 +2677,15 @@ fn sounds_of(id: u16) -> Sounds {
         },
         id if farming::is_attached_plant(id) || id == farming::STRAW => sounds_of(CONTENT_BIRCH_LEAVES),
         CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES | CONTENT_BIRCH_SAPLING | CONTENT_FIR_SAPLING | CONTENT_APPLE_LEAVES
-        | CONTENT_APPLE | CONTENT_APPLE_SAPLING => Sounds {
+        | CONTENT_APPLE | CONTENT_APPLE_SAPLING | CONTENT_JUNGLE_LEAVES | CONTENT_JUNGLE_SAPLING | CONTENT_ACACIA_LEAVES
+        | CONTENT_ACACIA_SAPLING => Sounds {
             footstep: ("default_grass_footstep", 0.45),
             dig: GROUP_DIG,
             dug: ("default_grass_footstep", 0.7),
             place: ("default_place_node", 1.0),
         },
-        CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD | CONTENT_APPLE_TREE | CONTENT_APPLE_WOOD => wood,
+        CONTENT_BIRCH_TREE | CONTENT_FIR_TREE | CONTENT_BIRCH_WOOD | CONTENT_FIR_WOOD | CONTENT_APPLE_TREE | CONTENT_APPLE_WOOD
+        | CONTENT_JUNGLE_TREE | CONTENT_JUNGLE_WOOD | CONTENT_ACACIA_TREE | CONTENT_ACACIA_WOOD => wood,
         id if is_chest(id) => wood,
         CONTENT_LADDER_WOOD => wood,
         // minetest_game's node_sound_glass_defaults and _metal_defaults.
@@ -2466,6 +2746,10 @@ fn fence_image(id: u16) -> &'static str {
         fences::RAIL_BIRCH => "default_fence_rail_overlay.png^esp_birch_wood.png^default_fence_rail_overlay.png^[makealpha:255,126,126",
         fences::FENCE_FIR => "default_fence_overlay.png^esp_fir_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
         fences::FENCE_BIRCH => "default_fence_overlay.png^esp_birch_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
+        fences::FENCE_JUNGLE => "default_fence_overlay.png^default_junglewood.png^default_fence_overlay.png^[makealpha:255,126,126",
+        fences::FENCE_ACACIA => "default_fence_overlay.png^default_acacia_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
+        fences::RAIL_JUNGLE => "default_fence_rail_overlay.png^default_junglewood.png^default_fence_rail_overlay.png^[makealpha:255,126,126",
+        fences::RAIL_ACACIA => "default_fence_rail_overlay.png^default_acacia_wood.png^default_fence_rail_overlay.png^[makealpha:255,126,126",
         _ => "default_fence_overlay.png^esp_apple_wood.png^default_fence_overlay.png^[makealpha:255,126,126",
     }
 }
@@ -2545,6 +2829,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Torch => TORCH_IMAGE,
                 // Tall grass shows a taller tuft than the one it places.
                 _ if n.id == farming::GRASS[0] => "default_grass_3.png",
+                _ if n.id == farming::DRY_GRASS[0] => "default_dry_grass_3.png",
                 Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
                 Kind::Bed => bed_image(n.id),
@@ -2554,6 +2839,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             wield_image: match n.kind {
                 Kind::Torch => TORCH_IMAGE,
                 _ if n.id == farming::GRASS[0] => "default_grass_3.png",
+                _ if n.id == farming::DRY_GRASS[0] => "default_dry_grass_3.png",
                 Kind::Sapling | Kind::Apple | Kind::Ladder | Kind::Plant | Kind::Seed => n.tiles[0],
                 Kind::Trapdoor => trapdoor_image(n.id),
                 Kind::Bed => bed_image(n.id),
@@ -2746,8 +3032,10 @@ const CHEST_OPEN_MESH: &str = "chest_open.obj";
 /// tufts of grass, taller wild cotton, and crops and seeds flat on the
 /// ground.
 fn farming_box(id: u16) -> [f32; 6] {
-    if farming::is_grass(id) {
+    if farming::is_grass(id) || farming::is_dry_grass(id) {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, -5.0 / 16.0, 6.0 / 16.0]
+    } else if id == farming::JUNGLEGRASS {
+        [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, 0.5, 6.0 / 16.0]
     } else if id == farming::COTTON_WILD {
         [-6.0 / 16.0, -0.5, -6.0 / 16.0, 6.0 / 16.0, 5.0 / 16.0, 6.0 / 16.0]
     } else {
@@ -2888,7 +3176,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
         Kind::Liquid => (NDT_LIQUID, ""),
     };
-    w.u8(drawtype).string16(mesh).f32(1.0); // drawtype, mesh, visual_scale
+    // Jungle grass is drawn larger than its node (minetest_game's 1.69).
+    let scale = if n.id == farming::JUNGLEGRASS { 1.69 } else { 1.0 };
+    w.u8(drawtype).string16(mesh).f32(scale); // drawtype, mesh, visual_scale
     // Mesh tiles: no backface culling (the flame is single planes), as
     // the Lua API defaults them.
     // Plant pictures are seen from both sides (Luanti turns culling off
@@ -3099,7 +3389,9 @@ pub fn nodedef_bytes() -> Vec<u8> {
 pub struct MediaFile {
     pub name: String,
     pub sha1: [u8; 20],
-    pub data: Vec<u8>,
+    /// Built-in files are read straight from the firmware in flash (memory
+    /// mapped); only files from the SD card are copied into RAM.
+    pub data: Cow<'static, [u8]>,
 }
 
 pub struct Media {
@@ -3114,7 +3406,7 @@ impl Media {
             .map(|(name, data)| MediaFile {
                 name: name.to_string(),
                 sha1: sha1(data),
-                data: data.to_vec(),
+                data: Cow::Borrowed(*data),
             })
             .collect();
 
@@ -3132,7 +3424,7 @@ impl Media {
                     let file = MediaFile {
                         sha1: sha1(&data),
                         name: name.clone(),
-                        data,
+                        data: Cow::Owned(data),
                     };
                     match files.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&name)) {
                         Some(existing) => {

@@ -1472,7 +1472,7 @@ impl Server {
         let mut files = Vec::new();
         for name in &names {
             match self.content.media.get(name) {
-                Some(f) => files.push((f.name.as_str(), f.data.as_slice())),
+                Some(f) => files.push((f.name.as_str(), &f.data[..])),
                 None => warn!("Client asked for unknown media \"{name}\""),
             }
         }
@@ -2051,7 +2051,7 @@ impl Server {
                 // The item is always the floor torch; on a wall or ceiling
                 // it becomes that torch node (minetest_game's on_place).
                 // Tall grass comes up any of its five heights.
-                let node = if id == farming::GRASS[0] { farming::placed_grass(&mut self.rng) } else { content::torch_variant(id, param2) };
+                let node = if id == farming::GRASS[0] || id == farming::DRY_GRASS[0] { farming::placed_grass(id, &mut self.rng) } else { content::torch_variant(id, param2) };
                 // Water would wash a torch straight out again (it is
                 // floodable), so it stays in the hand.
                 let flooded = content::floodable(id) && content::is_liquid(target);

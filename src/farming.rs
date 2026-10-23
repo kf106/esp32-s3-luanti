@@ -26,6 +26,10 @@ pub const WHEAT_STAGES: [u16; 8] = [110, 111, 112, 113, 114, 115, 116, 117];
 pub const STRAW: u16 = 118;
 pub const WOOL_WHITE: u16 = 119;
 pub const COTTON_STAGES: [u16; 8] = [120, 121, 122, 123, 124, 128, 129, 130];
+/// The savanna's dry grass (five heights) and the rainforest's jungle
+/// grass, after the rainforest ground.
+pub const DRY_GRASS: [u16; 5] = [161, 162, 163, 164, 165];
+pub const JUNGLEGRASS: u16 = 166;
 
 /// minetest_game's register_plant, for what we need of it.
 pub struct Crop {
@@ -67,20 +71,25 @@ pub fn is_grass(id: u16) -> bool {
     GRASS.contains(&id)
 }
 
+pub fn is_dry_grass(id: u16) -> bool {
+    DRY_GRASS.contains(&id)
+}
+
 /// Plants standing on the node below, which fall off (and drop) when it is
 /// dug (minetest_game's attached_node).
 pub fn is_attached_plant(id: u16) -> bool {
-    crop_of(id).is_some() || is_grass(id) || id == COTTON_WILD
+    crop_of(id).is_some() || is_grass(id) || is_dry_grass(id) || id == COTTON_WILD || id == JUNGLEGRASS
 }
 
 pub fn is_soil(id: u16) -> bool {
     matches!(id, SOIL | SOIL_WET)
 }
 
-/// What a hoe makes of a node: dirt and grass become dry soil (their
-/// "soil" definition in farming/nodes.lua).
+/// What a hoe makes of a node: dirt, grass and rainforest litter become
+/// dry soil (their "soil" definition in farming/nodes.lua). Savanna dirt
+/// makes minetest_game's dry soil, which we don't have.
 pub fn hoed(id: u16) -> Option<u16> {
-    matches!(id, CONTENT_DIRT | CONTENT_GRASS).then_some(SOIL)
+    matches!(id, CONTENT_DIRT | CONTENT_GRASS | CONTENT_LITTER).then_some(SOIL)
 }
 
 /// How many uses a hoe has (farming/hoes.lua's max_uses).
@@ -186,7 +195,13 @@ pub fn drops(id: u16, rng: &mut Rng) -> Vec<(u16, u16)> {
     if is_grass(id) {
         return vec![(if rng.one_in(5) { SEED_WHEAT } else { GRASS[0] }, 1)];
     }
+    // Savanna grass gives itself; jungle grass a cotton seed one time in 8
+    // (farming/init.lua's override), otherwise itself.
+    if is_dry_grass(id) {
+        return vec![(DRY_GRASS[0], 1)];
+    }
     match id {
+        JUNGLEGRASS => vec![(if rng.one_in(8) { SEED_COTTON } else { JUNGLEGRASS }, 1)],
         COTTON_WILD => vec![(SEED_COTTON, 1)],
         SOIL | SOIL_WET => vec![(CONTENT_DIRT, 1)],
         _ => Vec::new(),
@@ -195,8 +210,12 @@ pub fn drops(id: u16, rng: &mut Rng) -> Vec<(u16, u16)> {
 
 /// Tall grass placed by a player is any of the five heights
 /// (default:grass_1's on_place).
-pub fn placed_grass(rng: &mut Rng) -> u16 {
-    GRASS[rng.range(0, 4) as usize]
+pub fn placed_grass(id: u16, rng: &mut Rng) -> u16 {
+    match id {
+        _ if id == GRASS[0] => GRASS[rng.range(0, 4) as usize],
+        _ if id == DRY_GRASS[0] => DRY_GRASS[rng.range(0, 4) as usize],
+        _ => id,
+    }
 }
 
 /// Whether a node is water, for keeping soil wet (group:water).

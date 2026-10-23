@@ -8,7 +8,14 @@ default_coal_block.png, default_steel_block.png, default_ladder_wood.png,
 default_ladder_steel.png, the water textures default_water.png,
 default_water_source_animated.png and default_water_flowing_animated.png, the lava textures
 default_lava.png, default_lava_source_animated.png and default_lava_flowing_animated.png,
-and default_obsidian.png are from the
+default_obsidian.png, the jungle and acacia textures default_jungletree.png,
+default_jungletree_top.png, default_jungleleaves.png, default_junglewood.png,
+default_junglesapling.png, default_acacia_tree.png, default_acacia_tree_top.png,
+default_acacia_leaves.png, default_acacia_wood.png and default_acacia_sapling.png, and the
+savanna and rainforest textures default_dry_dirt.png, default_dry_grass.png,
+default_dry_grass_side.png, default_dry_grass_1.png to default_dry_grass_5.png,
+default_rainforest_litter.png, default_rainforest_litter_side.png and
+default_junglegrass.png are from the
 default mod of Minetest Game (https://github.com/luanti-org/minetest_game,
 mods/default/textures), unmodified and under their original names. Their licence and
 credits, from that mod's license.txt:

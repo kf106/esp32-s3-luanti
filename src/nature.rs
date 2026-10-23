@@ -219,6 +219,8 @@ pub fn grow(pos: NodePos, sapling: u16, height: i32, node: &dyn Fn(NodePos) -> u
     let kind = match sapling {
         CONTENT_FIR_SAPLING => TreeKind::Fir,
         CONTENT_APPLE_SAPLING => TreeKind::Apple,
+        CONTENT_JUNGLE_SAPLING => TreeKind::Jungle,
+        CONTENT_ACACIA_SAPLING => TreeKind::Acacia,
         _ => TreeKind::Birch,
     };
     let tree = Tree { x: pos.0, z: pos.2, ground: pos.1 - 1, kind, height };
@@ -246,6 +248,8 @@ pub fn tree_height(sapling: u16, rng: &mut Rng) -> i32 {
     match sapling {
         CONTENT_FIR_SAPLING => rng.range(7, 10) as i32,
         CONTENT_APPLE_SAPLING => rng.range(4, 5) as i32,
+        CONTENT_JUNGLE_SAPLING => rng.range(8, 12) as i32,
+        CONTENT_ACACIA_SAPLING => rng.range(5, 6) as i32,
         _ => rng.range(5, 7) as i32,
     }
 }
@@ -295,6 +299,24 @@ mod tests {
         assert!(tree.contains(&((0, 1, 0), CONTENT_FIR_TREE)), "trunk replaces the sapling");
         assert!(tree.contains(&((0, 8, 0), CONTENT_FIR_TREE)));
         assert!(tree.iter().filter(|(_, id)| *id == CONTENT_FIR_NEEDLES).count() > 30);
+    }
+
+    #[test]
+    fn jungle_and_acacia_saplings() {
+        for (sapling, trunk, leaves, height) in
+            [(CONTENT_JUNGLE_SAPLING, CONTENT_JUNGLE_TREE, CONTENT_JUNGLE_LEAVES, 10), (CONTENT_ACACIA_SAPLING, CONTENT_ACACIA_TREE, CONTENT_ACACIA_LEAVES, 5)]
+        {
+            let node = |p: NodePos| match p.1 {
+                0 => CONTENT_LITTER,
+                1 if p.0 == 0 && p.2 == 0 => sapling,
+                _ => CONTENT_AIR,
+            };
+            assert!(can_grow((0, 1, 0), &node, true, true));
+            let tree = grow((0, 1, 0), sapling, height, &node);
+            assert!(tree.contains(&((0, 1, 0), trunk)), "trunk replaces the sapling");
+            assert!(tree.iter().filter(|(_, id)| *id == leaves).count() > 20);
+            assert!(tree.iter().all(|(_, id)| *id == trunk || *id == leaves));
+        }
     }
 
     #[test]

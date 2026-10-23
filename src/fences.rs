@@ -1,7 +1,7 @@
 //! Fences and fence gates, as minetest_game's (default.register_fence in
 //! mods/default/functions.lua, doors.register_fencegate in
-//! mods/doors/init.lua), in each of our three woods: apple (its "wood"),
-//! fir (its pine) and birch (its aspen).
+//! mods/doors/init.lua), in each of our five woods: apple (its "wood"),
+//! fir (its pine), birch (its aspen), jungle and acacia.
 //!
 //! A fence is a post with rails reaching out to whatever it joins. The
 //! client works out the joins itself, from the node box (Luanti's
@@ -40,11 +40,21 @@ pub const GATE_BIRCH: u16 = FIRST_FENCE + 7;
 pub const RAIL_APPLE: u16 = FIRST_FENCE + 9;
 pub const RAIL_FIR: u16 = FIRST_FENCE + 10;
 pub const RAIL_BIRCH: u16 = FIRST_FENCE + 11;
+/// Jungle and acacia came later: their fences, gates and rails follow the
+/// rainforest's jungle grass.
+pub const FENCE_JUNGLE: u16 = crate::farming::JUNGLEGRASS + 1;
+pub const FENCE_ACACIA: u16 = FENCE_JUNGLE + 1;
+pub const GATE_JUNGLE: u16 = FENCE_JUNGLE + 2;
+pub const GATE_ACACIA: u16 = FENCE_JUNGLE + 4;
+pub const RAIL_JUNGLE: u16 = FENCE_JUNGLE + 6;
+pub const RAIL_ACACIA: u16 = FENCE_JUNGLE + 7;
 
-pub const WOODS: [Wood; 3] = [
+pub const WOODS: [Wood; 5] = [
     Wood { fence: FENCE_APPLE, gate: GATE_APPLE, rail: RAIL_APPLE, burn: 7.0, rail_burn: 5.0 },
     Wood { fence: FENCE_FIR, gate: GATE_FIR, rail: RAIL_FIR, burn: 6.0, rail_burn: 4.0 },
     Wood { fence: FENCE_BIRCH, gate: GATE_BIRCH, rail: RAIL_BIRCH, burn: 5.0, rail_burn: 3.0 },
+    Wood { fence: FENCE_JUNGLE, gate: GATE_JUNGLE, rail: RAIL_JUNGLE, burn: 9.0, rail_burn: 7.0 },
+    Wood { fence: FENCE_ACACIA, gate: GATE_ACACIA, rail: RAIL_ACACIA, burn: 8.0, rail_burn: 6.0 },
 ];
 
 pub fn is_rail(id: u16) -> bool {

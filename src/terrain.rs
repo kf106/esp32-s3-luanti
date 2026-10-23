@@ -10,15 +10,18 @@
 
 use crate::farming;
 use crate::content::{
-    CONTENT_APPLE, CONTENT_APPLE_LEAVES, CONTENT_APPLE_TREE, CONTENT_BIRCH_LEAVES, CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_FIR_NEEDLES,
-    CONTENT_FIR_TREE, CONTENT_GRASS, CONTENT_IRON, CONTENT_SAND, CONTENT_SANDSTONE, CONTENT_SNOW,
-    CONTENT_LAVA, CONTENT_STONE,
+    self, CONTENT_ACACIA_LEAVES, CONTENT_ACACIA_TREE, CONTENT_APPLE, CONTENT_APPLE_LEAVES, CONTENT_APPLE_TREE, CONTENT_BIRCH_LEAVES,
+    CONTENT_BIRCH_TREE, CONTENT_COAL, CONTENT_DIRT, CONTENT_DRY_DIRT, CONTENT_DRY_GRASS, CONTENT_FIR_NEEDLES, CONTENT_FIR_TREE, CONTENT_GRASS,
+    CONTENT_IRON, CONTENT_JUNGLE_LEAVES, CONTENT_JUNGLE_TREE, CONTENT_LAVA, CONTENT_LITTER, CONTENT_SAND, CONTENT_SANDSTONE, CONTENT_SNOW,
+    CONTENT_STONE,
 };
 use crate::world::CONTENT_AIR;
 
 /// Bump when the generator changes, so worlds made by an older one are set
 /// aside rather than mixed with new terrain (see World::open).
-pub const GENERATOR_VERSION: u32 = 2;
+/// 3: savanna and rainforest, with acacia and jungle trees, in part of
+/// what was desert.
+pub const GENERATOR_VERSION: u32 = 3;
 
 const SEED_HILLS: u32 = 0x1A2B_3C4D;
 const SEED_MOUNTAINS: u32 = 0x5E6F_7081;
@@ -32,6 +35,7 @@ const SEED_FOREST: u32 = 0xEB0C_1D2E;
 const SEED_GRASS: u32 = 0x2F40_5162;
 const SEED_COTTON: u32 = 0x7384_95A6;
 const SEED_LAVA: u32 = 0xB7C8_D9EA;
+const SEED_HUMIDITY: u32 = 0xC3D4_E5F6;
 
 /// Deep caves are flooded with lava up to this height, in about half the
 /// land (where the "lava" noise is positive). Between flooded and dry
@@ -49,12 +53,19 @@ const CAVE_GRID: i32 = 4;
 const CAVE_WIDTH: f32 = 0.006;
 /// Snow covers everything at or above this height.
 const SNOW_LINE: i32 = 36;
+/// Where hot land turns from savanna to rainforest (wetter) or desert
+/// (drier).
+const HUMID: f32 = 0.1;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Biome {
     Grassland,
     Desert,
     Snow,
+    /// Hot and in between: dry grass and acacias (minetest_game's savanna).
+    Savanna,
+    /// Hot and wet: jungle (minetest_game's rainforest).
+    Rainforest,
 }
 
 /// What is known about a column of nodes before looking at caves and ores.
@@ -203,10 +214,19 @@ pub fn column(x: i32, z: i32) -> Column {
     let height = (4.0 + hills + mountains).round() as i32;
 
     let temperature = fbm2(fx / 800.0, fz / 800.0, 2, SEED_TEMPERATURE);
+    // The hot lands are desert where it's dry, rainforest where it's wet,
+    // and savanna in between.
     let biome = if height >= SNOW_LINE || temperature < -0.18 {
         Biome::Snow
     } else if temperature > 0.18 {
-        Biome::Desert
+        let humidity = fbm2(fx / 700.0, fz / 700.0, 2, SEED_HUMIDITY);
+        if humidity > HUMID {
+            Biome::Rainforest
+        } else if humidity < -HUMID {
+            Biome::Desert
+        } else {
+            Biome::Savanna
+        }
     } else {
         Biome::Grassland
     };
@@ -246,6 +266,18 @@ fn layer(y: i32, col: &Column) -> u16 {
     match col.biome {
         Biome::Grassland => match depth {
             0 => CONTENT_GRASS,
+            1..=3 => CONTENT_DIRT,
+            _ => CONTENT_STONE,
+        },
+        // minetest_game's savanna and rainforest: dry grass on dry dirt,
+        // leaf litter on dirt.
+        Biome::Savanna => match depth {
+            0 => CONTENT_DRY_GRASS,
+            1..=3 => CONTENT_DRY_DIRT,
+            _ => CONTENT_STONE,
+        },
+        Biome::Rainforest => match depth {
+            0 => CONTENT_LITTER,
             1..=3 => CONTENT_DIRT,
             _ => CONTENT_STONE,
         },
@@ -405,7 +437,9 @@ pub fn node(
 // possible tree at a spot picked by hashing the patch. Whether it grows
 // depends on the biome and on a broad "forest" noise, so there are woods
 // and clearings with the odd lone tree between. Birches grow in the
-// lowland grass, firs higher up and in the snow, nothing in the desert.
+// lowland grass, firs higher up and in the snow, jungle trees thickly in
+// the rainforest, acacias here and there on the savanna, nothing in the
+// desert.
 //
 // Trees only fill air: a node that the terrain makes solid stays solid.
 
@@ -423,6 +457,8 @@ pub enum TreeKind {
     Birch,
     Fir,
     Apple,
+    Jungle,
+    Acacia,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -448,7 +484,7 @@ impl Tree {
         match self.kind {
             // minetest_game's apple tree: leaves one node above the trunk's
             // top and its last node.
-            TreeKind::Apple => self.height + 2,
+            TreeKind::Apple | TreeKind::Acacia => self.height + 2,
             _ => self.height + 1,
         }
     }
@@ -497,6 +533,50 @@ impl Tree {
                     _ => dx * dx + dz * dz <= r * r,
                 };
                 leafy.then_some(CONTENT_FIR_NEEDLES)
+            }
+            TreeKind::Jungle => {
+                if trunk {
+                    return Some(CONTENT_JUNGLE_TREE);
+                }
+                // A tall trunk with a dense crown at the top, two nodes out
+                // and four deep, rounded at top and bottom, and a few tufts
+                // of leaves along the trunk further down.
+                let (ax, az) = (dx.abs(), dz.abs());
+                let rel = dy - h;
+                let leafy = match rel {
+                    1 => ax <= 1 && az <= 1,
+                    0 | -1 => ax <= 2 && az <= 2 && !(ax == 2 && az == 2 && hash(x, y, z, SEED_TREES ^ 4) % 2 == 0),
+                    -2 => ax + az <= 2,
+                    -6 | -5 => ax + az == 1 && hash(x, y, z, SEED_TREES ^ 5) % 3 == 0,
+                    _ => false,
+                };
+                leafy.then_some(CONTENT_JUNGLE_LEAVES)
+            }
+            TreeKind::Acacia => {
+                // A short trunk that forks into two branches leaning out
+                // diagonally, under a wide, flat crown (minetest_game's
+                // acacia, simplified). Which diagonal is fixed per tree.
+                let (sx, sz) = if hash(self.x, self.ground, self.z, SEED_TREES ^ 6) % 2 == 0 { (1, 1) } else { (1, -1) };
+                let branch = |k: i32| (dx == k * sx && dz == k * sz) || (dx == -k * sx && dz == -k * sz);
+                let wood = match h - dy {
+                    0 => branch(2),
+                    1 => branch(1),
+                    d if d >= 2 => dx == 0 && dz == 0,
+                    _ => false,
+                };
+                if wood {
+                    return Some(CONTENT_ACACIA_TREE);
+                }
+                let (ax, az) = (dx.abs(), dz.abs());
+                let leafy = match dy - h {
+                    1 => ax + az <= 5 && !(ax + az == 5 && hash(x, y, z, SEED_TREES ^ 7) % 2 == 0),
+                    2 => {
+                        let near = |tx: i32, tz: i32| (dx - tx).abs() <= 1 && (dz - tz).abs() <= 1;
+                        near(2 * sx, 2 * sz) || near(-2 * sx, -2 * sz)
+                    }
+                    _ => false,
+                };
+                leafy.then_some(CONTENT_ACACIA_LEAVES)
             }
             TreeKind::Apple => {
                 if trunk {
@@ -547,10 +627,18 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
         Biome::Snow => TreeKind::Fir,
         Biome::Grassland if col.height >= FIR_LINE => TreeKind::Fir,
         Biome::Grassland => TreeKind::Birch,
+        Biome::Rainforest => TreeKind::Jungle,
+        Biome::Savanna => TreeKind::Acacia,
     };
-    // A few percent of patches in the open, most of them in a wood.
+    // A few percent of patches in the open, most of them in a wood. The
+    // rainforest is jungle almost everywhere; the savanna has scattered
+    // acacias, a little closer together here and there.
     let forest = fbm2(x as f32 / 220.0, z as f32 / 220.0, 2, SEED_FOREST);
-    let chance = 4 + ((forest - 0.05) * 300.0).clamp(0.0, 66.0) as u32;
+    let chance = match kind {
+        TreeKind::Jungle => 50 + ((forest + 0.2) * 100.0).clamp(0.0, 35.0) as u32,
+        TreeKind::Acacia => 5 + ((forest - 0.05) * 60.0).clamp(0.0, 10.0) as u32,
+        _ => 4 + ((forest - 0.05) * 300.0).clamp(0.0, 66.0) as u32,
+    };
     let roll = (h >> 16) % 100;
     // Apple trees came later: they grow only in lowland patches that had
     // no tree, so the trees of worlds made before stay as they were. About
@@ -567,6 +655,8 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
         TreeKind::Fir => 7 + ((h >> 24) % 4) as i32,
         // minetest_game: random(4, 5).
         TreeKind::Apple => 4 + ((h >> 24) % 2) as i32,
+        TreeKind::Jungle => 8 + ((h >> 24) % 5) as i32,
+        TreeKind::Acacia => 5 + ((h >> 24) % 2) as i32,
     };
     Some(Tree { x, z, ground: col.height, kind, height })
 }
@@ -578,15 +668,28 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
 /// snow or a cave mouth. It stands in the node above the surface, which
 /// was empty in worlds made before.
 pub fn plant_on(x: i32, z: i32, col: &Column) -> Option<u16> {
-    if col.biome != Biome::Grassland || col.height <= WATER_LEVEL || col.cave_top >= col.height {
+    let grasses = match col.biome {
+        Biome::Grassland => farming::GRASS,
+        Biome::Savanna => farming::DRY_GRASS,
+        Biome::Rainforest => [farming::JUNGLEGRASS; 5],
+        _ => return None,
+    };
+    if col.height <= WATER_LEVEL || col.cave_top >= col.height {
         return None;
     }
     let h = hash(x, 0x6A55, z, SEED_GRASS);
-    if noise2(x as f32 / 60.0, z as f32 / 60.0, SEED_COTTON) > 0.55 && h % 16 == 0 {
+    // Wild cotton on grassland and savanna (where minetest_game grows it).
+    if col.biome != Biome::Rainforest && noise2(x as f32 / 60.0, z as f32 / 60.0, SEED_COTTON) > 0.55 && h % 16 == 0 {
         return Some(farming::COTTON_WILD);
     }
     let density = ((fbm2(x as f32 / 100.0, z as f32 / 100.0, 2, SEED_GRASS) + 0.3) * 0.25).clamp(0.0, 0.2);
-    ((h >> 8) % 1000 < (density * 1000.0) as u32).then(|| farming::GRASS[((h >> 20) % 5) as usize])
+    // The savanna is grassier, the jungle floor sparser.
+    let density = match col.biome {
+        Biome::Savanna => density + 0.1,
+        Biome::Rainforest => density * 0.5,
+        _ => density,
+    };
+    ((h >> 8) % 1000 < (density * 1000.0) as u32).then(|| grasses[((h >> 20) % 5) as usize])
 }
 
 /// Every tree that could have a node in the columns from (x0, z0) to
@@ -616,7 +719,7 @@ pub fn tree_node_in(trees: &[Tree], x: i32, y: i32, z: i32) -> Option<u16> {
         let mut found = None;
         for t in trees.iter().filter(|t| (t.kind == TreeKind::Apple) == apple) {
             match t.node_at(x, y, z) {
-                Some(id) if id == CONTENT_BIRCH_TREE || id == CONTENT_FIR_TREE || id == CONTENT_APPLE_TREE => return Some(id),
+                Some(id) if content::is_trunk(id) => return Some(id),
                 Some(id) => found = found.or(Some(id)),
                 None => {}
             }

@@ -3,9 +3,10 @@
 //! turned to face the player who places them, and upside down when placed
 //! against the underside of a block or the upper half of its side.
 //!
-//! Their content ids follow on from the other nodes: all the stairs, in
-//! MATERIALS order, then all the slabs, the inner corner stairs and the
-//! outer corner stairs.
+//! Their content ids come in sets: for each set, all the stairs in its
+//! materials' order, then all the slabs, the inner corner stairs and the
+//! outer corner stairs. The first set follows on from the early nodes; the
+//! second, for the jungle and acacia wood that came later, from the fences.
 
 use crate::content::*;
 
@@ -32,13 +33,51 @@ pub const MATERIALS: [Material; 10] = [
     Material { base: CONTENT_SANDSTONE_BLOCK, world_aligned: true },
 ];
 
-const COUNT: u16 = MATERIALS.len() as u16;
-pub const FIRST_STAIR: u16 = 41;
-pub const FIRST_SLAB: u16 = FIRST_STAIR + COUNT;
-pub const FIRST_INNER: u16 = FIRST_SLAB + COUNT;
-pub const FIRST_OUTER: u16 = FIRST_INNER + COUNT;
-/// One past the last stair or slab id.
-pub const END: u16 = FIRST_OUTER + COUNT;
+/// The woods added later: minetest_game's jungle and acacia.
+pub const LATER_MATERIALS: [Material; 2] = [
+    Material { base: CONTENT_JUNGLE_WOOD, world_aligned: false },
+    Material { base: CONTENT_ACACIA_WOOD, world_aligned: false },
+];
+
+/// A run of ids: the stairs, slabs, inner and outer corners of some
+/// materials.
+pub struct Set {
+    pub first: u16,
+    pub materials: &'static [Material],
+}
+
+impl Set {
+    const fn count(&self) -> u16 {
+        self.materials.len() as u16
+    }
+    pub const fn first_stair(&self) -> u16 {
+        self.first
+    }
+    pub const fn first_slab(&self) -> u16 {
+        self.first + self.count()
+    }
+    pub const fn first_inner(&self) -> u16 {
+        self.first + 2 * self.count()
+    }
+    pub const fn first_outer(&self) -> u16 {
+        self.first + 3 * self.count()
+    }
+    /// One past its last id.
+    pub const fn end(&self) -> u16 {
+        self.first + 4 * self.count()
+    }
+}
+
+pub const EARLY: Set = Set { first: 41, materials: &MATERIALS };
+pub const LATER: Set = Set { first: crate::fences::RAIL_ACACIA + 1, materials: &LATER_MATERIALS };
+const SETS: [Set; 2] = [EARLY, LATER];
+
+pub const FIRST_STAIR: u16 = EARLY.first_stair();
+pub const FIRST_SLAB: u16 = EARLY.first_slab();
+pub const FIRST_INNER: u16 = EARLY.first_inner();
+pub const FIRST_OUTER: u16 = EARLY.first_outer();
+/// One past the first set's last id.
+pub const END: u16 = EARLY.end();
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
@@ -50,16 +89,9 @@ pub enum Shape {
     Outer,
 }
 
-impl Shape {
-    fn first(self) -> u16 {
-        match self {
-            Shape::Stair => FIRST_STAIR,
-            Shape::Slab => FIRST_SLAB,
-            Shape::Inner => FIRST_INNER,
-            Shape::Outer => FIRST_OUTER,
-        }
-    }
+const SHAPES: [Shape; 4] = [Shape::Stair, Shape::Slab, Shape::Inner, Shape::Outer];
 
+impl Shape {
     /// The boxes it is made of, in nodes (minetest_game's node_box).
     pub fn boxes(self) -> &'static [[f32; 6]] {
         match self {
@@ -88,20 +120,16 @@ impl Shape {
 
 /// A stair or slab's shape and material, or None for other nodes.
 pub fn shape_of(id: u16) -> Option<(Shape, &'static Material)> {
-    let shape = match id {
-        FIRST_STAIR..FIRST_SLAB => Shape::Stair,
-        FIRST_SLAB..FIRST_INNER => Shape::Slab,
-        FIRST_INNER..FIRST_OUTER => Shape::Inner,
-        FIRST_OUTER..END => Shape::Outer,
-        _ => return None,
-    };
-    Some((shape, &MATERIALS[(id - shape.first()) as usize]))
+    let set = SETS.iter().find(|s| (s.first..s.end()).contains(&id))?;
+    let (k, i) = ((id - set.first) / set.count(), (id - set.first) % set.count());
+    Some((SHAPES[k as usize], &set.materials[i as usize]))
 }
 
 /// The stair or slab made of `base`.
 #[cfg(test)]
 pub fn shaped(shape: Shape, base: u16) -> Option<u16> {
-    MATERIALS.iter().position(|m| m.base == base).map(|i| shape.first() + i as u16)
+    let k = SHAPES.iter().position(|&s| s == shape)? as u16;
+    SETS.iter().find_map(|s| s.materials.iter().position(|m| m.base == base).map(|i| s.first + k * s.count() + i as u16))
 }
 
 pub fn is_slab(id: u16) -> bool {
@@ -128,9 +156,9 @@ pub fn burn_time(id: u16, base_time: impl Fn(u16) -> f32) -> f32 {
 /// T upside down; there's no way back from those. (width, pattern with 0
 /// for empty and 1 for the item, which item, output, count.)
 pub fn recipes() -> impl Iterator<Item = (usize, [u8; 9], u16, u16, u16)> {
-    MATERIALS.iter().enumerate().flat_map(|(i, m)| {
-        let (stair, slab) = (FIRST_STAIR + i as u16, FIRST_SLAB + i as u16);
-        let (inner, outer) = (FIRST_INNER + i as u16, FIRST_OUTER + i as u16);
+    SETS.iter().flat_map(|s| s.materials.iter().enumerate().map(move |(i, m)| (s, i as u16, m))).flat_map(|(s, i, m)| {
+        let (stair, slab) = (s.first_stair() + i, s.first_slab() + i);
+        let (inner, outer) = (s.first_inner() + i, s.first_outer() + i);
         [
             (3, [0, 0, 1, 0, 1, 1, 1, 1, 1], m.base, stair, 8),
             (3, [1, 1, 1, 0, 0, 0, 0, 0, 0], m.base, slab, 6),
@@ -261,6 +289,11 @@ mod tests {
         assert!(shape_of(40).is_none() && shape_of(81).is_none());
         assert_eq!(burn_time(41, |_| 5.0), 3.0);
         assert_eq!(burn_time(53, |_| 7.0), 3.0);
+        // The later set, after the fences.
+        assert_eq!(LATER.first, 175);
+        assert_eq!(shaped(Shape::Slab, CONTENT_ACACIA_WOOD), Some(178));
+        assert!(matches!(shape_of(182), Some((Shape::Outer, m)) if m.base == CONTENT_ACACIA_WOOD));
+        assert!(shape_of(183).is_none() && shape_of(174).is_none());
     }
 
     #[test]

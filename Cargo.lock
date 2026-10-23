@@ -591,7 +591,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "esp32-luanti"
+name = "esp32-s3-minetest"
 version = "0.1.0"
 dependencies = [
  "anyhow",
