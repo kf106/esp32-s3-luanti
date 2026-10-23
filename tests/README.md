@@ -3,8 +3,10 @@
 Everything here runs on a PC, without the board: the server's code is built for the PC and run on a UDP port, and the network tests play against it as Luanti clients would.
 
 ```
-python3 tests/run.py
+.venv/bin/python3 tests/run.py
 ```
+
+(after the one-off setup below).
 
 That runs, in order:
 
@@ -28,6 +30,8 @@ It ends with a count, and exits non-zero if anything failed. A full run takes ab
 The ESP-IDF tools aren't needed.
 
 ## Choosing what to run
+
+With the venv's Python (or `python3` once the venv is activated with `source .venv/bin/activate`):
 
 ```
 python3 tests/run.py --list            the network tests

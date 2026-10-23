@@ -4,8 +4,12 @@
 //!
 //! - The bones go where the player's feet were, if that is air, liquid or
 //!   something built over (a plant, a snow layer); otherwise in the
-//!   nearest air beside it. With nowhere to put them, everything is
-//!   dropped on the ground instead, with a bones item.
+//!   nearest air beside it. Then they drop through any air below until
+//!   they rest on something: a player killed by a fall was last heard of
+//!   a little above where they landed (the client sends its position ten
+//!   times a second, and reports fall damage on landing). With nowhere
+//!   to put them, everything is dropped on the ground instead, with a
+//!   bones item.
 //! - They hold 32 stacks (the main inventory, then the craft grid); what
 //!   doesn't fit is dropped.
 //! - Only the dead player can take from them, at first. After 20 minutes
@@ -26,6 +30,9 @@ pub const BONES: u16 = crate::panes::BAR_TRAPDOOR + 2;
 /// take from someone's bones.
 pub const SHARE_TIME: u64 = 1200;
 
+/// How far bones drop to find something to rest on.
+const SETTLE_MAX: i32 = 64;
+
 /// How often bones are checked for having become old (their node timer).
 pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -39,6 +46,18 @@ pub fn may_replace(id: u16) -> bool {
 /// `may_replace` allows, or else the nearest air within a node of it
 /// (minetest.find_node_near). None: nowhere, so drop everything.
 pub fn spot(feet: NodePos, node: &dyn Fn(NodePos) -> u16) -> Option<NodePos> {
+    let mut pos = unsettled_spot(feet, node)?;
+    for _ in 0..SETTLE_MAX {
+        let below = (pos.0, pos.1 - 1, pos.2);
+        if node(below) != CONTENT_AIR {
+            break;
+        }
+        pos = below;
+    }
+    Some(pos)
+}
+
+fn unsettled_spot(feet: NodePos, node: &dyn Fn(NodePos) -> u16) -> Option<NodePos> {
     if may_replace(node(feet)) {
         return Some(feet);
     }
@@ -81,6 +100,11 @@ mod tests {
         assert_eq!(spot((0, 0, 0), &|_| CONTENT_WATER), Some((0, 0, 0)));
         // Shut in stone: nowhere.
         assert_eq!(spot((0, 0, 0), &|_| CONTENT_STONE), None);
+        // Last heard of in mid-air (a fall): down onto the ground.
+        assert_eq!(spot((5, 7, 5), &open), Some((5, 0, 5)));
+        // Into water, they stop at its surface (only air is fallen through).
+        let lake = |p: NodePos| if p.1 < 0 { CONTENT_STONE } else if p.1 < 3 { CONTENT_WATER } else { CONTENT_AIR };
+        assert_eq!(spot((0, 6, 0), &lake), Some((0, 3, 0)));
     }
 
     #[test]

@@ -110,7 +110,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes
 - **Torches:** they mount on floors, walls and ceilings using Minetest Game's 3D models. The server computes their light, so caves and nights are lit, and they fall off when the block they hang on is dug.
 - **Day and night:** a normal day and night cycle. Map blocks carry separate day and night light.
 - **Health:** fall damage, a health bar, death and respawn.
-- **Bones:** Minetest Game's. Die with anything on you and it all stays where you fell, in a bones block (in the nearest air if you died inside something; dropped on the ground if there is nowhere at all). Right-click to open them, or punch them to take everything that fits; once they're empty they go, and you get the bones block. At first only you can take from them; after 20 minutes of game time they become "old bones" and anyone may. Nothing can be put back in.
+- **Bones:** Minetest Game's. Die with anything on you and it all stays where you fell, in a bones block (in the nearest air if you died inside something, and on the ground if you died in mid-air; dropped on the ground if there is nowhere at all). Right-click to open them, or punch them to take everything that fits; once they're empty they go, and you get the bones block. At first only you can take from them; after 20 minutes of game time they become "old bones" and anyone may. Nothing can be put back in.
 - **Dropped items:**
   - `Q` drops the whole stack in your hand; `Shift+Q` drops one;
   - punch an item to pick it up;
