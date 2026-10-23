@@ -1,5 +1,6 @@
 mod auth;
 mod beds;
+mod board;
 mod bones;
 mod chest;
 mod clock;
@@ -85,10 +86,22 @@ fn main() -> anyhow::Result<()> {
     let p = Peripherals::take()?;
     let pins = p.pins;
 
-    // Storage: the SD card (Waveshare ESP32-S3-LCD-1.47 TF slot, 4-bit
-    // SDMMC) if there is one, otherwise the board's own flash. Either is
-    // mounted at /sd, so the rest of the server doesn't know which.
+    info!("Built for the {}", board::BOARD.name);
+    // A speaker amplifier stays off: nothing here makes sound.
+    if let Some((pin, off)) = board::BOARD.amp_off {
+        unsafe {
+            esp_idf_svc::sys::gpio_reset_pin(pin);
+            esp_idf_svc::sys::gpio_set_direction(pin, esp_idf_svc::sys::gpio_mode_t_GPIO_MODE_OUTPUT);
+            esp_idf_svc::sys::gpio_set_level(pin, off);
+        }
+    }
+
+    // Storage: the SD card (its slot's 4-bit SDMMC pins depend on the
+    // board, see board.rs) if there is one, otherwise the board's own
+    // flash. Either is mounted at /sd, so the rest of the server doesn't
+    // know which.
     let sd = (|| -> anyhow::Result<_> {
+        #[cfg(not(board = "es3c28p"))]
         let host = SdMmcHostDriver::new_4bits(
             p.sdmmc1,
             pins.gpio15, // CMD
@@ -97,6 +110,19 @@ fn main() -> anyhow::Result<()> {
             pins.gpio18, // D1
             pins.gpio17, // D2
             pins.gpio21, // D3
+            None::<AnyIOPin>, // no card-detect line
+            None::<AnyIOPin>, // no write-protect line
+            &SdMmcHostConfiguration::new(),
+        )?;
+        #[cfg(board = "es3c28p")]
+        let host = SdMmcHostDriver::new_4bits(
+            p.sdmmc1,
+            pins.gpio40, // CMD
+            pins.gpio38, // CLK
+            pins.gpio39, // D0
+            pins.gpio41, // D1
+            pins.gpio48, // D2
+            pins.gpio47, // D3
             None::<AnyIOPin>, // no card-detect line
             None::<AnyIOPin>, // no write-protect line
             &SdMmcHostConfiguration::new(),
@@ -125,7 +151,11 @@ fn main() -> anyhow::Result<()> {
 
     // The status screen starts now, so it can say what Wi-Fi is doing.
     let status = status::Status::new("Wi-Fi...".to_string());
+    // The screen's SPI bus: SCLK and MOSI.
+    #[cfg(not(board = "es3c28p"))]
     lcd::start(status.clone(), p.spi2, pins.gpio40, pins.gpio45);
+    #[cfg(board = "es3c28p")]
+    lcd::start(status.clone(), p.spi2, pins.gpio12, pins.gpio11);
 
     // Wi-Fi: the networks in wifi.txt, plus one given when building
     // (WIFI_SSID, WIFI_PASS), which is written into wifi.txt; or, if BOOT

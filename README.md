@@ -39,7 +39,24 @@ Developed on a [**Waveshare ESP32-S3-LCD-1.47**](https://www.waveshare.com/produ
 
 ![The back of the board, with the microSD card that holds the world](assets/esp32-waveshare.jpeg)
 
-Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes; an SD card slot is optional. The SD card pins are set in `src/main.rs` (CMD 15, CLK 14, D0 16, D1 18, D2 17, D3 21) and the LCD pins in `src/lcd.rs`. PSRAM is required: the server keeps its own data there and leaves the internal RAM to Wi-Fi and the system.
+### Other boards
+
+The firmware can also be built for LCDwiki's **ES3C28P / ES3N28P** (2.8" screen, with and without touch), with `BOARD=es3c28p` when building:
+
+| | Waveshare ESP32-S3-LCD-1.47 (default) | ES3C28P / ES3N28P (`BOARD=es3c28p`) |
+|---|---|---|
+| Chip, memory | ESP32-S3 N16R8 | ESP32-S3 N16R8 |
+| Display | 1.47" ST7789, 172 × 320 | 2.8" ILI9341V, 240 × 320 (touch on the C, unused) |
+| Screen pins | SCLK 40, MOSI 45, CS 42, DC 41, RST 39, backlight 48 | SCLK 12, MOSI 11, CS 10, DC 46, reset with the chip, backlight 45 |
+| microSD (4-bit) | CMD 15, CLK 14, D0 16, D1 18, D2 17, D3 21 | CMD 40, CLK 38, D0 39, D1 41, D2 48, D3 47 |
+| RGB LED, button | GPIO 38, BOOT (GPIO 0) | GPIO 42, BOOT (GPIO 0) |
+| Other | | speaker amplifier (kept off, GPIO 1), battery connector |
+
+On the ES3C28P the status pages are drawn as on the Waveshare, 320 × 172, in the middle of the larger screen, for now. If its colours come out with red and blue swapped, or inverted, or the pages mirrored, flip `lcd_bgr`, `lcd_invert`, `lcd_mirror_x` or `lcd_mirror_y` for it in `src/board.rs` (both mirrors for pages upside down).
+
+After flashing over USB, this board may restart into its download mode ("waiting for download" in the monitor) rather than run the new firmware: press its RESET button, and it starts normally.
+
+Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with a new entry in `src/board.rs` and their SD card and screen pins in `src/main.rs`; an SD card slot is optional. PSRAM is required: the server keeps its own data there and leaves the internal RAM to Wi-Fi and the system.
 
 ## What works
 
@@ -75,6 +92,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes
   - Light gets in, so a slab roof doesn't make a dark room. Wooden ones burn, for three quarters (stairs) or half (slabs) the time of the planks.
 - **Doors:** Minetest Game's wooden, glass and steel doors: two columns of three planks, glass or steel ingots make one. A door faces the way you look as you place it, and one placed beside another hinges on the other side, so the pair opens outwards. Right-click opens and shuts it, with its sound; with sneak held, right-click builds against it instead. A steel door belongs to whoever placed it: only they can open or dig it (with a steel pickaxe). Owners are kept in `world/doors.txt`.
 - **Fences, fence rails and fence gates:** Minetest Game's, in all five woods. Two rows of planks, stick, planks make 4 fences; two planks above two more, with an empty row between, 16 rails (a fence without its posts); two rows of stick, planks, stick a gate. Fences join up with each other, with gates and with planks and trunks next to them (the client draws the joins, from the node definitions). A gate is placed facing away from you, joins fences on its left and right, and opens and closes with a right-click and a creak. Rails join only fences, gates and other rails, and stop you like a fence does. Fences and gates burn for 5 to 7 s, as their planks, rails for 3 to 5 s.
+- **Walls:** Minetest Game's cobblestone and desert cobblestone walls (mossy cobblestone's will come with dungeons). Two rows of three cobblestone make 6. A wall is a thick post that grows a lower wall out to each wall, fence or stone block beside it, and stops you as a full block does. Fences and rails join walls too.
 - **Glass panes and steel bars:** Minetest Game's `xpanes`. Two rows of three glass, obsidian glass or steel ingots make 16. A pane on its own, or in a straight line, is a thin sheet running along the line; at a corner, a T or a cross it becomes a post with arms out to its neighbours. Panes join each other and stone, wood and trunks (not glass blocks, as in Minetest Game). Steel bars also make the **steel bar door** (two columns of three) and **steel bar trapdoor** (a square of four), locked to whoever places them like the steel ones.
 - **Trapdoors:** Minetest Game's wooden and steel ones. Two rows of three planks make 2 wooden trapdoors, a square of four steel ingots one steel trapdoor. Placed like a block (facing away from you), right-click flips it up against its back edge and down again. A steel trapdoor is locked to whoever placed it, like a steel door.
 - **Water:** lakes and ponds fill low ground up to height 1 (Luanti's water level), with sandy beds and shores; about an eighth of the land. Swim in it, and build into it. Water flows as in Luanti: dig beside or under a lake and it runs in, up to 8 nodes across flat ground, getting shallower as it goes, and falls down any hole; take the source away and the flow drains. Two sources with a gap between make a third, so a lake never runs dry. Water washes torches out. It spreads a node a second; the server looks at up to 1,000 places a second, so a flood into a big cave takes a while. Where more than 8 nodes in a map block change at once, the block is sent again whole rather than node by node, to spare the radio; while water is moving the log says how much every 10 s ("Liquids: ...").
@@ -139,7 +157,7 @@ Other ESP32-S3 boards with PSRAM and 16 MB of flash should work with pin changes
 
 ## What doesn't (yet)
 
-- Much of Minetest Game is still missing: mese posts, mossy cobblestone and cave ice (they come with dungeons and caves), signs, bookshelves, TNT and fire, boats, carts, keys, walls, dungeons, weather and creative mode.
+- Much of Minetest Game is still missing: mese posts, mossy cobblestone and cave ice (they come with dungeons and caves), signs, bookshelves, TNT and fire, boats, carts, keys, dungeons, weather and creative mode.
 - No Lua mods: the game content is built in.
 - One world per SD card (or in the board's flash).
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.
@@ -164,6 +182,12 @@ You need the Rust toolchain for Xtensa, plus `git` and Python 3 with the `venv` 
    WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
    ```
    `cargo run` flashes the board with `espflash`, with the partition table in `partitions.csv`, and opens the serial monitor.
+
+   For the ES3C28P or ES3N28P, add `BOARD=es3c28p`:
+   ```
+   BOARD=es3c28p WIFI_SSID='your network' WIFI_PASS='your password' cargo run --release
+   ```
+   Switching between boards needs no `cargo clean`, but always give `BOARD` when building for the ES3C28P: a build without it is for the Waveshare.
 
 **The first build is slow.** It downloads ESP-IDF v5.5.1 and its tools into `.embuild/` inside the project and compiles them.
 
@@ -327,6 +351,7 @@ Privileges are kept in `/sd/auth/<name>.privs`, one line such as `interact,shout
 
 ```
 src/main.rs        start-up: SD card or flash, Wi-Fi, LCD, and the memory allocator
+src/board.rs       the boards it can be built for, and their pins
 src/server.rs      the server loop: peers, reliability, and all game logic
 src/protocol.rs    Luanti's UDP packet framing
 src/messages.rs    building and parsing protocol commands
@@ -345,7 +370,7 @@ src/stairs.rs      stairs and slabs
 src/doors.rs       doors and trapdoors
 src/farming.rs     farming: soil, seeds, crops, hoes
 src/beds.rs        beds, sleeping and respawn points
-src/fences.rs      fences, fence rails and fence gates
+src/fences.rs      fences, fence rails, fence gates and walls
 src/panes.rs       glass panes and steel bars
 src/plants.rs      cactus, papyrus, bushes, ferns, marram grass, kelp, corals
 src/falling.rs     falling sand and gravel

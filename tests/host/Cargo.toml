@@ -14,3 +14,7 @@ qrcodegen = "1.8"
 
 [profile.release]
 debug = false
+
+# The firmware's build.rs sets cfg(board = ...); here it is the default.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(board, values("waveshare", "es3c28p"))'] }

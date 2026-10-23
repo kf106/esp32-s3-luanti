@@ -12,11 +12,28 @@
 //! (nature.rs). The value is the kit's token: rebuilding with the same one
 //! gives nothing more, and a new value (TEST=2, and so on) hands out a fresh
 //! kit. Build normally for play.
+//!
+//! `BOARD=es3c28p cargo run --release` builds for LCDwiki's ES3C28P or
+//! ES3N28P instead of the Waveshare ESP32-S3-LCD-1.47 (see src/board.rs).
+//! Changing the board needs no `cargo clean`.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     embuild::espidf::sysenv::output();
+
+    // Which board (src/board.rs), as `cfg(board = "...")`.
+    println!("cargo:rerun-if-env-changed=BOARD");
+    println!("cargo:rustc-check-cfg=cfg(board, values(\"waveshare\", \"es3c28p\"))");
+    let board = match std::env::var("BOARD").unwrap_or_default().to_ascii_lowercase().as_str() {
+        "" | "waveshare" | "waveshare-1.47" | "esp32-s3-lcd-1.47" => "waveshare",
+        "es3c28p" | "es3n28p" => "es3c28p",
+        other => panic!("Unknown BOARD \"{other}\": use waveshare (the default) or es3c28p (for the ES3C28P and ES3N28P)"),
+    };
+    println!("cargo:rustc-cfg=board=\"{board}\"");
+    if board != "waveshare" {
+        println!("cargo:warning=Building for the {board} board");
+    }
 
     println!("cargo:rerun-if-env-changed=RESET_SD");
     if std::env::var("RESET_SD").is_ok_and(|v| v == "1") {

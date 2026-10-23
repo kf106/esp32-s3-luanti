@@ -163,6 +163,9 @@ pub const RECIPES: &[Recipe] = &[
     // ingots 1.
     Recipe { width: 3, pattern: &[G("wood"); 6], output: crate::doors::FIRST_TRAPDOOR, count: 2 },
     Recipe { width: 2, pattern: &[I(ITEM_STEEL_INGOT); 4], output: crate::doors::FIRST_TRAPDOOR + 2, count: 1 },
+    // Walls (walls mod): two rows of three cobblestone make 6.
+    Recipe { width: 3, pattern: &[I(CONTENT_COBBLE); 6], output: crate::fences::WALL_COBBLE, count: 6 },
+    Recipe { width: 3, pattern: &[I(CONTENT_DESERT_COBBLE); 6], output: crate::fences::WALL_DESERT_COBBLE, count: 6 },
     // Panes (xpanes): two rows of three glass, obsidian glass or steel
     // ingots make 16; the steel bars make a door (two columns of three)
     // and a trapdoor (a square of four).
@@ -750,6 +753,8 @@ mod tests {
         assert_eq!(result(&rows(CONTENT_GLASS, 0)), Some((PANE_FLAT, 16)));
         assert_eq!(result(&rows(CONTENT_OBSIDIAN_GLASS, 3)), Some((OBSIDIAN_PANE_FLAT, 16)));
         assert_eq!(result(&rows(ITEM_STEEL_INGOT, 0)), Some((BAR_FLAT, 16)));
+        assert_eq!(result(&rows(CONTENT_COBBLE, 3)), Some((crate::fences::WALL_COBBLE, 6)));
+        assert_eq!(result(&rows(CONTENT_DESERT_COBBLE, 0)), Some((crate::fences::WALL_DESERT_COBBLE, 6)));
         // Steel ingots in two columns are still a steel door.
         let cols = |id: u16| grid(&[0, 1, 3, 4, 6, 7].map(|i| (i, id, 1)));
         assert_eq!(result(&cols(ITEM_STEEL_INGOT)), Some((ITEM_DOOR_STEEL, 1)));

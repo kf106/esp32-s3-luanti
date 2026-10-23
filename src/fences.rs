@@ -161,6 +161,33 @@ pub fn gate_collision(open: bool) -> &'static [[f32; 6]] {
     }
 }
 
+/// minetest_game's walls (mods/walls): a thick post, with lower, thinner
+/// walls out to each side it joins. Cobblestone and desert cobblestone;
+/// mossy cobblestone's comes with dungeons.
+pub const WALL_COBBLE: u16 = crate::bones::BONES + 1;
+pub const WALL_DESERT_COBBLE: u16 = WALL_COBBLE + 1;
+
+pub const WALL_BOX: Connected = Connected {
+    fixed: &[[-0.25, -0.5, -0.25, 0.25, 0.5, 0.25]],
+    front: &[[-3.0 * S, -0.5, -0.5, 3.0 * S, 0.375, -0.25]],
+    left: &[[-0.5, -0.5, -3.0 * S, -0.25, 0.375, 3.0 * S]],
+    back: &[[-3.0 * S, -0.5, 0.25, 3.0 * S, 0.375, 0.5]],
+    right: &[[0.25, -0.5, -3.0 * S, 0.5, 0.375, 3.0 * S]],
+};
+
+/// What a player bumps into: the post and, to each side, a wall as wide as
+/// the post and as tall as a node.
+pub const WALL_COLLISION: Connected = Connected {
+    fixed: &[[-0.25, -0.5, -0.25, 0.25, 0.5, 0.25]],
+    front: &[[-0.25, -0.5, -0.5, 0.25, 0.5, -0.25]],
+    left: &[[-0.5, -0.5, -0.25, -0.25, 0.5, 0.25]],
+    back: &[[-0.25, -0.5, 0.25, 0.25, 0.5, 0.5]],
+    right: &[[0.25, -0.5, -0.25, 0.5, 0.5, 0.25]],
+};
+
+/// The groups whose nodes a wall joins.
+pub const WALL_JOINS: [&str; 4] = ["wall", "stone", "fence", "wall_connected"];
+
 /// The groups whose nodes a fence joins (its connects_to).
 pub const JOINS: [&str; 5] = ["fence", "wood", "tree", "wall", "fence_connected"];
 /// And a rail.

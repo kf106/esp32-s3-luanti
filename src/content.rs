@@ -127,6 +127,9 @@ pub enum Kind {
     /// Bones (bones.rs): a cube turned to face the way its player looked,
     /// opened with a right-click.
     Bones,
+    /// A wall (fences.rs): a post joining its neighbours, like a fence,
+    /// but casting shade.
+    Wall,
 }
 
 pub const CONTENT_STONE: u16 = 0;
@@ -2675,6 +2678,27 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Bones,
     },
+    // minetest_game's walls (fences.rs).
+    Node {
+        id: fences::WALL_COBBLE,
+        name: "esp:wall_cobble",
+        description: "Cobblestone Wall",
+        tiles: ["esp_cobble.png"; 6],
+        groups: &[("cracky", 3), ("wall", 1), ("stone", 2)],
+        drop: fences::WALL_COBBLE,
+        drop_count: 1,
+        kind: Kind::Wall,
+    },
+    Node {
+        id: fences::WALL_DESERT_COBBLE,
+        name: "esp:wall_desert_cobble",
+        description: "Desert Cobblestone Wall",
+        tiles: ["default_desert_cobble.png"; 6],
+        groups: &[("cracky", 3), ("wall", 1), ("stone", 2)],
+        drop: fences::WALL_DESERT_COBBLE,
+        drop_count: 1,
+        kind: Kind::Wall,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -3688,7 +3712,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -3738,7 +3762,7 @@ pub fn passes_sunlight(id: u16) -> bool {
 
 /// Whether players stand on a node (and so whether it can hold a torch).
 pub fn walkable(id: u16) -> bool {
-    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane | Kind::Bones))
+    def(id).is_some_and(|n| matches!(n.kind, Kind::Solid | Kind::Leaves | Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Shaped | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stem | Kind::Rooted | Kind::Lamp | Kind::SnowLayer | Kind::Pane | Kind::Bones | Kind::Wall))
 }
 
 /// Whether right-clicking a node opens it (and so doesn't place against
@@ -5023,9 +5047,17 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     // Wheat grows as a "#" of pictures (meshoptions; param2 says which shape).
     let wheat = farming::WHEAT_STAGES.contains(&n.id);
     let bed = beds::is_bed(n.id);
-    let fence = n.kind == Kind::Fence;
+    let wall = n.kind == Kind::Wall;
+    // Walls are drawn and joined as fences are, with their own boxes.
+    let fence = n.kind == Kind::Fence || wall;
     let gate = fences::gate_of(n.id);
-    let fence_box = if fences::is_rail(n.id) { &fences::RAIL_BOX } else { &fences::FENCE_BOX };
+    let fence_box = if wall {
+        &fences::WALL_BOX
+    } else if fences::is_rail(n.id) {
+        &fences::RAIL_BOX
+    } else {
+        &fences::FENCE_BOX
+    };
     // Papyrus and bush stems: plants, the stems solid; kelp and corals:
     // blocks with a plant on top.
     let stalk = matches!(n.kind, Kind::Stalk | Kind::Stem);
@@ -5087,7 +5119,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Plant => (NDT_PLANTLIKE, ""),
         Kind::Seed => (NDT_SIGNLIKE, ""),
         Kind::Bed | Kind::BedTop => (NDT_NODEBOX, ""),
-        Kind::Fence => (NDT_NODEBOX, ""),
+        Kind::Fence | Kind::Wall => (NDT_NODEBOX, ""),
         Kind::Gate => (NDT_MESH, fences::gate_mesh(n.id)),
         Kind::Stalk | Kind::Stem => (NDT_PLANTLIKE, ""),
         Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
@@ -5166,7 +5198,9 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         // A gate or a flat pane is joined only on its left and right.
         .u8(if gate.is_some() || flat_pane { fences::GATE_SIDES } else { 0 }); // connect_sides
     // connects_to: what a fence or a connected pane joins.
-    let joins = if fence {
+    let joins = if wall {
+        fence_joins(&fences::WALL_JOINS)
+    } else if fence {
         fence_joins(if fences::is_rail(n.id) { &fences::RAIL_JOINS } else { &fences::JOINS })
     } else if pane && !flat_pane {
         fence_joins(&panes::JOINS)
@@ -5298,6 +5332,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
     } else if n.kind == Kind::SnowLayer {
         // A little thinner underfoot than it looks (minetest_game's snow).
         fixed_nodebox(&mut w, &[[-0.5, -0.5, -0.5, 0.5, -7.0 / 16.0, 0.5]]);
+    } else if wall {
+        connected_nodebox(&mut w, &fences::WALL_COLLISION);
     } else if fence {
         connected_nodebox(&mut w, &fences::FENCE_COLLISION);
     } else if let Some((_, open)) = gate {

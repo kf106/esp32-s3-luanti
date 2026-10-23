@@ -1,10 +1,15 @@
-//! The board's 1.47" 172x320 ST7789 LCD, driven through ESP-IDF's esp_lcd
-//! component, and the thread that redraws the status screens. The BOOT
-//! button pages through them.
+//! The board's LCD, driven through ESP-IDF's esp_lcd component, and the
+//! thread that redraws the status screens. The BOOT button pages through
+//! them. Pins and panel settings are in board.rs.
 //!
-//! Pins (Waveshare ESP32-S3-LCD-1.47): MOSI 45, SCLK 40, CS 42, DC 41,
-//! RST 39, backlight 48 (active high). The panel's 172 columns sit in the
-//! middle of the ST7789's 240, hence the 34-pixel gap.
+//! - Waveshare ESP32-S3-LCD-1.47: a 172x320 ST7789. The panel's 172
+//!   columns sit in the middle of the controller's 240, hence the
+//!   34-pixel gap.
+//! - ES3C28P/ES3N28P: a 240x320 ILI9341V. It takes the ST7789's commands
+//!   for everything esp_lcd sends, and after esp_lcd's set-up gets the
+//!   power and gamma settings an ILI9341 needs (as Espressif's ILI9341
+//!   driver sends them). For now the 320x172 pages are drawn in the
+//!   middle of its 240 rows.
 
 use std::ptr::null_mut;
 use std::time::{Duration, Instant};
@@ -14,20 +19,43 @@ use esp_idf_svc::hal::spi::{Dma, SpiAnyPins, SpiDriver, SpiDriverConfig};
 use esp_idf_svc::sys::*;
 use log::{info, warn};
 
+use crate::board::{Controller, BOARD};
 use crate::indicator::{self, Event, Indicator, State};
 use crate::screen::{self, Frame, Page, System, View, HEIGHT, WIDTH};
 use crate::status::{self, SharedStatus};
 
-const PIN_CS: i32 = 42;
-const PIN_DC: i32 = 41;
-const PIN_RST: i32 = 39;
-const PIN_BACKLIGHT: i32 = 48;
+const PIN_CS: i32 = BOARD.lcd_cs;
+const PIN_DC: i32 = BOARD.lcd_dc;
+const PIN_RST: i32 = BOARD.lcd_reset;
+const PIN_BACKLIGHT: i32 = BOARD.lcd_backlight;
 const PIXEL_CLOCK_HZ: u32 = 40_000_000;
-/// Gap between the controller's 240 columns and the panel's 172.
-const GAP: i32 = 34;
-/// Landscape has two orientations, 180 degrees apart. If the text is upside
-/// down, flip this.
-const UPSIDE_DOWN: bool = false;
+/// Where the pages start in the controller's 240 rows.
+const GAP: i32 = BOARD.lcd_gap;
+/// How landscape is mirrored for the board's panel (board.rs).
+const MIRROR_X: bool = BOARD.lcd_mirror_x;
+const MIRROR_Y: bool = BOARD.lcd_mirror_y;
+
+/// The ILI9341's power, VCOM, frame rate and gamma settings, after
+/// esp_lcd's sleep-out, MADCTL and COLMOD (Espressif's esp_lcd_ili9341
+/// vendor_specific_init_default, as Adafruit's driver sends them too).
+const ILI9341_INIT: &[(i32, &[u8])] = &[
+    (0xCF, &[0x00, 0xC1, 0x30]),                   // power control B
+    (0xED, &[0x64, 0x03, 0x12, 0x81]),             // power on sequence
+    (0xE8, &[0x85, 0x00, 0x78]),                   // driver timing A
+    (0xCB, &[0x39, 0x2C, 0x00, 0x34, 0x02]),       // power control A
+    (0xF7, &[0x20]),                               // pump ratio
+    (0xEA, &[0x00, 0x00]),                         // driver timing B
+    (0xC0, &[0x23]),                               // power control 1
+    (0xC1, &[0x10]),                               // power control 2
+    (0xC5, &[0x3E, 0x28]),                         // VCOM control 1
+    (0xC7, &[0x86]),                               // VCOM control 2
+    (0xB1, &[0x00, 0x18]),                         // frame rate: 79 Hz
+    (0xB6, &[0x08, 0x82, 0x27]),                   // display function
+    (0xF2, &[0x00]),                               // 3-gamma off
+    (0x26, &[0x01]),                               // gamma curve 1
+    (0xE0, &[0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00]),
+    (0xE1, &[0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F]),
+];
 
 /// Rows sent per transfer, from a buffer in DMA-capable internal RAM.
 const STRIP_ROWS: usize = 20;
@@ -38,10 +66,10 @@ const REFRESH: Duration = Duration::from_secs(1);
 /// The screen switches off after this long without a button press (it
 /// warms the board, and nobody watches it all the time). A press wakes it.
 const SCREEN_TIMEOUT: Duration = Duration::from_secs(60);
-/// The board's RGB LED: one addressable (WS2812-style) LED on GPIO 38.
-const PIN_LED: i32 = 38;
-/// The BOOT button: GPIO 0, pulled up, low while pressed.
-const PIN_BUTTON: i32 = 0;
+/// The board's RGB LED: one addressable (WS2812-style) LED.
+const PIN_LED: i32 = BOARD.led;
+/// The BOOT button: pulled up, low while pressed.
+const PIN_BUTTON: i32 = BOARD.button;
 /// How often the button is checked; also its debounce time.
 const BUTTON_POLL: Duration = Duration::from_millis(30);
 /// The SD card's free space is looked up this often (it can be slow).
@@ -96,15 +124,26 @@ impl Lcd {
         let mut panel: esp_lcd_panel_handle_t = null_mut();
         esp!(unsafe { esp_lcd_new_panel_st7789(io, &panel_config, &mut panel) })?;
         unsafe {
+            // With no reset pin, this sends the controller a software reset.
             esp!(esp_lcd_panel_reset(panel))?;
             esp!(esp_lcd_panel_init(panel))?;
+            if BOARD.lcd_controller == Controller::Ili9341 {
+                for (cmd, params) in ILI9341_INIT {
+                    esp!(esp_lcd_panel_io_tx_param(io, *cmd, params.as_ptr().cast(), params.len()))?;
+                }
+            }
             // An IPS panel: colours are inverted unless told otherwise.
-            esp!(esp_lcd_panel_invert_color(panel, true))?;
+            esp!(esp_lcd_panel_invert_color(panel, BOARD.lcd_invert))?;
             // Landscape: swap axes plus one mirror is a 90 degree turn.
             esp!(esp_lcd_panel_swap_xy(panel, true))?;
-            esp!(esp_lcd_panel_mirror(panel, !UPSIDE_DOWN, UPSIDE_DOWN))?;
-            // After the swap, the 172-pixel axis is y.
-            esp!(esp_lcd_panel_set_gap(panel, 0, GAP))?;
+            esp!(esp_lcd_panel_mirror(panel, MIRROR_X, MIRROR_Y))?;
+            if BOARD.lcd_bgr {
+                // Blue and red the other way round: MADCTL as esp_lcd just
+                // set it (MV for the swap, MX or MY for the mirror), plus
+                // the BGR bit.
+                let madctl: u8 = 0x20 | (if MIRROR_X { 0x40 } else { 0 }) | (if MIRROR_Y { 0x80 } else { 0 }) | 0x08;
+                esp!(esp_lcd_panel_io_tx_param(io, 0x36, [madctl].as_ptr().cast(), 1))?;
+            }
         }
 
         let strip = unsafe { heap_caps_malloc(STRIP_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) } as *mut u8;
@@ -113,8 +152,13 @@ impl Lcd {
         }
         let lcd = Self { _spi: spi, io, panel, strip };
 
-        // Clear the screen before switching the display and backlight on,
-        // so the panel's random power-up contents never show.
+        // Clear the whole panel before switching the display and backlight
+        // on, so its random power-up contents never show: then the pages
+        // go at the gap (after the swap, the 172-pixel axis is y).
+        lcd.clear_rows(BOARD.lcd_rows)?;
+        unsafe {
+            esp!(esp_lcd_panel_set_gap(panel, 0, GAP))?;
+        }
         lcd.show(&Frame::new())?;
         unsafe {
             esp!(esp_lcd_panel_disp_on_off(panel, true))?;
@@ -123,6 +167,23 @@ impl Lcd {
             esp!(gpio_set_level(PIN_BACKLIGHT as _, 1))?;
         }
         Ok(lcd)
+    }
+
+    /// Black over the first `rows` rows, with no gap set: all of a panel
+    /// taller than the pages.
+    fn clear_rows(&self, rows: i32) -> Result<(), EspError> {
+        let buf = unsafe { std::slice::from_raw_parts_mut(self.strip, STRIP_BYTES) };
+        buf.fill(0);
+        let mut y = 0;
+        while y < rows {
+            let n = (STRIP_ROWS as i32).min(rows - y);
+            unsafe {
+                esp!(esp_lcd_panel_draw_bitmap(self.panel, 0, y, WIDTH as i32, y + n, self.strip as *const _))?;
+                esp!(esp_lcd_panel_io_tx_param(self.io, ST7789_NOP, std::ptr::null(), 0))?;
+            }
+            y += n;
+        }
+        Ok(())
     }
 
     /// Switch the backlight and the panel on or off.
@@ -261,7 +322,8 @@ fn run(lcd: Lcd, status: SharedStatus) {
                 }
             }
             let c = indicator.colour(dt, state);
-            let bytes = [indicator::to_byte(c.0), indicator::to_byte(c.1), indicator::to_byte(c.2)];
+            let (r, g, b) = (indicator::to_byte(c.0), indicator::to_byte(c.1), indicator::to_byte(c.2));
+            let bytes = if BOARD.led_grb { [g, r, b] } else { [r, g, b] };
             if shown != Some(bytes) {
                 led.set(bytes);
                 shown = Some(bytes);
@@ -388,6 +450,7 @@ impl RgbLed {
         match started {
             Ok(led) => {
                 led.set([0; 3]); // it may light up at power-on
+                info!("RGB LED on GPIO {}, colour order {}", PIN_LED, if BOARD.led_grb { "GRB" } else { "RGB" });
                 Some(led)
             }
             Err(e) => {

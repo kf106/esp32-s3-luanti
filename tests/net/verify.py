@@ -151,8 +151,8 @@ for _ in range(count):
         gates = globals().setdefault("gates", []); gates.append(cid)
 lst.done(); assert len(torches) == 3 and len(shaped) == 132; 
 assert len(fences) == 10 and len(gates) == 10
-want = sorted(cid for nm, (cid, gr) in ids.items() if any(g in (b"fence", b"wood", b"tree") for g, _ in gr))
-rail_want = sorted(cid for nm, (cid, gr) in ids.items() if any(g == b"fence" for g, _ in gr))
+want = sorted(cid for nm, (cid, gr) in ids.items() if any(g in (b"fence", b"wood", b"tree", b"wall") for g, _ in gr))
+rail_want = sorted(cid for nm, (cid, gr) in ids.items() if any(g in (b"fence", b"wall") for g, _ in gr))
 assert all(cto == (rail_want if rail else want) for _, cto, rail in fences) and all(g in want for g in gates), (want, fences)
 print("rails join:", [nm for nm, (cid, _) in ids.items() if cid in rail_want])
 print("fences join:", [nm for nm, (cid, _) in ids.items() if cid in want])

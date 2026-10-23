@@ -152,11 +152,15 @@ const CHAT_MAX_CHARS: usize = 500;
 const CHAT_MAX_PER_10S: usize = 8;
 /// The welcome message, shown in the chat area when a player joins, one
 /// line per message. A /sd/motd.txt file replaces it.
-const WELCOME: &str = "\
-Welcome! This server runs Minetest Game on an ESP32-S3 microcontroller: a Waveshare ESP32-S3-LCD-1.47 board, with 512 KB of RAM plus 8 MB of PSRAM.
+fn welcome() -> String {
+    format!(
+        "Welcome! This server runs Minetest Game on an ESP32-S3 microcontroller: a {} board, with 512 KB of RAM plus 8 MB of PSRAM.
 It is written from scratch in Rust, with no Lua: the game is built in. Up to 6 players.
 Source: https://github.com/kf106/esp32-s3-minetest
-Chat works as usual; type /help for the commands.";
+Chat works as usual; type /help for the commands.",
+        crate::board::BOARD.name
+    )
+}
 /// How often dropped items are moved on.
 const ITEM_STEP_INTERVAL: Duration = Duration::from_millis(50);
 /// builtin's item_drop: thrown from 1.2 nodes above the feet, at 2.9
@@ -517,7 +521,7 @@ pub struct Server {
 /// Everything the server needs, gathered up by main().
 pub struct Setup {
     pub socket: UdpSocket,
-    /// The welcome message from the SD card, replacing WELCOME.
+    /// The welcome message from the SD card, replacing welcome().
     pub motd: Option<String>,
     pub auth: AuthStore,
     pub world: World,
@@ -837,8 +841,7 @@ impl Server {
             rng,
             skins,
             welcome: motd
-                .as_deref()
-                .unwrap_or(WELCOME)
+                .unwrap_or_else(welcome)
                 .lines()
                 .map(str::trim_end)
                 .filter(|l| !l.is_empty())
