@@ -60,6 +60,8 @@ pub const TOCLIENT_DETACHED_INVENTORY: u16 = 0x43;
 pub const TOCLIENT_SHOW_FORMSPEC: u16 = 0x44;
 pub const TOCLIENT_MOVEMENT: u16 = 0x45;
 pub const TOCLIENT_HUD_SET_FLAGS: u16 = 0x4c;
+pub const TOCLIENT_CLOUD_PARAMS: u16 = 0x54;
+pub const TOCLIENT_SET_LIGHTING: u16 = 0x63;
 pub const TOCLIENT_SRP_BYTES_S_B: u16 = 0x60;
 
 /// Highest map serialisation format we speak.
@@ -1293,7 +1295,7 @@ pub fn formspec_escape(s: &str) -> String {
 /// main list and the craft grid.
 pub fn build_inventory_formspec(skin: &SkinChoice) -> Vec<u8> {
     let fs = format!(
-        "formspec_version[6]size[14.5,10.25]\
+        "formspec_version[6]size[14.5,10.25]{tabs}\
          list[current_player;craft;2.375,0.5;3,3;]\
          image[6.375,1.75;1,1;gui_furnace_arrow_bg.png^[transformR270]\
          list[current_player;craftpreview;7.625,1.75;1,1;]\
@@ -1304,11 +1306,66 @@ pub fn build_inventory_formspec(skin: &SkinChoice) -> Vec<u8> {
          label[10.85,4.25;{label}]\
          button[10.85,4.6;1.4,0.75;{FIELD_SKIN_PREVIOUS};<]\
          button[12.65,4.6;1.4,0.75;{FIELD_SKIN_NEXT};>]",
+        tabs = inventory_tabs(1),
         texture = formspec_escape(skin.texture),
         label = formspec_escape(skin.label),
     );
     let mut w = Writer::new(TOCLIENT_INVENTORY_FORMSPEC);
     w.bytes32(fs.as_bytes());
+    w.into_inner()
+}
+
+/// sfinv's tabs along the top of the inventory window: Crafting (1) and
+/// the crafting guide's Recipes (2).
+fn inventory_tabs(current: u8) -> String {
+    format!("tabheader[0,0;{};Crafting,Recipes;{current};true;false]", crate::craftguide::TABS)
+}
+
+/// The inventory window on its Recipes tab (the crafting guide).
+pub fn build_recipes_formspec(guide: &crate::craftguide::Guide) -> Vec<u8> {
+    let fs = format!("formspec_version[6]size[14.5,10.25]{}{}", inventory_tabs(2), crate::craftguide::formspec(guide));
+    let mut w = Writer::new(TOCLIENT_INVENTORY_FORMSPEC);
+    w.bytes32(fs.as_bytes());
+    w.into_inner()
+}
+
+/// TOCLIENT_CLOUD_PARAMS: the weather's clouds (player:set_clouds with
+/// density, thickness and speed; the rest as Luanti's defaults: colours,
+/// and 120 nodes up).
+pub fn build_cloud_params(w: &crate::weather::Weather) -> Vec<u8> {
+    let mut wr = Writer::new(TOCLIENT_CLOUD_PARAMS);
+    wr.f32(w.density)
+        .u32(0xE5F0_F0FF) // bright: ARGB (229, 240, 240, 255)
+        .u32(0xFF00_0000) // ambient
+        .f32(120.0) // height
+        .f32(w.thickness)
+        .f32(w.speed.0)
+        .f32(w.speed.1)
+        .u32(0xFFCC_CCCC); // shadow
+    wr.into_inner()
+}
+
+/// TOCLIENT_SET_LIGHTING: the weather's shadows (player:set_lighting with
+/// shadow intensity, a little bloom and volumetric light; the rest as
+/// Luanti's Lighting defaults).
+pub fn build_set_lighting(shadow_intensity: f32) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_SET_LIGHTING);
+    w.f32(shadow_intensity)
+        .f32(1.0) // saturation
+        .f32(-3.0) // exposure: luminance_min
+        .f32(-3.0) // luminance_max
+        .f32(0.0) // exposure_correction
+        .f32(1000.0) // speed_dark_bright
+        .f32(1000.0) // speed_bright_dark
+        .f32(1.0) // center_weight_power
+        .f32(0.2) // volumetric_light_strength
+        .u32(0xFF00_0000) // shadow_tint
+        .f32(0.05) // bloom_intensity
+        .f32(1.0) // bloom_strength_factor
+        .f32(1.0) // bloom_radius
+        .f32(0.0)
+        .f32(0.0)
+        .f32(0.0); // shadow_direction: unset
     w.into_inner()
 }
 

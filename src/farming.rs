@@ -27,6 +27,11 @@ pub const GRASS: [u16; 5] = [100, 101, 102, 103, 104];
 pub const COTTON_WILD: u16 = 105;
 pub const SOIL: u16 = 106;
 pub const SOIL_WET: u16 = 107;
+/// Savanna soil and desert sand soil, dry and wet.
+pub const DRY_SOIL: u16 = crate::content::EMERGENT_JUNGLE_SAPLING + 1;
+pub const DRY_SOIL_WET: u16 = DRY_SOIL + 1;
+pub const DESERT_SAND_SOIL: u16 = DRY_SOIL_WET + 1;
+pub const DESERT_SAND_SOIL_WET: u16 = DESERT_SAND_SOIL + 1;
 pub const SEED_WHEAT: u16 = 108;
 pub const SEED_COTTON: u16 = 109;
 pub const WHEAT_STAGES: [u16; 8] = [110, 111, 112, 113, 114, 115, 116, 117];
@@ -91,15 +96,39 @@ pub fn is_attached_plant(id: u16) -> bool {
         || crate::colours::is_mushroom(id)
 }
 
-pub fn is_soil(id: u16) -> bool {
-    matches!(id, SOIL | SOIL_WET)
+/// farming's soils, each with its "soil" definition (farming/nodes.lua):
+/// what it goes back to, its dry form and its wet form.
+const SOILS: [(u16, u16, u16); 3] = [
+    (CONTENT_DIRT, SOIL, SOIL_WET),
+    (CONTENT_DRY_DIRT, DRY_SOIL, DRY_SOIL_WET),
+    (CONTENT_DESERT_SAND, DESERT_SAND_SOIL, DESERT_SAND_SOIL_WET),
+];
+
+/// A soil's (base, dry, wet), if it is one.
+fn soil_of(id: u16) -> Option<(u16, u16, u16)> {
+    SOILS.iter().copied().find(|&(_, dry, wet)| id == dry || id == wet)
 }
 
-/// What a hoe makes of a node: dirt, grass and forest litter become
-/// dry soil (their "soil" definition in farming/nodes.lua). Savanna dirt
-/// makes minetest_game's dry soil, which we don't have.
+/// Whether a node is farming soil (group:field), wet or dry.
+pub fn is_soil(id: u16) -> bool {
+    soil_of(id).is_some()
+}
+
+/// Whether a node is wet soil (soil 3): what plants grow on.
+pub fn is_wet_soil(id: u16) -> bool {
+    soil_of(id).is_some_and(|(_, _, wet)| id == wet)
+}
+
+/// What a hoe makes of a node, by its "soil" definition: dirt, grass
+/// and forest litter become soil, savanna dirt (and its grass) savanna
+/// soil, and desert sand desert sand soil.
 pub fn hoed(id: u16) -> Option<u16> {
-    matches!(id, CONTENT_DIRT | CONTENT_GRASS | CONTENT_LITTER | CONTENT_CONIFEROUS_LITTER).then_some(SOIL)
+    match id {
+        CONTENT_DIRT | CONTENT_GRASS | CONTENT_LITTER | CONTENT_CONIFEROUS_LITTER => Some(SOIL),
+        CONTENT_DRY_DIRT | CONTENT_DRY_GRASS => Some(DRY_SOIL),
+        CONTENT_DESERT_SAND => Some(DESERT_SAND_SOIL),
+        _ => None,
+    }
 }
 
 /// How many uses a hoe has (farming/hoes.lua's max_uses).
@@ -115,18 +144,16 @@ pub fn hoe_uses(tool: u16) -> Option<u32> {
 /// What happens to soil now (the "Farming soil" ABM), given the node above
 /// it and whether there is water within 3 nodes. None: it stays as it is.
 pub fn soil_update(soil: u16, above: u16, water_near: bool) -> Option<u16> {
-    if !is_soil(soil) {
-        return None;
-    }
-    // Something solid on top: back to dirt.
+    let (base, dry, wet) = soil_of(soil)?;
+    // Something solid on top: back to what it was.
     if walkable(above) && !is_attached_plant(above) {
-        return Some(CONTENT_DIRT);
+        return Some(base);
     }
     let planted = crop_of(above).is_some();
-    match (soil, water_near) {
-        (SOIL, true) => Some(SOIL_WET),
-        (SOIL, false) if !planted => Some(CONTENT_DIRT),
-        (SOIL_WET, false) => Some(SOIL),
+    match (soil == wet, water_near) {
+        (false, true) => Some(wet),
+        (false, false) if !planted => Some(base),
+        (true, false) => Some(dry),
         _ => None,
     }
 }
@@ -157,7 +184,7 @@ pub fn grow(id: u16, soil_below: u16, lit: bool) -> Option<(u16, u8)> {
     if stage >= 8 {
         return None;
     }
-    let ok = if stage == 0 { is_soil(soil_below) } else { soil_below == SOIL_WET && lit };
+    let ok = if stage == 0 { is_soil(soil_below) } else { is_wet_soil(soil_below) && lit };
     ok.then(|| (crop.stages[stage], crop.param2))
 }
 
@@ -220,7 +247,8 @@ pub fn drops(id: u16, rng: &mut Rng) -> Vec<(u16, u16)> {
     match id {
         JUNGLEGRASS => vec![(if rng.one_in(8) { SEED_COTTON } else { JUNGLEGRASS }, 1)],
         COTTON_WILD => vec![(SEED_COTTON, 1)],
-        SOIL | SOIL_WET => vec![(CONTENT_DIRT, 1)],
+        // Soil gives back its dirt or sand.
+        id if is_soil(id) => drop_of(id).map(|(item, _)| vec![(item, 1)]).unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -271,6 +299,22 @@ mod tests {
         assert_eq!(soil_update(SOIL_WET, WHEAT_STAGES[3], true), None);
         assert_eq!(hoed(CONTENT_GRASS), Some(SOIL));
         assert_eq!(hoed(CONTENT_SAND), None);
+        // Savanna soil and desert sand soil: the same, each back to its
+        // own dirt or sand.
+        assert_eq!(hoed(CONTENT_DRY_GRASS), Some(DRY_SOIL));
+        assert_eq!(hoed(CONTENT_DRY_DIRT), Some(DRY_SOIL));
+        assert_eq!(hoed(CONTENT_DESERT_SAND), Some(DESERT_SAND_SOIL));
+        assert_eq!(soil_update(DRY_SOIL, CONTENT_AIR, true), Some(DRY_SOIL_WET));
+        assert_eq!(soil_update(DRY_SOIL_WET, CONTENT_AIR, false), Some(DRY_SOIL));
+        assert_eq!(soil_update(DRY_SOIL, CONTENT_AIR, false), Some(CONTENT_DRY_DIRT));
+        assert_eq!(soil_update(DESERT_SAND_SOIL_WET, CONTENT_STONE, true), Some(CONTENT_DESERT_SAND));
+        assert_eq!(soil_update(DESERT_SAND_SOIL, SEED_COTTON, false), None);
+        assert_eq!(grow(WHEAT_STAGES[0], DESERT_SAND_SOIL_WET, true), Some((WHEAT_STAGES[1], 3)));
+        assert_eq!(grow(WHEAT_STAGES[0], DRY_SOIL, true), None);
+        let mut rng = Rng::new();
+        assert_eq!(drops(DRY_SOIL_WET, &mut rng), vec![(CONTENT_DRY_DIRT, 1)]);
+        assert_eq!(drops(DESERT_SAND_SOIL, &mut rng), vec![(CONTENT_DESERT_SAND, 1)]);
+        assert_eq!(drops(SOIL, &mut rng), vec![(CONTENT_DIRT, 1)]);
     }
 
     #[test]

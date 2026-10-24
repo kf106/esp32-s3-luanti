@@ -18,6 +18,9 @@ use crate::items::{Change, Items};
 use crate::player::{PlayerData, PlayerStore};
 use crate::skins::{self, Skins};
 use crate::srp;
+use crate::craftguide;
+use crate::weather;
+use crate::env_sounds;
 use crate::beds;
 use crate::binoculars;
 use crate::keys;
@@ -138,8 +141,8 @@ const SLOW_BLOCK: Duration = Duration::from_millis(500);
 /// so that newly wanted (nearer) blocks don't wait behind a long queue.
 const BUILDS_IN_FLIGHT: usize = 4;
 /// Built blocks kept for other players (or a return visit); emptied when
-/// full. A block is about 1 to 3 KB.
-const BUILT_CACHE_MAX: usize = 600;
+/// full. A block is about 1 to 3 KB, so up to about 16 MB on the PC.
+const BUILT_CACHE_MAX: usize = if cfg!(pc) { 8192 } else { 600 };
 /// Block data goes on channel 2, like the Luanti server.
 const BLOCK_CHANNEL: usize = 2;
 /// How far (in nodes, from the player's feet) a player may dig or build.
@@ -317,6 +320,8 @@ struct Peer {
     /// last allowed the minimap (binoculars.rs).
     zoom_fov: f32,
     minimap: Option<bool>,
+    /// The inventory window's Recipes tab: what it shows.
+    guide: craftguide::Guide,
     /// The bed they lie in, if any.
     in_bed: Option<InBed>,
     /// Already reported: nothing heard from them for LINK_QUIET, and none
@@ -379,6 +384,7 @@ impl Peer {
             wield: 0,
             zoom_fov: 0.0,
             minimap: None,
+            guide: craftguide::Guide::default(),
             in_bed: None,
             quiet_reported: false,
             unacked_reported: false,
@@ -515,6 +521,13 @@ pub struct Server {
     /// kit.
     zoom_checked: Instant,
     map_checked: Instant,
+    /// When the weather last changed the clouds.
+    weather_set: Instant,
+    /// When env_sounds last listened round the players.
+    sounds_played: Instant,
+    /// When grass last spread, and last died under cover.
+    grass_spread: Instant,
+    grass_covered: Instant,
     /// When breath was last lost underwater, and last regained.
     drowned_at: Instant,
     breathed_at: Instant,
@@ -862,6 +875,10 @@ impl Server {
             moss_checked: Instant::now(),
             zoom_checked: Instant::now(),
             map_checked: Instant::now(),
+            weather_set: Instant::now(),
+            sounds_played: Instant::now(),
+            grass_spread: Instant::now(),
+            grass_covered: Instant::now(),
             drowned_at: Instant::now(),
             breathed_at: Instant::now(),
             liquid_changes: 0,
@@ -1693,6 +1710,10 @@ impl Server {
         self.add_player_object(from);
         // The minimap only with a mapping kit (map's on_joinplayer).
         self.update_minimap(from);
+        // The weather's clouds at once (weather's on_joinplayer), and the
+        // sounds around (env_sounds').
+        self.set_weather(from);
+        self.play_env_sounds(from);
         self.send_command(from, 0, &build_health_bar(hp));
         self.send_command(from, 0, &build_hp(hp, false));
         self.send_command(from, 0, &build_breath(PLAYER_MAX_BREATH));
@@ -2903,6 +2924,48 @@ impl Server {
         }
     }
 
+    /// minetest_game's "Grass spread" (`spread`) or "Grass covered" ABM,
+    /// on the dirt and grass noted near players (within 4 map blocks,
+    /// Luanti's active_block_range): grass spreads onto dirt in daylight
+    /// under the open sky (light 13 or more, at the node above), and
+    /// covered grass goes back to dirt, each one time in 50.
+    fn grow_grass(&mut self, spread: bool) {
+        let players: Vec<NodePos> = self
+            .peers
+            .values()
+            .filter(|p| p.ready)
+            .map(|p| ((p.pos_bs[0] / 10.0).round() as i32, (p.pos_bs[1] / 10.0).round() as i32, (p.pos_bs[2] / 10.0).round() as i32))
+            .collect();
+        if players.is_empty() {
+            return;
+        }
+        let active = |p: NodePos| {
+            let b = world::block_of_node(p);
+            players.iter().any(|&q| {
+                let c = world::block_of_node(q);
+                (b.0 - c.0).abs() <= 4 && (b.1 - c.1).abs() <= 4 && (b.2 - c.2).abs() <= 4
+            })
+        };
+        let daytime = (6000..18000).contains(&self.time_of_day());
+        let chance = nature::grass_chance();
+        for (pos, turf) in self.world.turf() {
+            let to = match turf {
+                world::Turf::Spread(to) if spread => to,
+                world::Turf::Covered(to) if !spread => to,
+                _ => continue,
+            };
+            if !active(pos) || !self.rng.one_in(chance) {
+                continue;
+            }
+            if spread && !(daytime && self.world.highest_solid(pos.0, pos.2) < pos.1 + 1) {
+                continue;
+            }
+            self.world.set_node(pos, to, 0);
+            let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+            self.broadcast_node(p16, &build_addnode(p16, to, 0));
+        }
+    }
+
     /// minetest_game's cool_lava: lava touching water turns, half the time
     /// it is looked at, into obsidian (a source) or stone (flowing lava),
     /// with a hiss.
@@ -3408,6 +3471,40 @@ impl Server {
 
     /// map.update_hud_flags: the minimap allowed with a mapping kit, its
     /// radar never; the client told only of a change.
+    /// Running water and lava near a player, for them alone.
+    fn play_env_sounds(&mut self, addr: SocketAddr) {
+        let Some(peer) = self.peers.get(&addr).filter(|p| p.ready) else {
+            return;
+        };
+        let eye_height = if peer.in_bed.is_some() { 0.3 } else { 1.47 };
+        let eye = [peer.pos_bs[0] / 10.0, peer.pos_bs[1] / 10.0 + eye_height, peer.pos_bs[2] / 10.0];
+        // Above LAVA_LEVEL nothing flows, and there is no lava, but what
+        // has changed: only the deep is looked at in full.
+        let world = &self.world;
+        let heard = env_sounds::around(eye, |pos| {
+            if pos.1 <= crate::terrain::LAVA_LEVEL {
+                world.node(pos)
+            } else {
+                world.changed_node(pos).unwrap_or(crate::world::CONTENT_AIR)
+            }
+        });
+        for h in heard {
+            let packet = build_play_sound(-1, h.sound, h.gain, h.pos.map(|v| v * 10.0));
+            self.send_command(addr, 0, &packet);
+        }
+    }
+
+    /// A player's clouds and shadows, for the weather where they are.
+    fn set_weather(&mut self, addr: SocketAddr) {
+        let Some(peer) = self.peers.get(&addr).filter(|p| p.ready) else {
+            return;
+        };
+        let (x, z) = ((peer.pos_bs[0] / 10.0).round() as i32, (peer.pos_bs[2] / 10.0).round() as i32);
+        let w = weather::at(self.clock.game_time(), crate::terrain::humidity(x, z));
+        self.send_command(addr, 0, &build_cloud_params(&w));
+        self.send_command(addr, 0, &build_set_lighting(w.shadow_intensity));
+    }
+
     fn update_minimap(&mut self, addr: SocketAddr) {
         let Some(peer) = self.peers.get_mut(&addr).filter(|p| p.ready) else {
             return;
@@ -3722,12 +3819,17 @@ impl Server {
         let Some(peer) = self.peers.get(&addr) else {
             return;
         };
-        let skin = self.skins.get(self.skins.index_of(&peer.skin));
-        let packet = build_inventory_formspec(&SkinChoice { label: &skin.label, texture: &skin.texture });
+        let packet = if peer.guide.open {
+            build_recipes_formspec(&peer.guide)
+        } else {
+            let skin = self.skins.get(self.skins.index_of(&peer.skin));
+            build_inventory_formspec(&SkinChoice { label: &skin.label, texture: &skin.texture })
+        };
         self.send_command(addr, 0, &packet);
     }
 
-    /// Buttons in the inventory window: the skin chooser's < and >.
+    /// Buttons in the inventory window: its tabs, the crafting guide on the
+    /// Recipes tab, and the skin chooser's < and > on the Crafting tab.
     fn on_inventory_fields(&mut self, from: SocketAddr, payload: &[u8]) {
         let Some((form, fields)) = parse_inventory_fields(payload) else {
             return;
@@ -3763,13 +3865,8 @@ impl Server {
             }
             return;
         }
-        let forward = match (pressed(FIELD_SKIN_PREVIOUS), pressed(FIELD_SKIN_NEXT)) {
-            (true, false) => false,
-            (false, true) => true,
-            _ => return, // closing the window, or someone else's form
-        };
         if !form.is_empty() {
-            return;
+            return; // someone else's form
         }
         let Some(peer) = self.peers.get_mut(&from) else {
             return;
@@ -3777,6 +3874,26 @@ impl Server {
         if !peer.ready {
             return;
         }
+        // A tab: Crafting or Recipes.
+        if let Some((_, tab)) = fields.iter().find(|(f, _)| f == craftguide::TABS) {
+            let open = tab == "2";
+            if open != peer.guide.open {
+                peer.guide.open = open;
+                self.send_inventory_formspec(from);
+            }
+            return;
+        }
+        if peer.guide.open {
+            if craftguide::on_fields(&mut peer.guide, &fields) {
+                self.send_inventory_formspec(from);
+            }
+            return;
+        }
+        let forward = match (pressed(FIELD_SKIN_PREVIOUS), pressed(FIELD_SKIN_NEXT)) {
+            (true, false) => false,
+            (false, true) => true,
+            _ => return, // closing the window
+        };
         let next = self.skins.step(self.skins.index_of(&peer.skin), forward);
         let skin = self.skins.get(next);
         peer.skin = skin.key.clone();
@@ -5301,6 +5418,14 @@ impl Server {
             // Node changes go to the SD card once a second.
             self.world.flush_log();
         }
+        if now.duration_since(self.grass_spread) >= nature::grass_interval(nature::GRASS_SPREAD_INTERVAL) {
+            self.grass_spread = now;
+            self.grow_grass(true);
+        }
+        if now.duration_since(self.grass_covered) >= nature::grass_interval(nature::GRASS_COVERED_INTERVAL) {
+            self.grass_covered = now;
+            self.grow_grass(false);
+        }
         if now.duration_since(self.moss_checked) >= nature::moss_interval() {
             self.moss_checked = now;
             self.grow_moss();
@@ -5318,6 +5443,22 @@ impl Server {
             let all: Vec<SocketAddr> = self.peers.keys().copied().collect();
             for addr in all {
                 self.update_minimap(addr);
+            }
+        }
+        // env_sounds' cyclic_update.
+        if now.duration_since(self.sounds_played) >= env_sounds::EVERY {
+            self.sounds_played = now;
+            let all: Vec<SocketAddr> = self.peers.keys().copied().collect();
+            for addr in all {
+                self.play_env_sounds(addr);
+            }
+        }
+        // The weather's cyclic_update.
+        if now.duration_since(self.weather_set) >= weather::CYCLE {
+            self.weather_set = now;
+            let all: Vec<SocketAddr> = self.peers.keys().copied().collect();
+            for addr in all {
+                self.set_weather(addr);
             }
         }
         if now.duration_since(self.lava_cooled) >= LAVA_COOLING {

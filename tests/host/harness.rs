@@ -1,6 +1,6 @@
 #![allow(dead_code)]
-mod auth; mod beds; mod binoculars; mod board; mod books; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod doors; mod dungeons; mod falling; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod jsonstring; mod keys; mod liquids; mod messages; mod meta; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
-mod screen; mod screwdriver; mod server; mod sha1; mod sha256; mod skins; mod srp; mod stairs; mod status; mod storage; mod terrain; mod wifi_config; mod world; mod zstd;
+mod auth; mod beds; mod binoculars; mod board; mod books; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod craftguide; mod doors; mod env_sounds; mod dungeons; mod falling; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod jsonstring; mod keys; mod liquids; mod messages; mod meta; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
+mod screen; mod screwdriver; mod server; mod sha1; mod sha256; mod skins; mod srp; mod stairs; mod status; mod storage; mod terrain; mod weather; mod wifi_config; mod world; mod zstd;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -689,9 +689,9 @@ fn biomes() {
     use content::*;
     use terrain::Biome;
     // A biome map: 512x512 samples, one every 16 nodes (8192 nodes across).
-    let code = |b: Biome| match b { Biome::Grassland => 0u8, Biome::Desert => 1, Biome::Snow => 2, Biome::Savanna => 3, Biome::Rainforest => 4, Biome::Tundra => 5, Biome::ColdDesert => 6, Biome::Icesheet => 7 };
+    let code = |b: Biome| match b { Biome::Grassland => 0u8, Biome::Desert => 1, Biome::Snow => 2, Biome::Savanna => 3, Biome::Rainforest => 4, Biome::Tundra => 5, Biome::ColdDesert => 6, Biome::Icesheet => 7, Biome::SandstoneDesert => 8, Biome::SnowyGrassland => 9 };
     let mut map = Vec::new();
-    let mut counts = [0u32; 8];
+    let mut counts = [0u32; 10];
     let (mut rain, mut sav) = (None, None);
     for zi in 0..512 { for xi in 0..512 {
         let (x, z) = ((xi - 256) * 16, (zi - 256) * 16);
@@ -706,7 +706,7 @@ fn biomes() {
     } }
     std::fs::write(format!("{OUT}/biomes.bin"), &map).unwrap();
     let total: u32 = counts.iter().sum();
-    println!("biomes (grassland, desert, snow, savanna, rainforest, tundra, cold desert, icesheet): {:?}%", counts.map(|c| (c * 1000 / total) as f32 / 10.0));
+    println!("biomes (grassland, desert, snow, savanna, rainforest, tundra, cold desert, icesheet, sandstone desert, snowy grassland): {:?}%", counts.map(|c| (c * 1000 / total) as f32 / 10.0));
     println!("nearest rainforest {rain:?}, savanna {sav:?}");
     let d = format!("{OUT}/biomeworld");
     let _ = std::fs::remove_dir_all(&d);
@@ -771,7 +771,7 @@ fn biomes() {
     }
     // Every biome: blocks from well underground to above the trees agree
     // with single nodes (gravel blobs, desert stone, permafrost, ice, snow).
-    for want in [Biome::Desert, Biome::Snow, Biome::Tundra, Biome::ColdDesert, Biome::Grassland] {
+    for want in [Biome::Desert, Biome::Snow, Biome::Tundra, Biome::ColdDesert, Biome::Grassland, Biome::SandstoneDesert, Biome::SnowyGrassland] {
         let mut spot = None;
         'f: for r in (0..3000).step_by(16) {
             for (x, z) in (-r..=r).step_by(16).flat_map(|a| [(a, -r), (a, r), (-r, a), (r, a)]) {
@@ -801,7 +801,10 @@ fn biomes() {
     for z in (-1500..1500).step_by(7) { for x in (-1500..1500).step_by(7) {
         let c = terrain::column(x, z);
         if c.height < terrain::WATER_LEVEL && matches!(c.biome, Biome::Snow | Biome::Tundra | Biome::ColdDesert) {
-            assert_eq!(w.node((x, terrain::WATER_LEVEL, z)), content::CONTENT_ICE);
+            let top = w.node((x, terrain::WATER_LEVEL, z));
+            // (A dungeon may break through the ice, as Luanti's do.)
+            if top == content::CONTENT_COBBLE || top == dungeons::MOSSYCOBBLE { println!("dungeon wall in the lake ice at {:?}", (x, z)); continue; }
+            assert_eq!(top, content::CONTENT_ICE, "at {:?}", (x, z));
             if c.height < terrain::WATER_LEVEL - 1 { assert_eq!(w.node((x, terrain::WATER_LEVEL - 1, z)), content::CONTENT_WATER); }
             ice += 1;
         }

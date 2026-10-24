@@ -21,7 +21,7 @@ use crate::content::{
     CONTENT_CLAY, CONTENT_CONIFEROUS_LITTER, CONTENT_DESERT_SAND, CONTENT_DESERT_STONE, CONTENT_GRAVEL, CONTENT_ICE, CONTENT_PERMAFROST,
     CONTENT_PERMAFROST_MOSS, CONTENT_PERMAFROST_STONES, CONTENT_SILVER_SAND, CONTENT_SNOW_LAYER, CONTENT_WATER,
 };
-use crate::content::{CONTENT_CAVE_ICE, CONTENT_SNOW_BLOCK};
+use crate::content::{CONTENT_CAVE_ICE, CONTENT_SANDSTONE, CONTENT_SNOW_BLOCK};
 use crate::world::CONTENT_AIR;
 
 /// Bump when the generator changes, so worlds made by an older one are set
@@ -35,7 +35,7 @@ use crate::world::CONTENT_AIR;
 /// still fit around them.
 /// 4: dungeons (dungeons.rs).
 /// 5: rivers, the icesheet (with its cave ice), and emergent jungle trees.
-pub const GENERATOR_VERSION: u32 = 5;
+pub const GENERATOR_VERSION: u32 = 6;
 
 const SEED_HILLS: u32 = 0x1A2B_3C4D;
 const SEED_MOUNTAINS: u32 = 0x5E6F_7081;
@@ -78,6 +78,13 @@ const SNOW_LINE: i32 = 36;
 const HUMID: f32 = 0.1;
 /// Desert stone goes down to here under deserts.
 const DESERT_STONE_BOTTOM: i32 = -256;
+/// The temperate lands colder than this (of -0.18 to 0.18) are snowy
+/// grassland where they aren't wet.
+const SNOWY_GRASSLAND_COLD: f32 = -0.08;
+/// The temperate lands drier than this are sandstone desert: rarer than
+/// the hot and cold deserts' -HUMID, as in minetest_game, where it is one
+/// of the smaller biomes.
+const SANDSTONE_DRY: f32 = 0.25;
 /// The cold, wet land turns from snowy fir forest to icesheet below this
 /// temperature (minetest_game's icesheet: heat 0, beside the taiga's 25).
 const ICESHEET_COLD: f32 = -0.4;
@@ -105,6 +112,12 @@ pub enum Biome {
     /// The coldest and wet: snow blocks over cave ice, and frozen lakes
     /// (minetest_game's icesheet).
     Icesheet,
+    /// Temperate and dry: sand over sandstone (minetest_game's sandstone
+    /// desert).
+    SandstoneDesert,
+    /// Cool, neither wet nor dry: snowy dirt under a dusting of snow, with
+    /// bushes (minetest_game's snowy grassland).
+    SnowyGrassland,
 }
 
 /// What is known about a column of nodes before looking at caves and ores.
@@ -298,6 +311,12 @@ pub fn land_height(x: i32, z: i32) -> i32 {
     (4.0 + hills + mountains).round() as i32
 }
 
+/// The humidity at a place, on the scale of minetest.get_humidity (50 on
+/// average, mostly 0 to 100): the noise the biomes are chosen by.
+pub fn humidity(x: i32, z: i32) -> f32 {
+    50.0 + 100.0 * fbm2(x as f32 / 700.0, z as f32 / 700.0, 2, SEED_HUMIDITY)
+}
+
 pub fn column(x: i32, z: i32) -> Column {
     let (fx, fz) = (x as f32, z as f32);
     let height = land_height(x, z);
@@ -333,7 +352,16 @@ pub fn column(x: i32, z: i32) -> Column {
             Biome::Savanna
         }
     } else {
-        Biome::Grassland
+        // The temperate lands: grassland, sandstone desert where it's dry,
+        // and snowy grassland in their cooler half where it isn't wet.
+        let humidity = fbm2(fx / 700.0, fz / 700.0, 2, SEED_HUMIDITY);
+        if humidity < -SANDSTONE_DRY {
+            Biome::SandstoneDesert
+        } else if temperature < SNOWY_GRASSLAND_COLD && humidity <= HUMID {
+            Biome::SnowyGrassland
+        } else {
+            Biome::Grassland
+        }
     };
     // No cave mouths under water.
     let entrance = height > WATER_LEVEL && noise2(fx / 90.0, fz / 90.0, SEED_ENTRANCE) > 0.55;
@@ -440,7 +468,7 @@ fn layer(y: i32, col: &Column) -> u16 {
         };
     }
     // Lake beds and shores are sand, as Minetest Game's beaches.
-    if col.height <= WATER_LEVEL && col.biome != Biome::Desert {
+    if col.height <= WATER_LEVEL && !matches!(col.biome, Biome::Desert | Biome::SandstoneDesert) {
         return match depth {
             0..=1 => CONTENT_SAND,
             2..=3 => CONTENT_DIRT,
@@ -492,6 +520,19 @@ fn layer(y: i32, col: &Column) -> u16 {
         },
         Biome::ColdDesert => match depth {
             0..=1 => CONTENT_SILVER_SAND,
+            _ => CONTENT_STONE,
+        },
+        // minetest_game's sandstone desert: sand, and sandstone down to
+        // -256 (its ocean biome's bottom), without ores; its lake beds are
+        // the same.
+        Biome::SandstoneDesert => match depth {
+            0..=1 => CONTENT_SAND,
+            _ if y > DESERT_STONE_BOTTOM => CONTENT_SANDSTONE,
+            _ => CONTENT_STONE,
+        },
+        Biome::SnowyGrassland => match depth {
+            0 => CONTENT_SNOW,
+            1 => CONTENT_DIRT,
             _ => CONTENT_STONE,
         },
         // (Handled above.)
@@ -1153,8 +1194,18 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
             return Some(Tree { x, z, ground: col.height, kind: TreeKind::Emergent, height: 0 });
         }
     }
+    // The snowy grassland has no trees, but now and then a fir bush or a
+    // blueberry bush (minetest_game's pine bush and blueberry bush).
+    if col.biome == Biome::SnowyGrassland {
+        let kind = match roll {
+            0..=2 => TreeKind::FirBush,
+            3..=4 => TreeKind::BlueberryBush,
+            _ => return None,
+        };
+        return Some(Tree { x, z, ground: col.height, kind, height: 1 });
+    }
     let kind = match col.biome {
-        Biome::Desert => return None,
+        Biome::Desert | Biome::SandstoneDesert | Biome::SnowyGrassland => return None,
         Biome::Snow => TreeKind::Fir,
         Biome::Grassland if col.height >= FIR_LINE => TreeKind::Fir,
         Biome::Grassland => TreeKind::Birch,
@@ -1225,15 +1276,15 @@ pub fn plant_on(x: i32, z: i32, col: &Column) -> Option<u16> {
     // patches on the tundra.
     if col.cave_top < col.height && col.height > WATER_LEVEL {
         match col.biome {
-            Biome::Snow => return Some(CONTENT_SNOW_LAYER),
+            Biome::Snow | Biome::SnowyGrassland => return Some(CONTENT_SNOW_LAYER),
             Biome::Tundra if noise2(x as f32 / 30.0, z as f32 / 30.0, SEED_SHORE ^ 9) > 0.3 => return Some(CONTENT_SNOW_LAYER),
             _ => {}
         }
     }
-    // Dry shrubs, here and there in patches, on the desert sand and the
-    // cold desert's silver sand (minetest_game's dry shrub decoration:
+    // Dry shrubs, here and there in patches, on the desert sand, the
+    // sandstone desert's sand and the cold desert's silver sand (minetest_game's dry shrub decoration:
     // noise offset 0, scale 0.02, spread 200, 3 octaves, persistence 0.6).
-    if matches!(col.biome, Biome::Desert | Biome::ColdDesert) && col.height >= 1 && col.cave_top < col.height {
+    if matches!(col.biome, Biome::Desert | Biome::SandstoneDesert | Biome::ColdDesert) && col.height >= 1 && col.cave_top < col.height {
         let mut sum = 0.0;
         for (i, (amp, freq)) in [(1.0, 1.0), (0.6, 2.0), (0.36, 4.0)].into_iter().enumerate() {
             sum += amp * noise2(x as f32 / 200.0 * freq, z as f32 / 200.0 * freq, SEED_SHRUBS.wrapping_add(i as u32));

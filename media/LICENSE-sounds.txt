@@ -168,3 +168,19 @@ or the affirmer.
 
 For more details:
 https://creativecommons.org/publicdomain/zero/1.0/
+
+
+env_sounds_water.1.ogg to env_sounds_water.4.ogg and env_sounds_lava.1.ogg,
+env_sounds_lava.2.ogg are from Minetest Game's env_sounds mod
+(mods/env_sounds/sounds), with their original names. The water sounds were
+re-encoded at Vorbis quality 3 (from about 110 kbit/s to 83) to save flash;
+the lava sounds are unchanged. From that mod's README.md and license.txt,
+CC0 1.0 Universal (CC0 1.0) Public Domain Dedication:
+
+Yuval, https://freesound.org/people/Yuval/sounds/197023/
+
+- env_sounds_water.*.ogg
+
+Halion, https://freesound.org/people/Halion/sounds/17785/
+
+- env_sounds_lava.*.ogg

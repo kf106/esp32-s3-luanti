@@ -43,6 +43,7 @@ use crate::liquids;
 use crate::meta;
 use crate::messages::Writer;
 use crate::storage;
+use crate::nature;
 use crate::terrain::{self, Column, GENERATOR_VERSION};
 use crate::zstd;
 
@@ -59,17 +60,23 @@ const LIGHT_SUN: u8 = 15;
 /// tops). The block builder makes the terrain, so it keeps more; the
 /// server's own world only looks up nodes near players. When full, the
 /// older half goes.
-const BUILDER_COLUMNS: usize = 384; // about 1.6 MB
-const SERVER_COLUMNS: usize = 128; // about 0.5 MB
+///
+/// The PC build (cfg(pc)) has memory to spare, and keeps far more (with
+/// the built blocks and dungeons, up to about 60 MB in all), so a player
+/// going back and forth finds their surroundings already worked out.
+const BUILDER_COLUMNS: usize = if cfg!(pc) { 4096 } else { 384 }; // about 16 MB, or 1.6 MB
+const SERVER_COLUMNS: usize = if cfg!(pc) { 1024 } else { 128 }; // about 4 MB, or 0.5 MB
 /// Cave noise samples, 20 bytes each. A hash table doubles once it is 7/8
 /// full, so this stays under 7/8 of 32768: the table is 0.7 MB, and never
-/// grows to the next size (2.75 MB, needed in one piece).
-const CAVE_CACHE_MAX: usize = 28_000;
+/// grows to the next size (2.75 MB, needed in one piece). On the PC, under
+/// 7/8 of 524288 (about 11 MB).
+const CAVE_CACHE_MAX: usize = if cfg!(pc) { 458_000 } else { 28_000 };
 /// Height ranges of block columns, for deciding which blocks players need
-/// (16 bytes each; under 7/8 of 4096 for the same reason).
-const HEIGHT_CACHE_MAX: usize = 3_500;
+/// (16 bytes each; under 7/8 of 4096, or of 65536 on the PC, for the same
+/// reason).
+const HEIGHT_CACHE_MAX: usize = if cfg!(pc) { 57_000 } else { 3_500 };
 /// Map blocks whose dungeon nodes are kept (most have none).
-const DUNGEON_CACHE_MAX: usize = 4_096;
+const DUNGEON_CACHE_MAX: usize = if cfg!(pc) { 65_536 } else { 4_096 };
 
 /// How far torch light reaches: it starts at TORCH_LIGHT and fades by one
 /// per node, so nodes further than this get none.
@@ -78,6 +85,14 @@ const FIELD_SIDE: i32 = 2 * TORCH_REACH + 1;
 
 pub type BlockPos = (i16, i16, i16);
 pub type NodePos = (i32, i32, i32);
+
+/// What grass does to a node (see World::turf): spreads onto dirt, making
+/// it this, or is covered, going back to this.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Turf {
+    Spread(u16),
+    Covered(u16),
+}
 
 /// Block coordinate containing node coordinate `n`.
 pub fn block_of(n: i32) -> i16 {
@@ -224,6 +239,9 @@ pub struct World {
     /// Cobblestone with water beside it, where moss may grow
     /// (moss_beside_water).
     moss: FastSet<NodePos>,
+    /// Dirt grass may spread onto, and grass that may be covered (see
+    /// turf).
+    turf: FastSet<NodePos>,
     /// Change records not yet appended to the log (see flush_log).
     pending_log: Vec<u8>,
 }
@@ -256,6 +274,7 @@ impl World {
             liquid_queue: liquids::Queue::default(),
             cooling: FastSet::default(),
             moss: FastSet::default(),
+            turf: FastSet::default(),
             pending_log: Vec::new(),
         };
 
@@ -285,6 +304,11 @@ impl World {
         for p in cobble {
             world.watch_moss(p);
         }
+        // Where players changed the ground, for grass to spread or die.
+        let changed: Vec<NodePos> = world.state.changes.keys().copied().collect();
+        for p in changed {
+            world.watch_turf(p);
+        }
         world.load_metas();
         if records > 2 * world.state.changes.len() + 256 {
             if let Err(e) = world.compact(&log_path) {
@@ -311,6 +335,7 @@ impl World {
             liquid_queue: liquids::Queue::default(),
             cooling: FastSet::default(),
             moss: FastSet::default(),
+            turf: FastSet::default(),
             pending_log: Vec::new(),
         }
     }
@@ -615,6 +640,12 @@ impl World {
         terrain::generated_param2(pos.0, pos.1, pos.2, self.terrain_node(pos.0, pos.1, pos.2, &col))
     }
 
+    /// What a player put (or what flowed) at a node, if anything has
+    /// changed there: a quick look that generates nothing.
+    pub fn changed_node(&self, pos: NodePos) -> Option<u16> {
+        self.state.changes.get(&pos).copied()
+    }
+
     pub fn node(&self, pos: NodePos) -> u16 {
         let col = self.column(pos.0, pos.2);
         self.node_with(pos.0, pos.1, pos.2, &col)
@@ -714,6 +745,64 @@ impl World {
         self.liquid_queue = queue;
         self.watch_cooling(pos);
         self.watch_moss(pos);
+        self.watch_turf(pos);
+    }
+
+    /// After a change at `pos`: the dirt there or under it that grass may
+    /// now spread onto, and grass there or under it that may now be
+    /// covered, are noted (minetest_game's "Grass spread" and "Grass
+    /// covered" ABMs, which look at all dirt and grass near players; here
+    /// only where something changed). Grass that appeared notes the dirt
+    /// round it.
+    fn watch_turf(&mut self, pos: NodePos) {
+        let below = (pos.0, pos.1 - 1, pos.2);
+        for p in [pos, below] {
+            if self.turf_change(p).is_some() {
+                self.turf.insert(p);
+            }
+        }
+        if nature::spreads(self.node(pos)) {
+            for d in nature::AROUND {
+                let p = (pos.0 + d.0, pos.1 + d.1, pos.2 + d.2);
+                if self.turf_change(p).is_some() {
+                    self.turf.insert(p);
+                }
+            }
+        }
+    }
+
+    /// What a node would become by grass spreading onto it or being
+    /// covered, light aside: Spread for dirt with a way in for grass
+    /// (one of the ABM's neighbours) and grass beside or tall grass or
+    /// snow on top, Covered for grass under something.
+    fn turf_change(&self, p: NodePos) -> Option<Turf> {
+        let id = self.node(p);
+        let above = self.node((p.0, p.1 + 1, p.2));
+        if id == content::CONTENT_DIRT {
+            let around: Vec<u16> = nature::AROUND.iter().map(|d| self.node((p.0 + d.0, p.1 + d.1, p.2 + d.2))).collect();
+            if !around.iter().any(|&n| nature::lets_grass_in(n)) {
+                return None;
+            }
+            let beside = around.iter().copied().find(|&n| nature::spreads(n));
+            return nature::spread_onto(above, beside).map(Turf::Spread);
+        }
+        nature::covered(id, above).map(Turf::Covered)
+    }
+
+    /// The noted dirt and grass that would still change, and how; the
+    /// rest is forgotten.
+    pub fn turf(&mut self) -> Vec<(NodePos, Turf)> {
+        let noted: Vec<NodePos> = self.turf.iter().copied().collect();
+        let mut out = Vec::new();
+        for p in noted {
+            match self.turf_change(p) {
+                Some(t) => out.push((p, t)),
+                None => {
+                    self.turf.remove(&p);
+                }
+            }
+        }
+        out
     }
 
     /// After a change at `pos`: lava there or beside it that now touches
@@ -849,6 +938,13 @@ impl World {
             }
             if farming::is_water(c.id) {
                 self.watch_moss(c.pos);
+            }
+            // Grass under water dies.
+            if content::is_liquid(c.id) {
+                let below = (c.pos.0, c.pos.1 - 1, c.pos.2);
+                if matches!(self.turf_change(below), Some(Turf::Covered(_))) {
+                    self.turf.insert(below);
+                }
             }
         }
         self.append_log(&log);
@@ -1183,5 +1279,37 @@ mod tests {
         assert!(dir.join("env_meta.txt").exists(), "the time of day carries on");
         assert_eq!(fs::read_to_string(dir.join("generator")).unwrap().trim(), GENERATOR_VERSION.to_string());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Dirt beside grass is noted for grass to spread onto; grass under
+    /// stone, to die; and both are forgotten once they can't.
+    #[test]
+    fn turf() {
+        let mut w = World::builder();
+        let (dirt, grass) = ((0, 400, 0), (1, 400, 0));
+        w.set_node(dirt, content::CONTENT_DIRT, 0);
+        assert!(w.turf().is_empty(), "bare dirt with no grass near");
+        w.set_node(grass, content::CONTENT_LITTER, 0);
+        assert_eq!(w.turf(), vec![(dirt, Turf::Spread(content::CONTENT_LITTER))]);
+        w.set_node((1, 401, 0), content::CONTENT_STONE, 0);
+        let mut t = w.turf();
+        t.sort_by_key(|(p, _)| *p);
+        assert_eq!(t, vec![(dirt, Turf::Spread(content::CONTENT_LITTER)), (grass, Turf::Covered(content::CONTENT_DIRT))]);
+        // Walled in: no way for grass in.
+        for d in nature::AROUND {
+            let p = (dirt.0 + d.0, dirt.1 + d.1, dirt.2 + d.2);
+            if p != grass {
+                w.set_node(p, content::CONTENT_STONE, 0);
+            }
+        }
+        assert_eq!(w.turf(), vec![(grass, Turf::Covered(content::CONTENT_DIRT))]);
+        // Tall grass on dirt seeds it; water over grass kills it.
+        w.set_node((5, 400, 0), content::CONTENT_DIRT, 0);
+        w.set_node((5, 401, 0), crate::farming::GRASS[1], 0);
+        w.set_node((8, 400, 0), content::CONTENT_GRASS, 0);
+        w.set_node((8, 401, 0), content::CONTENT_WATER, 0);
+        let t = w.turf();
+        assert!(t.contains(&((5, 400, 0), Turf::Spread(content::CONTENT_GRASS))), "{t:?}");
+        assert!(t.contains(&((8, 400, 0), Turf::Covered(content::CONTENT_DIRT))), "{t:?}");
     }
 }

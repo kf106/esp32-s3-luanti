@@ -162,3 +162,10 @@ http://creativecommons.org/licenses/by-sa/3.0/
 
 From mods/default/textures: default_grass_1.png to default_grass_5.png, under the default mod's
 licence (CC BY-SA 3.0), as given in LICENSE-items.txt.
+
+From mods/farming/textures as well: farming_desert_sand_soil.png,
+farming_desert_sand_soil_wet.png, farming_desert_sand_soil_wet_side.png
+(the savanna soil draws farming_soil.png and farming_soil_wet*.png over
+default_dry_dirt.png). The README doesn't list their author (tenplus1 added
+them, by Minetest Game's history); they come under the farming mod's media
+licence, Attribution 3.0 Unported (CC BY 3.0).

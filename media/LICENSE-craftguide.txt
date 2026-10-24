@@ -1,0 +1,30 @@
+Crafting guide: icons from Minetest Game's mtg_craftguide mod, and the
+crafting arrow from its sfinv mod
+(https://github.com/luanti-org/minetest_game, mods/mtg_craftguide and
+mods/sfinv), unchanged:
+
+  craftguide_clear_icon.png, craftguide_next_icon.png,
+  craftguide_prev_icon.png, craftguide_search_icon.png,
+  craftguide_furnace.png, craftguide_shapeless.png,
+  sfinv_crafting_arrow.png
+
+Credits, from those mods' license.txt files:
+
+paramat (CC BY-SA 3.0):
+
+- craftguide_clear_icon.png
+- craftguide_next_icon.png
+- craftguide_prev_icon.png
+- craftguide_search_icon.png
+- sfinv_crafting_arrow.png (Copyright (C) 2019 paramat)
+
+Neuromancer (CC BY-SA 3.0):
+
+- craftguide_furnace.png
+
+Wuzzy (CC BY-SA 3.0):
+
+- craftguide_shapeless.png (Copyright (C) 2017 Wuzzy)
+
+Licence: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0),
+http://creativecommons.org/licenses/by-sa/3.0/

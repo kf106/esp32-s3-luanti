@@ -14,7 +14,7 @@ That runs, in order:
 2. **Host checks:** `tests/host/harness.rs`, the server's code exercised directly, checking crafting, tools, item physics, trees, the Wi-Fi file and so on.
 3. **Content verifier:** `tests/net/verify.py` reads the item and node definitions, media and other packets the server sends at login the way the Luanti 5.17 client does, and checks they parse.
 4. **PC build:** `pc/`, the server as a program for Linux (see "Running on a PC or VPS" in the README), built in its own folder with its own settings, and later started on a fresh data folder for a player to log in to (`tests/net/pctest.py`).
-5. **Network tests:** for each, a server on a fresh world, and a script in `tests/net/` that logs in one or more players and checks what happens: digging, building, crafting, chests, doors, beds, water and lava, farming, plants, admin commands, bones, signs, bookshelves, writing in books, vessels and the vessels shelf, keys, the screwdriver, binoculars and the mapping kit, dungeon loot, and more.
+5. **Network tests:** for each, a server on a fresh world, and a script in `tests/net/` that logs in one or more players and checks what happens: digging, building, crafting, chests, doors, beds, water and lava, farming, plants, admin commands, bones, signs, bookshelves, writing in books, vessels and the vessels shelf, keys, the screwdriver, binoculars and the mapping kit, the crafting guide, the weather and ambient sounds, grass spreading and dying, dungeon loot, and more.
 
 It ends with a count, and exits non-zero if anything failed. A full run takes about 10 minutes, mostly the network tests.
 
@@ -50,6 +50,7 @@ With `SERVE=<port>` the harness runs the server on that port, with its world in 
 
 - the bed test's world starts at 22:00;
 - the apple and farming tests grow things in seconds rather than minutes (`LUANTI_GROW_SECS`, `LUANTI_SOIL_SECS`);
+- the turf test's grass spreads and dies every second rather than one time in 50 every 6 or 8 s (`LUANTI_GRASS_FAST`);
 - the plant and flower tests are pointed at kelp, coral, blueberries and open water found by the harness (`FIND_PLANTS=1`), and the dungeon test at the dungeon chest nearest the spawn (`DUNGEONS=1`).
 
 Ports 30700 upwards are used, so a Luanti server on 30000 can keep running.

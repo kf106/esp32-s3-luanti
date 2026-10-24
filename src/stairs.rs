@@ -168,7 +168,6 @@ pub fn shape_of(id: u16) -> Option<(Shape, &'static Material)> {
 }
 
 /// The stair or slab made of `base`.
-#[cfg(test)]
 pub fn shaped(shape: Shape, base: u16) -> Option<u16> {
     let k = SHAPES.iter().position(|&s| s == shape)? as u16;
     SETS.iter().find_map(|s| s.materials.iter().position(|m| m.base == base).map(|i| s.first + k * s.count() + i as u16))

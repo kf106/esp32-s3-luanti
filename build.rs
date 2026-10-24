@@ -25,6 +25,8 @@ fn main() {
     // Which board (src/board.rs), as `cfg(board = "...")`.
     println!("cargo:rerun-if-env-changed=BOARD");
     println!("cargo:rustc-check-cfg=cfg(board, values(\"waveshare\", \"es3c28p\"))");
+    // cfg(pc): set by pc/build.rs for the PC build (bigger caches).
+    println!("cargo:rustc-check-cfg=cfg(pc)");
     let board = match std::env::var("BOARD").unwrap_or_default().to_ascii_lowercase().as_str() {
         "" | "waveshare" | "waveshare-1.47" | "esp32-s3-lcd-1.47" => "waveshare",
         "es3c28p" | "es3n28p" => "es3c28p",

@@ -626,7 +626,7 @@ impl Chunk {
 /// Whether a dungeon node is a wall (which the other mapchunks' openings
 /// win over).
 fn is_wall(id: u16) -> bool {
-    id == CONTENT_COBBLE || id == MOSSYCOBBLE || id == CONTENT_DESERT_STONE
+    matches!(id, CONTENT_COBBLE | MOSSYCOBBLE | CONTENT_DESERT_STONE | content::CONTENT_SANDSTONE_BRICK | content::CONTENT_ICE)
 }
 
 /// The dungeons of the mapchunk `c` (in mapchunks), against `terrain`, the
@@ -655,13 +655,17 @@ pub fn generate(c: (i32, i32, i32), terrain: &mut dyn FnMut(NodePos) -> u16) -> 
     // Diagonal corridors need holes 2 wide to be passable.
     let holewidth = if diagonal_dirs { 2 } else { ps.range(1, 2) };
     // minetest_game's dungeon nodes for the biome in the middle of the
-    // mapchunk: desert stone in the desert (down to its desert stone's
-    // bottom), ice on the icesheet (down to its bottom), else cobblestone,
-    // mossy in places.
+    // mapchunk: desert stone in the desert and sandstone brick (with
+    // sandstone block stairs) in the sandstone desert (down to their
+    // stone's bottom), ice on the icesheet (down to its bottom), else
+    // cobblestone, mossy in places.
     let mid = (node_min.0 + 40, node_min.1 + 40, node_min.2 + 40);
     let biome = terrain::column(mid.0, mid.2).biome;
     let (wall, alt_wall, stair) = if biome == Biome::Desert && mid.1 > -256 {
         (CONTENT_DESERT_STONE, None, crate::stairs::BUILDING.first_stair())
+    } else if biome == Biome::SandstoneDesert && mid.1 > -256 {
+        let stair = crate::stairs::shaped(crate::stairs::Shape::Stair, content::CONTENT_SANDSTONE_BLOCK).expect("sandstone block stairs");
+        (content::CONTENT_SANDSTONE_BRICK, None, stair)
     } else if biome == Biome::Icesheet && mid.1 >= terrain::ICESHEET_BOTTOM {
         (content::CONTENT_ICE, None, crate::stairs::BUILDING.first_stair() + 14)
     } else {
@@ -786,8 +790,9 @@ fn is_solid(gen: &mut Gen, p: V) -> bool {
 // ---------------------------------------------------------------------------
 
 /// How many mapchunks' dungeons are kept. A player's surroundings span a
-/// few; each is a few thousand nodes.
-const KEEP: usize = 24;
+/// few; each is a few thousand nodes (tens of KB). The PC build keeps far
+/// more, so they aren't worked out again as players come and go.
+const KEEP: usize = if cfg!(pc) { 256 } else { 24 };
 
 /// The kept mapchunks, with when each was last used, and those being
 /// worked out now.
@@ -974,12 +979,15 @@ pub enum Kind {
     Normal,
     Desert,
     Ice,
+    /// The sandstone desert's.
+    Sandstone,
 }
 
 const NORMAL: u8 = 1 << Kind::Normal as u8;
 const DESERT: u8 = 1 << Kind::Desert as u8;
 const ICE: u8 = 1 << Kind::Ice as u8;
-const ALL: u8 = NORMAL | DESERT | ICE;
+const SANDSTONE: u8 = 1 << Kind::Sandstone as u8;
+const ALL: u8 = NORMAL | DESERT | ICE | SANDSTONE;
 
 /// dungeon_loot's registered loot: item, chance, count range, depths, and
 /// which kinds of dungeon (a bit each).
@@ -1002,7 +1010,7 @@ const LOOT: &[Loot] = &[
     loot("esp:stick", 0.6, (3, 6)),
     loot("esp:flint", 0.4, (1, 3)),
     loot("esp:apple", 0.4, (1, 4)),
-    Loot { kinds: DESERT, ..loot("esp:cactus", 0.4, (1, 4)) },
+    Loot { kinds: SANDSTONE | DESERT, ..loot("esp:cactus", 0.4, (1, 4)) },
     loot("esp:coal_lump", 0.9, (1, 12)),
     loot("esp:gold_ingot", 0.5, (1, 1)),
     loot("esp:steel_ingot", 0.4, (1, 6)),
@@ -1011,16 +1019,15 @@ const LOOT: &[Loot] = &[
     loot("esp:pick_stone", 0.3, (1, 1)),
     loot("esp:axe_diamond", 0.05, (1, 1)),
     Loot { y: ABOVE_64, kinds: NORMAL, ..loot("esp:sand", 0.8, (4, 32)) },
+    Loot { y: ABOVE_64, kinds: SANDSTONE, ..loot("esp:desert_sand", 0.8, (4, 32)) },
     Loot { kinds: DESERT, ..loot("esp:desert_cobble", 0.8, (4, 32)) },
-    // (Its desert sand is for the sandstone desert's, which isn't
-    // generated here.)
     Loot { y: ABOVE_64, kinds: ICE, ..loot("esp:snow", 0.8, (8, 64)) },
-    Loot { y: ABOVE_64, kinds: NORMAL | DESERT, ..loot("esp:dirt", 0.6, (2, 16)) },
+    Loot { y: ABOVE_64, kinds: NORMAL | SANDSTONE | DESERT, ..loot("esp:dirt", 0.6, (2, 16)) },
     Loot { y: BELOW_512, ..loot("esp:obsidian", 0.25, (1, 3)) },
     Loot { y: BELOW_512, ..loot("esp:mese", 0.15, (1, 1)) },
     // Registered by the other mods: bucket's,
     loot("esp:bucket_empty", 0.55, (1, 1)),
-    Loot { kinds: DESERT | ICE, ..loot("esp:bucket_water", 0.45, (1, 1)) },
+    Loot { kinds: SANDSTONE | DESERT | ICE, ..loot("esp:bucket_water", 0.45, (1, 1)) },
     Loot { y: Some((0, 32768)), kinds: NORMAL, ..loot("esp:bucket_water", 0.45, (1, 1)) },
     Loot { y: Some((-32768, -1)), kinds: NORMAL, ..loot("esp:bucket_lava", 0.45, (1, 1)) },
     // farming's,
@@ -1084,11 +1091,13 @@ pub fn loot_for(pos: NodePos, kind: Kind) -> [Option<Stack>; SLOTS] {
     slots
 }
 
-/// Whether a chest at `pos` is in the desert's kind of dungeon.
+/// The kind of dungeon a chest at `pos` is in, by its biome (dungeon_loot's
+/// dungeontype).
 pub fn kind_at(pos: NodePos) -> Kind {
     match terrain::column(pos.0, pos.2).biome {
         Biome::Desert => Kind::Desert,
         Biome::Icesheet => Kind::Ice,
+        Biome::SandstoneDesert => Kind::Sandstone,
         _ => Kind::Normal,
     }
 }
@@ -1158,7 +1167,9 @@ mod tests {
                     assert!((0..AREA).contains(&(node.0 - min.0)) && (0..AREA).contains(&(node.1 - min.1)) && (0..AREA).contains(&(node.2 - min.2)));
                 }
             }
-            assert!(ids.contains(&CONTENT_AIR) && ids.contains(&CONTENT_COBBLE));
+            // Walls of the biome's kind: cobblestone, or sandstone brick in the
+            // sandstone desert.
+            assert!(ids.contains(&CONTENT_AIR) && ids.iter().any(|&id| is_wall(id)), "{ids:?}");
             assert!(a.rooms.len() >= 2);
         }
         assert!(found > 3, "only {found} of 40 mapchunks had dungeons");

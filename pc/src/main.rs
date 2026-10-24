@@ -37,10 +37,14 @@ mod colours;
 mod content;
 #[path = "../../src/crafting.rs"]
 mod crafting;
+#[path = "../../src/craftguide.rs"]
+mod craftguide;
 #[path = "../../src/doors.rs"]
 mod doors;
 #[path = "../../src/dungeons.rs"]
 mod dungeons;
+#[path = "../../src/env_sounds.rs"]
+mod env_sounds;
 #[path = "../../src/falling.rs"]
 mod falling;
 #[path = "../../src/farming.rs"]
@@ -97,6 +101,8 @@ mod status;
 mod storage;
 #[path = "../../src/terrain.rs"]
 mod terrain;
+#[path = "../../src/weather.rs"]
+mod weather;
 #[path = "../../src/world.rs"]
 mod world;
 #[path = "../../src/zstd.rs"]

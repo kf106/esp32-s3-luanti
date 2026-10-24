@@ -282,6 +282,39 @@ pub fn tree_height(sapling: u16, rng: &mut Rng) -> i32 {
 }
 
 #[cfg(test)]
+mod grass_tests {
+    use super::*;
+
+    #[test]
+    fn spreading_and_covering() {
+        assert!(spreads(CONTENT_GRASS) && spreads(CONTENT_LITTER) && spreads(CONTENT_CONIFEROUS_LITTER) && spreads(CONTENT_SNOW));
+        assert!(!spreads(CONTENT_DIRT) && !spreads(CONTENT_DRY_GRASS));
+        assert_eq!(spread_onto(CONTENT_AIR, Some(CONTENT_LITTER)), Some(CONTENT_LITTER));
+        assert_eq!(spread_onto(CONTENT_SNOW_LAYER, None), Some(CONTENT_SNOW));
+        assert_eq!(spread_onto(crate::farming::GRASS[2], None), Some(CONTENT_GRASS));
+        assert_eq!(spread_onto(crate::farming::DRY_GRASS[0], None), None);
+        assert_eq!(spread_onto(CONTENT_AIR, None), None);
+        assert!(lets_grass_in(CONTENT_AIR) && !lets_grass_in(CONTENT_STONE));
+        // Covered by stone or water: dirt. Under glass, a torch, a slab or
+        // tall grass: no.
+        assert_eq!(covered(CONTENT_GRASS, CONTENT_STONE), Some(CONTENT_DIRT));
+        assert_eq!(covered(CONTENT_SNOW, CONTENT_WATER), Some(CONTENT_DIRT));
+        assert_eq!(covered(CONTENT_DRY_GRASS, CONTENT_COBBLE), Some(CONTENT_DRY_DIRT));
+        for above in [CONTENT_AIR, CONTENT_GLASS, CONTENT_TORCH, crate::farming::GRASS[0], CONTENT_SNOW_LAYER] {
+            assert_eq!(covered(CONTENT_GRASS, above), None, "{}", content::name_of(above));
+        }
+        assert_eq!(covered(CONTENT_DIRT, CONTENT_STONE), None);
+        // The 26 neighbours, each once, faces first.
+        let mut all = AROUND.to_vec();
+        assert_eq!(&all[..6], &[(0, 0, -1), (0, -1, 0), (-1, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]);
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), 26);
+        assert!(!all.contains(&(0, 0, 0)));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
@@ -426,6 +459,94 @@ mod tests {
         assert_eq!(t.pop_due(Instant::now()), None);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Grass
+// ---------------------------------------------------------------------------
+
+/// minetest_game's "Grass spread" ABM (every 6 s, one time in 50): dirt
+/// in daylight next to grass (or forest litter, or snowy dirt) becomes
+/// the same; with tall grass or snow on top and none beside, grass or
+/// snowy dirt.
+pub const GRASS_SPREAD_INTERVAL: Duration = Duration::from_secs(6);
+/// "Grass covered" (every 8 s, one time in 50): under something that
+/// keeps out the light, or under water, it goes back to dirt.
+pub const GRASS_COVERED_INTERVAL: Duration = Duration::from_secs(8);
+pub const GRASS_CHANCE: u32 = 50;
+
+/// How often grass spreads or dies (`normal`), or every second with
+/// LUANTI_GRASS_FAST set (for the tests).
+pub fn grass_interval(normal: Duration) -> Duration {
+    if std::env::var_os("LUANTI_GRASS_FAST").is_some() { Duration::from_secs(1) } else { normal }
+}
+
+/// One time in how many: GRASS_CHANCE, or every time with LUANTI_GRASS_FAST.
+pub fn grass_chance() -> u32 {
+    if std::env::var_os("LUANTI_GRASS_FAST").is_some() { 1 } else { GRASS_CHANCE }
+}
+
+/// group:spreading_dirt_type: grass, forest litter and snowy dirt.
+pub fn spreads(id: u16) -> bool {
+    content::group_of(id, "spreading_dirt_type") > 0
+}
+
+/// The grass ABM's neighbours a dirt node must have: air, tall grass or
+/// savanna grass, or snow.
+pub fn lets_grass_in(id: u16) -> bool {
+    id == CONTENT_AIR || content::group_of(id, "grass") > 0 || content::group_of(id, "dry_grass") > 0 || id == CONTENT_SNOW_LAYER
+}
+
+/// What dirt becomes when grass spreads onto it: the first spreading
+/// neighbour's kind; else, by what is on top, snowy dirt under snow or
+/// grass under tall grass. (Under savanna grass minetest_game makes dirt
+/// with savanna grass, which isn't here: nothing.)
+pub fn spread_onto(above: u16, beside: Option<u16>) -> Option<u16> {
+    if let Some(id) = beside {
+        return Some(id);
+    }
+    if above == CONTENT_SNOW_LAYER {
+        Some(CONTENT_SNOW)
+    } else if content::group_of(above, "dry_grass") > 0 {
+        None
+    } else if content::group_of(above, "grass") > 0 {
+        Some(CONTENT_GRASS)
+    } else {
+        None
+    }
+}
+
+/// What grass (and savanna grass) with `above` on top becomes: dirt, if
+/// that keeps out the light or is a liquid ("Grass covered").
+pub fn covered(id: u16, above: u16) -> Option<u16> {
+    if !(spreads(id) || id == CONTENT_DRY_GRASS) {
+        return None;
+    }
+    if (content::passes_light(above) || content::passes_sunlight(above)) && !content::is_liquid(above) {
+        return None;
+    }
+    Some(if id == CONTENT_DRY_GRASS { CONTENT_DRY_DIRT } else { CONTENT_DIRT })
+}
+
+/// The 26 nodes round one, faces first (find_node_near's order).
+pub const AROUND: [(i32, i32, i32); 26] = {
+    let mut out = [(0, 0, 0); 26];
+    let mut n = 0;
+    let mut shell = 1;
+    while shell <= 3 {
+        let mut i = 0;
+        while i < 27 {
+            let d = (i % 3 - 1, i / 3 % 3 - 1, i / 9 - 1);
+            let k = (d.0 != 0) as i32 + (d.1 != 0) as i32 + (d.2 != 0) as i32;
+            if k == shell {
+                out[n] = d;
+                n += 1;
+            }
+            i += 1;
+        }
+        shell += 1;
+    }
+    out
+};
 
 // ---------------------------------------------------------------------------
 // Moss
