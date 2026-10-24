@@ -6,7 +6,8 @@ machine.
     python3 tests/run.py                  everything
     python3 tests/run.py bones panes      only the network tests named
     python3 tests/run.py --list           list the network tests
-    python3 tests/run.py --no-net         unit tests, checks and verifier only
+    python3 tests/run.py --no-net         unit tests, checks, verifier and PC build only
+    python3 tests/run.py --no-pc          everything but the PC build (pc/)
 
 Needs Rust (stable, via rustup) and Python 3 with zstandard
 (pip install zstandard, or apt install python3-zstandard). See
@@ -150,12 +151,54 @@ def run_network(name, env, args, night, port, binary, plants):
         server.wait()
 
 
+def pc_build():
+    """The PC build (pc/), built where its own .cargo/config.toml and
+    rust-toolchain.toml apply; its target folder is kept here, outside
+    the project. Returns the program, or None."""
+    env = {**os.environ, "CARGO_TARGET_DIR": str(WORK / "pc-target")}
+    print("\n=== PC build", flush=True)
+    t = time.time()
+    r = subprocess.run(["cargo", "build", "--release", "--quiet"], cwd=ROOT / "pc", env=env)
+    print(f"=== PC build: {'passed' if r.returncode == 0 else 'FAILED'} ({time.time() - t:.0f} s)", flush=True)
+    if r.returncode != 0:
+        return None
+    host = next(l.split()[1] for l in subprocess.run(["rustc", "-vV"], cwd=ROOT / "pc", capture_output=True, text=True).stdout.splitlines()
+                if l.startswith("host:"))
+    return WORK / "pc-target" / host / "release" / ("minetest-server" + (".exe" if os.name == "nt" else ""))
+
+
+def run_pc(program, port):
+    """The PC build as a server, on a fresh data folder, with a player."""
+    data = WORK / "out" / "pcdata"
+    shutil.rmtree(data, ignore_errors=True)
+    server = subprocess.Popen([str(program), "--port", str(port), "--bind", "127.0.0.1", "--data", str(data), "--max-players", "3"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1.5)
+        t = time.time()
+        r = subprocess.run([sys.executable, str(NET / "pctest.py"), str(port), str(NET / "netclient.py")],
+                           cwd=NET, capture_output=True, text=True, timeout=120)
+        out = (r.stdout + r.stderr).strip().splitlines()
+        ok = r.returncode == 0 and out and out[-1].endswith("OK")
+        print(f"  {'pass' if ok else 'FAIL'}  {'pc':<8} {time.time() - t:5.0f} s  {(out or [''])[-1][:90]}", flush=True)
+        if not ok:
+            print("\n".join("        " + l for l in out[-15:]))
+        return ok
+    except subprocess.TimeoutExpired:
+        print("  FAIL  pc       timed out")
+        return False
+    finally:
+        server.kill()
+        server.wait()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("only", nargs="*", help="network tests to run (default: all)")
     ap.add_argument("--list", action="store_true", help="list the network tests")
     ap.add_argument("--no-net", action="store_true", help="skip the network tests")
     ap.add_argument("--net-only", action="store_true", help="skip the unit tests, checks and verifier")
+    ap.add_argument("--no-pc", action="store_true", help="skip building and trying the PC build (pc/)")
     a = ap.parse_args()
     if a.list:
         print("\n".join(n for n, *_ in NETWORK))
@@ -180,12 +223,18 @@ def main():
         ok, _ = step("Content verifier", [sys.executable, str(NET / "verify.py"), str(WORK / "out"), str(ROOT / "media")],
                      stdout=subprocess.DEVNULL)
         results.append(("content verifier", ok))
+    pc = None
+    if not a.no_pc and not a.only:
+        pc = pc_build()
+        results.append(("PC build", pc is not None))
     if not a.no_net:
         chosen = [t for t in NETWORK if not a.only or t[0] in a.only]
         plants = find_plants(binary) if any(t[2] for t in chosen) else {}
         print(f"\n=== Network tests ({len(chosen)})")
         for i, (name, env, args, night) in enumerate(chosen):
             results.append((name, run_network(name, env, args, night, FIRST_PORT + i, binary, plants)))
+        if pc is not None:
+            results.append(("pc", run_pc(pc, FIRST_PORT - 1)))
     failed = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(failed)} of {len(results)} passed" + (f"; failed: {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0

@@ -149,24 +149,32 @@ const MAX_INTERACT_DISTANCE: f32 = 8.0;
 const HOTBAR_SIZE: usize = 8;
 /// How often a moving player's position is saved to the SD card.
 const SAVE_INTERVAL: Duration = Duration::from_secs(30);
-/// How many players can be in the game at once (Luanti's max_users,
-/// default 15 there). More would overload the ESP32: see the README.
-const MAX_PLAYERS: usize = 6;
+/// How many players can be in the game at once on the board (Luanti's
+/// max_users, default 15 there). More would overload the ESP32: see the
+/// README. The PC build can take more (Setup::max_players).
+pub const MAX_PLAYERS: usize = 6;
 /// Luanti's chat limits (chat_message_max_size, and
 /// chat_message_limit_per_10sec).
 const CHAT_MAX_CHARS: usize = 500;
 const CHAT_MAX_PER_10S: usize = 8;
 /// The welcome message, shown in the chat area when a player joins, one
 /// line per message. A /sd/motd.txt file replaces it.
-fn welcome() -> String {
+fn welcome(max_players: usize) -> String {
+    let what = if cfg!(target_os = "espidf") {
+        format!("on an ESP32-S3 microcontroller: a {} board, with 512 KB of RAM plus 8 MB of PSRAM", crate::board::BOARD.name)
+    } else {
+        "as the PC build of a server made for the ESP32-S3 microcontroller".to_string()
+    };
     format!(
-        "Welcome! This server runs Minetest Game on an ESP32-S3 microcontroller: a {} board, with 512 KB of RAM plus 8 MB of PSRAM.
-It is written from scratch in Rust, with no Lua: the game is built in. Up to 6 players.
+        "Welcome! This server runs Minetest Game {what}.
+It is written from scratch in Rust, with no Lua: the game is built in. Up to {max_players} players.
 Source: https://github.com/kf106/esp32-s3-minetest
-Chat works as usual; type /help for the commands.",
-        crate::board::BOARD.name
+Chat works as usual; type /help for the commands."
     )
 }
+
+/// What the server calls itself in /status.
+const SERVER_NAME: &str = if cfg!(target_os = "espidf") { "ESP32-S3 Minetest server" } else { "Minetest server (esp32-s3-minetest PC build)" };
 /// How often dropped items are moved on.
 const ITEM_STEP_INTERVAL: Duration = Duration::from_millis(50);
 /// builtin's item_drop: thrown from 1.2 nodes above the feet, at 2.9
@@ -534,6 +542,8 @@ pub struct Server {
     skins: Skins,
     /// Welcome message lines.
     welcome: Vec<String>,
+    /// How many players may be in the game at once.
+    max_players: usize,
     /// Sending is held back until then (see CONGESTION_BACKOFF).
     congested_until: Instant,
     /// Sends that failed since the last report, and when that was.
@@ -561,6 +571,9 @@ pub struct Setup {
     pub bed_spawns: beds::Spawns,
     pub media: Media,
     pub status: SharedStatus,
+    /// How many players may be in the game at once (MAX_PLAYERS on the
+    /// board).
+    pub max_players: usize,
 }
 
 /// A login for the SRP thread to work out.
@@ -740,7 +753,7 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, bed_spawns, media, status } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, bed_spawns, media, status, max_players } = setup;
         // Items dropped before a restart: out of any block built over them.
         items.settle(&|x, y, z| content::walkable(world.node((x, y, z))));
         let itemdef = build_itemdef(&content::itemdef_bytes());
@@ -869,8 +882,9 @@ impl Server {
             timers,
             rng,
             skins,
+            max_players,
             welcome: motd
-                .unwrap_or_else(welcome)
+                .unwrap_or_else(|| welcome(max_players))
                 .lines()
                 .map(str::trim_end)
                 .filter(|l| !l.is_empty())
@@ -1252,7 +1266,7 @@ impl Server {
         // Checked now so a client isn't taken through logging in only to be
         // turned away, and again when it is ready to join (Luanti does both).
         if self.user_limit_reached(&init.name) {
-            info!("{} tried to join, but the game is full ({MAX_PLAYERS} players)", init.name);
+            info!("{} tried to join, but the game is full ({} players)", init.name, self.max_players);
             self.deny(from, AccessDenied::TooManyUsers, "");
             return;
         }
@@ -1616,7 +1630,7 @@ impl Server {
         let name = peer.display_name().to_string();
         // Two could have been logging in at once for the last place.
         if self.user_limit_reached(&name) {
-            info!("{name} tried to join, but the game is full ({MAX_PLAYERS} players)");
+            info!("{name} tried to join, but the game is full ({} players)", self.max_players);
             self.deny(from, AccessDenied::TooManyUsers, "");
             return;
         }
@@ -3650,11 +3664,12 @@ impl Server {
         let up = status::lock(&self.status).started.elapsed().as_secs();
         let players: Vec<&str> = self.peers.values().filter(|p| p.ready).map(|p| p.display_name()).collect();
         format!(
-            "# Server: ESP32-S3 Minetest server, uptime: {}h {:02}m, time of day: {}, players ({}/{MAX_PLAYERS}): {}",
+            "# Server: {SERVER_NAME}, uptime: {}h {:02}m, time of day: {}, players ({}/{}): {}",
             up / 3600,
             up / 60 % 60,
             self.clock.hh_mm(),
             players.len(),
+            self.max_players,
             players.join(", ")
         )
     }
@@ -3692,7 +3707,7 @@ impl Server {
             .values()
             .filter(|p| p.ready && !p.display_name().eq_ignore_ascii_case(name))
             .count();
-        others >= MAX_PLAYERS
+        others >= self.max_players
     }
 
     /// The texture for a skin key.

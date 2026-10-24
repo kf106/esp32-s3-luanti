@@ -13,7 +13,8 @@ That runs, in order:
 1. **Unit tests:** the `#[cfg(test)]` tests in `src/`.
 2. **Host checks:** `tests/host/harness.rs`, the server's code exercised directly, checking crafting, tools, item physics, trees, the Wi-Fi file and so on.
 3. **Content verifier:** `tests/net/verify.py` reads the item and node definitions, media and other packets the server sends at login the way the Luanti 5.17 client does, and checks they parse.
-4. **Network tests:** for each, a server on a fresh world, and a script in `tests/net/` that logs in one or more players and checks what happens: digging, building, crafting, chests, doors, beds, water and lava, farming, plants, admin commands, bones, signs, bookshelves, writing in books, vessels and the vessels shelf, keys, the screwdriver, binoculars and the mapping kit, dungeon loot, and more.
+4. **PC build:** `pc/`, the server as a program for Linux (see "Running on a PC or VPS" in the README), built in its own folder with its own settings, and later started on a fresh data folder for a player to log in to (`tests/net/pctest.py`).
+5. **Network tests:** for each, a server on a fresh world, and a script in `tests/net/` that logs in one or more players and checks what happens: digging, building, crafting, chests, doors, beds, water and lava, farming, plants, admin commands, bones, signs, bookshelves, writing in books, vessels and the vessels shelf, keys, the screwdriver, binoculars and the mapping kit, dungeon loot, and more.
 
 It ends with a count, and exits non-zero if anything failed. A full run takes about 10 minutes, mostly the network tests.
 
@@ -37,7 +38,8 @@ With the venv's Python (or `python3` once the venv is activated with `source .ve
 python3 tests/run.py --list            the network tests
 python3 tests/run.py bones panes       just those network tests (after the unit tests and checks)
 python3 tests/run.py --net-only bones  just that network test
-python3 tests/run.py --no-net          unit tests, checks and verifier only
+python3 tests/run.py --no-net          unit tests, checks, verifier and PC build only
+python3 tests/run.py --no-pc           everything but the PC build
 ```
 
 ## How it works

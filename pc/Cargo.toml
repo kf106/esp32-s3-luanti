@@ -1,0 +1,32 @@
+# The server built as an ordinary program for a PC or a server (VPS), on
+# Linux (and later Windows): the same game code as the firmware (../src),
+# without the board's Wi-Fi, screen and SD card. Build it from this folder:
+#
+#     cd pc && cargo build --release
+#
+# pc/.cargo/config.toml builds for this computer rather than the ESP32, and
+# pc/rust-toolchain.toml uses stable Rust. See "Running on a PC or VPS" in
+# the README.
+[package]
+name = "esp32-s3-minetest-pc"
+version = "0.1.0"
+authors = ["Keir Finlow-Bates <keir@chainfrog.com>"]
+edition = "2021"
+rust-version = "1.84"
+description = "Minetest Game on a stick, off the stick: the esp32-s3-minetest Luanti server built for a PC or VPS"
+license = "MIT"
+
+[[bin]]
+name = "minetest-server"
+path = "src/main.rs"
+
+[dependencies]
+log = "0.4"
+qrcodegen = "1.8"
+
+[profile.release]
+opt-level = 3
+
+# The firmware's build.rs sets cfg(board = ...); here it is the default.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(board, values("waveshare", "es3c28p"))'] }

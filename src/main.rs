@@ -242,7 +242,7 @@ fn main() -> anyhow::Result<()> {
     if motd.is_some() {
         info!("Welcome message from {MOUNT}/motd.txt");
     }
-    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, furnaces, chests, items, clock, door_owners, bed_spawns, media, status });
+    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, furnaces, chests, items, clock, door_owners, bed_spawns, media, status, max_players: server::MAX_PLAYERS });
     // Guard against the compiler problem that once lost an argument on the
     // way into Server::new (see server::Setup).
     if server.status_data_addr() != sent {

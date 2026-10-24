@@ -620,6 +620,7 @@ fn serve(port: &str) {
         bed_spawns: beds::Spawns::open(format!("{d}/world/beds_spawns")),
         media: content::Media::load(&format!("{d}/media")),
         status: status::Status::new(format!("127.0.0.1:{port}")),
+        max_players: server::MAX_PLAYERS,
     };
     {
         // Report Wi-Fi power saving changes.

@@ -1,0 +1,3 @@
+# Stable Rust for the PC build (the firmware uses the esp toolchain).
+[toolchain]
+channel = "stable"

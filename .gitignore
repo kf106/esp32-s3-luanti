@@ -1,5 +1,6 @@
 # Build output
 /target/
+/pc/target/
 
 # ESP-IDF and its tools, downloaded into the project by embuild
 # (ESP_IDF_TOOLS_INSTALL_DIR = "workspace" in .cargo/config.toml)

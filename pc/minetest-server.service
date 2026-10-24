@@ -1,0 +1,25 @@
+# A systemd unit for the PC build on a Linux server (VPS). See "Running on
+# a PC or VPS" in the README. Copy to /etc/systemd/system/, adjust the
+# paths, then: systemctl daemon-reload && systemctl enable --now minetest-server
+[Unit]
+Description=Minetest Game server (esp32-s3-minetest PC build)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=minetest
+Group=minetest
+WorkingDirectory=/var/lib/minetest-server
+ExecStart=/usr/local/bin/minetest-server --data /var/lib/minetest-server --port 30000
+Restart=on-failure
+RestartSec=5
+# Log lines go to the journal: journalctl -u minetest-server -f
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/minetest-server
+
+[Install]
+WantedBy=multi-user.target

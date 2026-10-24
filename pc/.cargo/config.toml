@@ -1,0 +1,4 @@
+# The project's own .cargo/config.toml builds for the ESP32; here, build
+# for the computer doing the building.
+[build]
+target = "host-tuple"

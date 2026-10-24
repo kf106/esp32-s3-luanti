@@ -135,12 +135,26 @@ fn random_fill(buf: &mut [u8]) {
     unsafe { esp_idf_svc::sys::esp_fill_random(buf.as_mut_ptr().cast(), buf.len()) }
 }
 
-#[cfg(not(target_os = "espidf"))]
+#[cfg(all(unix, not(target_os = "espidf")))]
 fn random_fill(buf: &mut [u8]) {
     use std::io::Read;
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(buf))
         .expect("reading /dev/urandom");
+}
+
+/// Windows' system random number generator (BCryptGenRandom with
+/// BCRYPT_USE_SYSTEM_PREFERRED_RNG), for the PC build.
+#[cfg(windows)]
+fn random_fill(buf: &mut [u8]) {
+    #[link(name = "bcrypt")]
+    extern "system" {
+        fn BCryptGenRandom(algorithm: *mut core::ffi::c_void, buffer: *mut u8, len: u32, flags: u32) -> i32;
+    }
+    for chunk in buf.chunks_mut(u32::MAX as usize) {
+        let status = unsafe { BCryptGenRandom(core::ptr::null_mut(), chunk.as_mut_ptr(), chunk.len() as u32, 2) };
+        assert_eq!(status, 0, "BCryptGenRandom failed");
+    }
 }
 
 // ---------------------------------------------------------------------------
