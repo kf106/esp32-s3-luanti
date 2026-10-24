@@ -3439,6 +3439,7 @@ impl Server {
     /// sand and gravel above come down; players near are hurt and thrown
     /// back, and items thrown.
     fn explode(&mut self, center: NodePos) {
+        let started = Instant::now();
         let mut count = 0;
         for dz in -2..=2 {
             for dy in -2..=2 {
@@ -3548,7 +3549,7 @@ impl Server {
                 }
             }
         }
-        info!("TNT exploded at {center:?} ({count} together, radius {radius}): {} nodes", changed.len());
+        let worked_out = started.elapsed().as_millis();
         // Every map block it changed goes out again whole.
         let blocks: BTreeSet<BlockPos> = changed.iter().map(|&p| world::block_of_node(p)).collect();
         for b in blocks {
@@ -3583,6 +3584,11 @@ impl Server {
         }
         self.blast_physics(center, radius);
         self.eject(center, radius, drops);
+        info!(
+            "TNT exploded at {center:?} ({count} together, radius {radius}): {} nodes, worked out in {worked_out} ms, {} ms in all",
+            changed.len(),
+            started.elapsed().as_millis()
+        );
     }
 
     /// A blast's push (entity_physics): players within its damage radius

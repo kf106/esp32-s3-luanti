@@ -25,7 +25,8 @@
 //!   nodes (a little more or less in places) is destroyed and thrown out
 //!   as items, flammable things catch fire, other TNT in the blast goes
 //!   off a moment later, and players near it are hurt and thrown back.
-//!   TNT within 2 nodes of each other goes off together, in a bigger blast.
+//!   TNT within 2 nodes of each other goes off together, in a bigger blast
+//!   (on the board, no bigger than 27 together make: radius 9).
 //! - Chests, furnaces and shelves in a blast spill what they hold; locked
 //!   chests, doors and trapdoors, open chests and bones are left alone.
 //!
@@ -104,10 +105,16 @@ pub fn powder_reach(p: (i32, i32, i32)) -> impl Iterator<Item = (i32, i32, i32)>
     [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().flat_map(move |(dx, dz)| (-1..=1).map(move |dy| (p.0 + dx, p.1 + dy, p.2 + dz)))
 }
 
+/// The most TNT that count towards one blast on the board (27: radius
+/// 9). More go off with it, but make it no bigger; a bigger blast would
+/// hold the board up too long. The PC build takes all there can be (a
+/// 5x5x5 block of 125: radius 15), as minetest_game does.
+pub const MAX_TOGETHER: usize = if cfg!(pc) { 125 } else { 27 };
+
 /// A blast's radius when `count` TNT go off together (radius times the
-/// cube root of how many).
+/// cube root of how many, up to MAX_TOGETHER).
 pub fn blast_radius(count: usize) -> i32 {
-    (RADIUS as f64 * (count.max(1) as f64).cbrt()).floor() as i32
+    (RADIUS as f64 * (count.clamp(1, MAX_TOGETHER) as f64).cbrt()).floor() as i32
 }
 
 /// How far a blast of `radius` hurts and throws things.
@@ -196,7 +203,8 @@ mod tests {
         assert_eq!(blast_radius(1), 3);
         assert_eq!(blast_radius(8), 6);
         assert_eq!(blast_radius(27), 9);
-        assert_eq!(blast_radius(125), 15);
+        assert_eq!(blast_radius(125), if cfg!(pc) { 15 } else { 9 });
+        assert_eq!(blast_radius(64), if cfg!(pc) { 12 } else { 9 });
         assert_eq!(damage_radius(3), 6.0);
         // The middle and the near nodes always; beyond 1.25 times the
         // radius never.

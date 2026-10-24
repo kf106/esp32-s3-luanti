@@ -13,6 +13,8 @@ Developed on a [**Waveshare ESP32-S3-LCD-1.47**](https://www.waveshare.com/produ
 
 ![The back of the board, with the microSD card that holds the world](../assets/esp32-waveshare.jpeg)
 
+*The reverse of a Waveshare ESP32-S3-LCD-1.47 with 128GB SD card. You really only need a 16MB one.*
+
 ## Other boards
 
 <p align="center">
