@@ -53,6 +53,12 @@ pub enum Job {
     Berries,
     /// See whether a flame still has something to burn (fire.rs).
     Flame,
+    /// Lit TNT goes off (tnt.rs).
+    Fuse,
+    /// Lit gunpowder burns out, lighting what is next to it.
+    Powder,
+    /// TNT caught in a blast goes off.
+    Chain,
 }
 
 /// Node timers (minetest_game's are per node; here they are kept in one

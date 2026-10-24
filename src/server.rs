@@ -22,6 +22,8 @@ use crate::craftguide;
 use crate::weather;
 use crate::env_sounds;
 use crate::fire;
+use crate::settings;
+use crate::tnt;
 use crate::beds;
 use crate::binoculars;
 use crate::keys;
@@ -516,13 +518,14 @@ pub struct Server {
     /// Cactus and papyrus players planted, which grow (plants.rs).
     climbers: BTreeSet<NodePos>,
     climbers_checked: Instant,
-    /// Fire: the setting, every flame there is, and when the fire mod's
+    /// Fire and TNT: the settings, every flame there is, and when the fire mod's
     /// ABMs, crackle and burning of dropped items last ran.
-    fire: fire::Settings,
+    settings: settings::Settings,
     flames: BTreeSet<NodePos>,
     fire_ignited: Instant,
     fire_burned: Instant,
     fire_sounded: Instant,
+    tnt_ignited: Instant,
     items_burned: Instant,
     /// When the liquids last flowed.
     liquids_flowed: Instant,
@@ -594,8 +597,8 @@ pub struct Setup {
     pub clock: Clock,
     pub door_owners: doors::Owners,
     pub bed_spawns: beds::Spawns,
-    /// Whether fire spreads (world/settings.txt).
-    pub fire: fire::Settings,
+    /// Whether fire spreads and TNT can be lit (world/settings.txt).
+    pub settings: settings::Settings,
     pub media: Media,
     pub status: SharedStatus,
     /// How many players may be in the game at once (MAX_PLAYERS on the
@@ -780,7 +783,7 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, bed_spawns, fire, media, status, max_players } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, bed_spawns, settings, media, status, max_players } = setup;
         // Items dropped before a restart: out of any block built over them.
         items.settle(&|x, y, z| content::walkable(world.node((x, y, z))));
         let itemdef = build_itemdef(&content::itemdef_bytes());
@@ -825,6 +828,11 @@ impl Server {
         }
         if !flames.is_empty() {
             info!("Fire: {} flames burning", flames.len());
+        }
+        // Lit TNT and gunpowder carry on burning.
+        for pos in world.changed_nodes(tnt::is_lit) {
+            let job = if world.node(pos) == tnt::TNT_BURNING { Job::Fuse } else { Job::Powder };
+            timers.start(pos, job, if job == Job::Fuse { tnt::FUSE } else { tnt::POWDER_BURNS });
         }
         // Seeds and crops carry on growing; soil is looked after again.
         let crops = world.changed_nodes(farming::is_growing);
@@ -894,11 +902,12 @@ impl Server {
             fields_checked: Instant::now(),
             climbers,
             climbers_checked: Instant::now(),
-            fire,
+            settings,
             flames,
             fire_ignited: Instant::now(),
             fire_burned: Instant::now(),
             fire_sounded: Instant::now(),
+            tnt_ignited: Instant::now(),
             items_burned: Instant::now(),
             liquids_flowed: Instant::now(),
             lava_cooled: Instant::now(),
@@ -2469,6 +2478,15 @@ impl Server {
                     self.door_owners.set(node_pos(above), &name);
                 }
             }
+            // Punching TNT or gunpowder with a torch lights it (their
+            // on_punch).
+            INTERACT_START_DIGGING if tnt::lights(self.world.node(node_pos(under))) && in_reach(under) => {
+                let slot = msg.item as usize;
+                let torch = self.peers.get(&from).and_then(|p| p.inventory.get(slot)).filter(|_| slot < HOTBAR_SIZE).is_some_and(|s| s.id == content::CONTENT_TORCH);
+                if torch && self.light_tnt(node_pos(under)) {
+                    info!("{name} lit {} at {under:?} with a torch", content::name_of(self.world.node(node_pos(under))));
+                }
+            }
             // Punching bones takes what is in them (their on_punch).
             INTERACT_START_DIGGING if self.world.node(node_pos(under)) == bones::BONES && in_reach(under) => {
                 self.punch_bones(from, node_pos(under));
@@ -3107,7 +3125,7 @@ impl Server {
     /// that lit it (lava starts afresh), and at MAX_STEPS it lights no
     /// more. Not while fire is off.
     fn ignite(&mut self, chance: u32) {
-        if !self.fire.enabled() {
+        if !self.settings.fire() {
             return;
         }
         let active = self.active_test();
@@ -3161,7 +3179,7 @@ impl Server {
     /// flammable node beside it, one time in `chance`. Not while fire is
     /// off.
     fn burn_flammables(&mut self, chance: u32) {
-        if !self.fire.enabled() {
+        if !self.settings.fire() {
             return;
         }
         let active = self.active_test();
@@ -3183,6 +3201,12 @@ impl Server {
     /// burn.
     fn burn_away(&mut self, pos: NodePos) {
         let id = self.world.node(pos);
+        // TNT and gunpowder catch light instead (their on_burn), or with TNT
+        // off, don't burn at all.
+        if tnt::lights(id) {
+            self.light_tnt(pos);
+            return;
+        }
         let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
         if let Some((_, top)) = beds::bed_of(id) {
             let param2 = self.world.param2(pos);
@@ -3242,7 +3266,12 @@ impl Server {
             let (u, a) = ((under[0] as i32, under[1] as i32, under[2] as i32), (above[0] as i32, above[1] as i32, above[2] as i32));
             let node = self.world.node(u);
             let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
-            if node == content::CONTENT_COAL_BLOCK {
+            if tnt::lights(node) {
+                // TNT and gunpowder are lit (on_ignite).
+                if self.light_tnt(u) {
+                    info!("{name} lit {} at {u:?}", content::name_of(node));
+                }
+            } else if node == content::CONTENT_COAL_BLOCK {
                 if self.light_flame((u.0, u.1 + 1, u.2), fire::PERMANENT_FLAME, 0) {
                     info!("{name} lit a permanent flame at {:?}", (u.0, u.1 + 1, u.2));
                 }
@@ -3318,6 +3347,304 @@ impl Server {
                 debug!("{} {} burnt up", d.count, content::name_of(d.item));
                 self.send_to_players(&build_remove_add(&[id], &[]));
                 self.play_sound_near(-1, "default_item_smoke", 1.0, at, 8.0);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // TNT (tnt.rs)
+    // -------------------------------------------------------------------
+
+    /// Light TNT or gunpowder (tnt.burn): TNT goes off in 4 s, gunpowder
+    /// burns for a second. Not while TNT is off. Returns whether it did.
+    fn light_tnt(&mut self, pos: NodePos) -> bool {
+        if !self.settings.tnt() {
+            return false;
+        }
+        let id = self.world.node(pos);
+        let Some(lit) = tnt::lit(id) else {
+            return false;
+        };
+        let param2 = self.world.param2(pos);
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.world.set_node(pos, lit, param2);
+        self.broadcast_node(p16, &build_addnode(p16, lit, param2));
+        let at = p16.map(|v| v as f32 * 10.0);
+        if lit == tnt::TNT_BURNING {
+            self.play_sound_near(-1, "tnt_ignite", 1.0, at, HEARING);
+            self.timers.start(pos, Job::Fuse, tnt::FUSE);
+        } else {
+            self.play_sound_near(-1, "tnt_gunpowder_burning", 1.0, at, HEARING);
+            self.timers.start(pos, Job::Powder, tnt::POWDER_BURNS);
+        }
+        true
+    }
+
+    /// Lit TNT's fuse has burnt down: it goes off, or with TNT turned off
+    /// meanwhile, goes back to being TNT.
+    fn fuse(&mut self, pos: NodePos) {
+        if self.world.node(pos) != tnt::TNT_BURNING {
+            return;
+        }
+        if !self.settings.tnt() {
+            let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+            self.world.set_node(pos, tnt::TNT, 0);
+            self.broadcast_node(p16, &build_addnode(p16, tnt::TNT, 0));
+            return;
+        }
+        self.explode(pos);
+    }
+
+    /// Lit gunpowder has burnt: it lights what is next to it along the
+    /// trail, and is gone.
+    fn powder_burns(&mut self, pos: NodePos) {
+        if self.world.node(pos) != tnt::GUNPOWDER_BURNING {
+            return;
+        }
+        for p in tnt::powder_reach(pos) {
+            self.light_tnt(p);
+        }
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.world.set_node(pos, world::CONTENT_AIR, 0);
+        self.broadcast_node(p16, &build_removenode(p16));
+    }
+
+    /// The "TNT ignition" ABM: TNT and gunpowder beside a flame (not a
+    /// permanent one) or lava, near players, are lit.
+    fn ignite_tnt(&mut self) {
+        if !self.settings.tnt() {
+            return;
+        }
+        let active = self.active_test();
+        let world = &self.world;
+        let mut igniters: Vec<NodePos> = self.flames.iter().copied().filter(|&p| active(p) && world.node(p) == fire::BASIC_FLAME).collect();
+        igniters.extend(world.changed_nodes(content::is_lava).into_iter().filter(|&p| active(p)));
+        let mut lit: Vec<NodePos> = Vec::new();
+        for q in igniters {
+            for d in nature::AROUND {
+                let p = (q.0 + d.0, q.1 + d.1, q.2 + d.2);
+                if tnt::lights(world.node(p)) && !lit.contains(&p) {
+                    lit.push(p);
+                }
+            }
+        }
+        for p in lit {
+            self.light_tnt(p);
+        }
+    }
+
+    /// TNT goes off at `center` (tnt.boom): all the TNT within 2 nodes
+    /// with it, in a blast that grows with how many; what is in the blast
+    /// is destroyed (and thrown out), set alight, lit or set off in turn;
+    /// sand and gravel above come down; players near are hurt and thrown
+    /// back, and items thrown.
+    fn explode(&mut self, center: NodePos) {
+        let mut count = 0;
+        for dz in -2..=2 {
+            for dy in -2..=2 {
+                for dx in -2..=2 {
+                    let p = (center.0 + dx, center.1 + dy, center.2 + dz);
+                    if matches!(self.world.node(p), tnt::TNT | tnt::TNT_BURNING) {
+                        count += 1;
+                        self.world.set_node(p, world::CONTENT_AIR, 0);
+                    }
+                }
+            }
+        }
+        let radius = tnt::blast_radius(count);
+        let mut drops: Vec<Stack> = Vec::new();
+        let mut chained = Vec::new();
+        let mut powder = Vec::new();
+        let mut changed: Vec<NodePos> = Vec::new();
+        let mut trunks = Vec::new();
+        let world_basic = |s: &Self| s.flames.iter().filter(|&&p| s.world.node(p) == fire::BASIC_FLAME).count();
+        let mut basic = world_basic(self);
+        for dz in -radius..=radius {
+            for dy in -radius..=radius {
+                for dx in -radius..=radius {
+                    if !tnt::reaches((dx, dy, dz), radius, &mut self.rng) {
+                        continue;
+                    }
+                    let p = (center.0 + dx, center.1 + dy, center.2 + dz);
+                    let id = self.world.node(p);
+                    match tnt::blasted(id) {
+                        tnt::Blasted::Spared => continue,
+                        tnt::Blasted::Chain => {
+                            chained.push(p);
+                            continue;
+                        }
+                        tnt::Blasted::Light => {
+                            powder.push(p);
+                            continue;
+                        }
+                        tnt::Blasted::Emptied => {
+                            if content::is_furnace(id) {
+                                self.close_furnace(p);
+                                if let Some(f) = self.furnaces.remove(p) {
+                                    self.fade_sounds(&f.sounds);
+                                    drops.extend(f.src.iter().chain(f.fuel.iter()).chain(f.dst.iter()).flatten().copied());
+                                }
+                                drops.push(Stack::new(content::CONTENT_FURNACE, 1));
+                            } else {
+                                self.fill_dungeon_chest(p);
+                                self.close_chest_windows(p);
+                                if let Some(c) = self.chests.get(p) {
+                                    drops.extend(c.slots().iter().flatten().copied());
+                                }
+                                self.chests.remove(p);
+                                let item = content::chest_pair(id).map_or(id, |(closed, _)| closed);
+                                drops.push(Stack::new(item, 1));
+                            }
+                            self.world.set_node(p, world::CONTENT_AIR, 0);
+                        }
+                        tnt::Blasted::Flame => {
+                            let flame = basic < fire::MAX_FLAMES;
+                            self.world.set_node(p, if flame { fire::BASIC_FLAME } else { world::CONTENT_AIR }, 0);
+                            if flame {
+                                basic += 1;
+                                self.flames.insert(p);
+                                self.timers.start(p, Job::Flame, fire::flame_timer(&mut self.rng));
+                            }
+                        }
+                        tnt::Blasted::Destroyed => {
+                            for (item, n) in self.drops(id) {
+                                drops.push(Stack::new(item, n));
+                            }
+                            // A bed's other half and a door's hidden top go
+                            // too; nobody respawns at a blown-up bed.
+                            if let Some((_, top)) = beds::bed_of(id) {
+                                let other = beds::other_half(p, self.world.param2(p), top);
+                                if beds::is_bed(self.world.node(other)) {
+                                    self.world.set_node(other, world::CONTENT_AIR, 0);
+                                    changed.push(other);
+                                }
+                                self.bed_spawns.remove_at(other);
+                                self.bed_spawns.remove_at(p);
+                            }
+                            if doors::is_door(id) || doors::is_trapdoor(id) {
+                                self.door_owners.remove(p);
+                                let top = (p.0, p.1 + 1, p.2);
+                                if doors::is_door(id) && self.world.node(top) == doors::HIDDEN {
+                                    self.world.set_node(top, world::CONTENT_AIR, 0);
+                                    changed.push(top);
+                                }
+                            }
+                            if content::is_trunk(id) {
+                                trunks.push((p, id));
+                            }
+                            self.put_out_above(p, id);
+                            self.world.set_node(p, world::CONTENT_AIR, 0);
+                        }
+                    }
+                    changed.push(p);
+                }
+            }
+        }
+        // TNT round the middle went with it.
+        for dz in -2..=2 {
+            for dy in -2..=2 {
+                for dx in -2..=2 {
+                    changed.push((center.0 + dx, center.1 + dy, center.2 + dz));
+                }
+            }
+        }
+        info!("TNT exploded at {center:?} ({count} together, radius {radius}): {} nodes", changed.len());
+        // Every map block it changed goes out again whole.
+        let blocks: BTreeSet<BlockPos> = changed.iter().map(|&p| world::block_of_node(p)).collect();
+        for b in blocks {
+            self.send_block_again(b);
+        }
+        let at = [center.0 as f32 * 10.0, center.1 as f32 * 10.0, center.2 as f32 * 10.0];
+        self.play_sound_near(-1, "tnt_explode", 2.5, at, (radius as f32 * 20.0).min(128.0));
+        // What stood on what went falls, or drops off.
+        let reach = radius * 3 / 2;
+        for dz in -reach..=reach {
+            for dy in -reach..=reach {
+                for dx in -reach..=reach {
+                    let r = ((dx * dx + dy * dy + dz * dz) as f32).sqrt();
+                    if r / (radius as f32) < 1.4 {
+                        self.check_falling((center.0 + dx, center.1 + dy, center.2 + dz));
+                    }
+                }
+            }
+        }
+        for &p in &changed {
+            self.drop_attached([p.0 as i16, p.1 as i16, p.2 as i16]);
+            self.wake_items(p);
+        }
+        for (p, trunk) in trunks {
+            self.start_leaf_decay(p, trunk);
+        }
+        for p in chained {
+            self.timers.start(p, Job::Chain, tnt::CHAINED);
+        }
+        for p in powder {
+            self.light_tnt(p);
+        }
+        self.blast_physics(center, radius);
+        self.eject(center, radius, drops);
+    }
+
+    /// A blast's push (entity_physics): players within its damage radius
+    /// lose HP and are thrown back; dropped items are thrown.
+    fn blast_physics(&mut self, center: NodePos, radius: i32) {
+        let c = [center.0 as f32, center.1 as f32, center.2 as f32];
+        let reach = tnt::damage_radius(radius);
+        let away = |p: [f32; 3]| {
+            let d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+            let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            (len, if len > 0.0 { d.map(|v| v / len) } else { [0.0, 1.0, 0.0] })
+        };
+        let hurt: Vec<(SocketAddr, f32, [f32; 3])> = self
+            .peers
+            .iter()
+            .filter(|(_, p)| p.ready && p.hp > 0)
+            .filter_map(|(a, p)| {
+                let (dist, dir) = away(p.pos_bs.map(|v| v / 10.0));
+                (dist <= reach).then_some((*a, dist, dir))
+            })
+            .collect();
+        for (addr, dist, dir) in hurt {
+            let push = tnt::knockback(dir, dist, radius);
+            self.send_command(addr, 0, &build_player_speed(push.map(|v| v * 10.0)));
+            let damage = tnt::damage(dist, radius).round() as u16;
+            if damage > 0 {
+                self.hurt(addr, damage, "blown up");
+            }
+        }
+        let items: Vec<(u16, f32, [f32; 3], [f32; 3])> =
+            self.items.iter().map(|d| (d.id, away(d.pos).0, away(d.pos).1, d.vel)).filter(|i| i.1 <= reach).collect();
+        for (id, dist, dir, old) in items {
+            // calc_velocity: power radius * 10, over the distance, a little
+            // at random.
+            let power = radius as f32 * 10.0 / dist.max(1.0);
+            let mut v = [0, 1, 2].map(|i| dir[i] * power + old[i] + (self.rng.range(0, 100) as f32 / 100.0 - 0.5));
+            let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            if speed > 250.0 {
+                v = v.map(|x| x * 250.0 / speed);
+            }
+            if self.items.throw(id, v) {
+                self.send_item_position(id);
+            }
+        }
+    }
+
+    /// What a blast destroyed, thrown out in handfuls (eject_drops) from
+    /// open places within its radius, upwards and outwards.
+    fn eject(&mut self, center: NodePos, radius: i32, drops: Vec<Stack>) {
+        for stack in drops {
+            for n in tnt::handfuls(stack.count, radius, content::stack_max(stack.id)) {
+                let mut at = center;
+                for _ in 0..5 {
+                    let x = center.0 + self.rng.range(0, (2 * radius) as u32) as i32 - radius;
+                    let z = center.2 + self.rng.range(0, (2 * radius) as u32) as i32 - radius;
+                    if !content::walkable(self.world.node((x, center.1, z))) {
+                        at = (x, center.1, z);
+                        break;
+                    }
+                }
+                let vel = [self.rng.range(0, 6) as f32 - 3.0, self.rng.range(0, 10) as f32, self.rng.range(0, 6) as f32 - 3.0];
+                self.spawn_item(Stack { count: n, ..stack }, ([at.0 as f32, at.1 as f32, at.2 as f32], vel));
             }
         }
     }
@@ -3564,6 +3891,13 @@ impl Server {
                 Job::Crop => self.grow_crop(pos),
                 Job::Berries => self.grow_berries(pos),
                 Job::Flame => self.check_flame(pos),
+                Job::Fuse => self.fuse(pos),
+                Job::Powder => self.powder_burns(pos),
+                Job::Chain => {
+                    if self.world.node(pos) == tnt::TNT && self.settings.tnt() {
+                        self.explode(pos);
+                    }
+                }
             }
         }
     }
@@ -5812,6 +6146,10 @@ impl Server {
         if now.duration_since(self.fire_burned) >= every {
             self.fire_burned = now;
             self.burn_flammables(chance);
+        }
+        if now.duration_since(self.tnt_ignited) >= tnt::IGNITION_EVERY {
+            self.tnt_ignited = now;
+            self.ignite_tnt();
         }
         if now.duration_since(self.fire_sounded) >= fire::SOUND_EVERY {
             self.fire_sounded = now;

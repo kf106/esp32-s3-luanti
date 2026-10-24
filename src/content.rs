@@ -17,6 +17,7 @@ use crate::beds;
 use crate::bones;
 use crate::doors;
 use crate::fire;
+use crate::tnt;
 use crate::dungeons;
 use crate::colours;
 use crate::farming;
@@ -143,6 +144,9 @@ pub enum Kind {
     /// (firelike), walked through, built over, washed out by water, and
     /// burning whoever stands in it. It glows, but lights nothing round it.
     Fire,
+    /// Gunpowder (the tnt mod's): a trail on the ground that joins up with
+    /// its neighbours, as rails do (raillike), walked over.
+    Powder,
     /// A bookshelf: a cube turned to face whoever placed it, opened with a
     /// right-click, holding books.
     Shelf,
@@ -350,6 +354,8 @@ pub const ITEM_SKELETON_KEY: u16 = 0x1032;
 pub const ITEM_KEY: u16 = 0x1033;
 pub const ITEM_BINOCULARS: u16 = 0x1034;
 pub const ITEM_MAPPING_KIT: u16 = 0x1035;
+/// The tnt mod's TNT stick.
+pub const ITEM_TNT_STICK: u16 = 0x1036;
 pub const ITEM_DOOR_GLASS: u16 = 0x1006;
 /// minetest_game's buckets.
 pub const ITEM_BUCKET_EMPTY: u16 = 0x1007;
@@ -3106,6 +3112,63 @@ pub const NODES: &[Node] = &[
         drop_count: 0,
         kind: Kind::Fire,
     },
+    // The tnt mod's gunpowder and TNT (tnt.rs; pictures CC BY-SA 3.0, see
+    // media/LICENSE-tnt.txt).
+    Node {
+        id: tnt::GUNPOWDER,
+        name: "esp:gunpowder",
+        description: "Gun Powder",
+        tiles: [
+            "tnt_gunpowder_straight.png",
+            "tnt_gunpowder_curved.png",
+            "tnt_gunpowder_t_junction.png",
+            "tnt_gunpowder_crossing.png",
+            "tnt_gunpowder_straight.png",
+            "tnt_gunpowder_straight.png",
+        ],
+        groups: &[("dig_immediate", 2), ("attached_node", 1), ("flammable", 5), ("connect_to_raillike", tnt::RAILLIKE_GROUP)],
+        drop: tnt::GUNPOWDER,
+        drop_count: 1,
+        kind: Kind::Powder,
+    },
+    Node {
+        id: tnt::GUNPOWDER_BURNING,
+        name: "esp:gunpowder_burning",
+        description: "",
+        tiles: [
+            "tnt_gunpowder_burning_straight_animated.png",
+            "tnt_gunpowder_burning_curved_animated.png",
+            "tnt_gunpowder_burning_t_junction_animated.png",
+            "tnt_gunpowder_burning_crossing_animated.png",
+            "tnt_gunpowder_burning_straight_animated.png",
+            "tnt_gunpowder_burning_straight_animated.png",
+        ],
+        groups: &[("dig_immediate", 2), ("attached_node", 1), ("connect_to_raillike", tnt::RAILLIKE_GROUP), ("not_in_creative_inventory", 1)],
+        drop: 0,
+        drop_count: 0,
+        kind: Kind::Powder,
+    },
+    Node {
+        id: tnt::TNT,
+        name: "esp:tnt",
+        description: "TNT",
+        tiles: ["tnt_top.png", "tnt_bottom.png", "tnt_side.png", "tnt_side.png", "tnt_side.png", "tnt_side.png"],
+        groups: &[("dig_immediate", 2), ("tnt", 1), ("flammable", 5)],
+        drop: tnt::TNT,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    // Lit: it can't be dug, and goes off in 4 s.
+    Node {
+        id: tnt::TNT_BURNING,
+        name: "esp:tnt_burning",
+        description: "",
+        tiles: ["tnt_top_burning_animated.png", "tnt_bottom.png", "tnt_side.png", "tnt_side.png", "tnt_side.png", "tnt_side.png"],
+        groups: &[("not_in_creative_inventory", 1)],
+        drop: 0,
+        drop_count: 0,
+        kind: Kind::Solid,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -3507,6 +3570,15 @@ pub const CRAFTITEMS: &[CraftItem] = &[
         description: "Mapping Kit\nUse with 'Minimap' key",
         image: "map_mapping_kit.png",
         groups: &[("flammable", 3), ("tool", 1)],
+    },
+    // The tnt mod's TNT stick (its picture CC BY-SA 3.0, see
+    // media/LICENSE-tnt.txt).
+    CraftItem {
+        id: ITEM_TNT_STICK,
+        name: "esp:tnt_stick",
+        description: "TNT Stick",
+        image: "tnt_tnt_stick.png",
+        groups: &[("flammable", 5)],
     },
     // minetest_game's lumps, crystals and ingots (craftitems.lua).
     CraftItem {
@@ -4203,7 +4275,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire | Kind::Powder))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -4223,6 +4295,8 @@ pub fn glow(id: u16) -> u8 {
         LAVA_GLOW
     } else if fire::is_flame(id) {
         fire::FLAME_GLOW
+    } else if tnt::is_lit(id) {
+        tnt::BURNING_GLOW
     } else {
         light_source(id)
     }
@@ -4260,7 +4334,7 @@ pub fn buildable_to(id: u16) -> bool {
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire | Kind::Powder))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
@@ -4346,7 +4420,7 @@ pub fn is_vessel(id: u16) -> bool {
 /// fall off (and drop) when it goes: saplings, plants and vessels
 /// (attached_node on a floor).
 pub fn stands_on_floor(id: u16) -> bool {
-    is_sapling(id) || is_vessel(id) || crate::farming::is_attached_plant(id)
+    is_sapling(id) || is_vessel(id) || crate::farming::is_attached_plant(id) || tnt::is_powder(id)
 }
 
 pub fn is_sapling(id: u16) -> bool {
@@ -5005,6 +5079,24 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("fire_extinguish_flame.3.ogg", include_bytes!("../media/fire_extinguish_flame.3.ogg")),
     ("fire_flint_and_steel.ogg", include_bytes!("../media/fire_flint_and_steel.ogg")),
     ("default_item_smoke.ogg", include_bytes!("../media/default_item_smoke.ogg")),
+    // The tnt mod's (CC BY-SA 3.0 and CC0, see media/LICENSE-tnt.txt).
+    ("tnt_bottom.png", include_bytes!("../media/tnt_bottom.png")),
+    ("tnt_side.png", include_bytes!("../media/tnt_side.png")),
+    ("tnt_top.png", include_bytes!("../media/tnt_top.png")),
+    ("tnt_top_burning_animated.png", include_bytes!("../media/tnt_top_burning_animated.png")),
+    ("tnt_tnt_stick.png", include_bytes!("../media/tnt_tnt_stick.png")),
+    ("tnt_gunpowder_inventory.png", include_bytes!("../media/tnt_gunpowder_inventory.png")),
+    ("tnt_gunpowder_straight.png", include_bytes!("../media/tnt_gunpowder_straight.png")),
+    ("tnt_gunpowder_curved.png", include_bytes!("../media/tnt_gunpowder_curved.png")),
+    ("tnt_gunpowder_t_junction.png", include_bytes!("../media/tnt_gunpowder_t_junction.png")),
+    ("tnt_gunpowder_crossing.png", include_bytes!("../media/tnt_gunpowder_crossing.png")),
+    ("tnt_gunpowder_burning_straight_animated.png", include_bytes!("../media/tnt_gunpowder_burning_straight_animated.png")),
+    ("tnt_gunpowder_burning_curved_animated.png", include_bytes!("../media/tnt_gunpowder_burning_curved_animated.png")),
+    ("tnt_gunpowder_burning_t_junction_animated.png", include_bytes!("../media/tnt_gunpowder_burning_t_junction_animated.png")),
+    ("tnt_gunpowder_burning_crossing_animated.png", include_bytes!("../media/tnt_gunpowder_burning_crossing_animated.png")),
+    ("tnt_explode.ogg", include_bytes!("../media/tnt_explode.ogg")),
+    ("tnt_ignite.ogg", include_bytes!("../media/tnt_ignite.ogg")),
+    ("tnt_gunpowder_burning.ogg", include_bytes!("../media/tnt_gunpowder_burning.ogg")),
     ("env_sounds_water.1.ogg", include_bytes!("../media/env_sounds_water.1.ogg")),
     ("env_sounds_water.2.ogg", include_bytes!("../media/env_sounds_water.2.ogg")),
     ("env_sounds_water.3.ogg", include_bytes!("../media/env_sounds_water.3.ogg")),
@@ -5245,6 +5337,9 @@ fn sounds_of(id: u16) -> Sounds {
             ..stone
         },
         id if fences::burn_time(id) > 0.0 || fences::is_gate(id) => wood,
+        // Gunpowder sounds like leaves, TNT like wood.
+        tnt::GUNPOWDER | tnt::GUNPOWDER_BURNING => sounds_of(CONTENT_BIRCH_LEAVES),
+        tnt::TNT | tnt::TNT_BURNING => wood,
         // Flames: none, but the group dig sound.
         id if fire::is_flame(id) => Sounds { footstep: ("", 1.0), dig: GROUP_DIG, dug: ("", 1.0), place: ("", 1.0) },
         // stone, sandstone, ores
@@ -5382,6 +5477,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Pane => n.tiles[4],
                 Kind::Sign => sign_image(n.id),
                 Kind::Fire => fire::FLAME_IMAGE,
+                Kind::Powder => tnt::POWDER_IMAGE,
                 _ => "",
             },
             wield_image: match n.kind {
@@ -5401,6 +5497,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Pane => n.tiles[4],
                 Kind::Sign => sign_image(n.id),
                 Kind::Fire => fire::FLAME_IMAGE,
+                Kind::Powder => tnt::POWDER_IMAGE,
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
@@ -5482,6 +5579,7 @@ const ALPHAMODE_OPAQUE: u8 = 2;
 const ALPHAMODE_CLIP: u8 = 1;
 const NDT_MESH: u8 = 16;
 const NDT_FIRELIKE: u8 = 14;
+const NDT_RAILLIKE: u8 = 11;
 const NDT_PLANTLIKE_ROOTED: u8 = 17;
 const NDT_GLASSLIKE: u8 = 4;
 const CPT2_LEVELED: u8 = 5;
@@ -5530,6 +5628,7 @@ fn animation_length(tile: &str) -> Option<f32> {
         LAVA_SOURCE_TILE => Some(3.0),
         LAVA_FLOWING_TILE => Some(3.3),
         fire::FLAME_TILE => Some(1.0),
+        t if tnt::is_animated(t) => Some(1.0),
         _ => None,
     }
 }
@@ -5749,7 +5848,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
     } else if seed {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
-    } else if fence || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Post | Kind::Mist | Kind::Fire) {
+    } else if fence || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Post | Kind::Mist | Kind::Fire | Kind::Powder) {
         w.u8(CPT_LIGHT).u8(0);
     } else if n.kind == Kind::Lily || flat_pane {
         // Turned any way (facedir), as minetest_game places it.
@@ -5789,6 +5888,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
         Kind::Lamp | Kind::Mist => (NDT_GLASSLIKE, ""),
         Kind::Fire => (NDT_FIRELIKE, ""),
+        Kind::Powder => (NDT_RAILLIKE, ""),
         Kind::SnowLayer => (NDT_NODEBOX, ""),
         Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign => (NDT_NODEBOX, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
@@ -5890,7 +5990,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire)) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire | Kind::Powder)) as u8) // light_propagates
         .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
@@ -5963,6 +6063,8 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         ladder_selection_box(&mut w);
     } else if n.kind == Kind::Vessel {
         fixed_nodebox(&mut w, &[VESSEL_BOX]);
+    } else if n.kind == Kind::Powder {
+        fixed_nodebox(&mut w, &[tnt::POWDER_BOX]);
     } else if sapling {
         sapling_selection_box(&mut w);
     } else if door.is_some() {

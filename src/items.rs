@@ -182,6 +182,17 @@ impl Items {
         self.list.iter_mut().find(|d| d.id == id)
     }
 
+    /// Set an item moving at `vel` (nodes per second), as a blast throws
+    /// it. Returns whether there is such an item.
+    pub fn throw(&mut self, id: u16, vel: [f32; 3]) -> bool {
+        let Some(d) = self.get_mut(id) else {
+            return false;
+        };
+        d.vel = vel;
+        d.falling = true;
+        true
+    }
+
     /// Add an item stack at `pos` (nodes) moving at `vel`. If it starts
     /// inside something solid it is lifted out. Returns its id, and the id
     /// of the oldest item if that had to go to make room.

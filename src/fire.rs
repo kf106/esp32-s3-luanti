@@ -10,9 +10,8 @@
 //! Fire, as minetest_game's fire mod has it: flint and steel lights a
 //! flame on anything flammable (or a permanent one on a coal block); a
 //! flame burns whoever stands in it and goes out once nothing flammable
-//! is left beside it; and, while fire is on (the admin's `/fire on` or
-//! `/fire off`, kept in `world/settings.txt` as minetest_game's
-//! enable_fire setting), flames and lava set flammable nodes near them
+//! is left beside it; and, while fire is on (`/fire on` or `/fire off`;
+//! see settings.rs), flames and lava set flammable nodes near them
 //! alight, and flames burn flammable nodes away.
 //!
 //! The board can't keep up with a forest fire, so this fire is bounded,
@@ -25,15 +24,10 @@
 //!
 //! The pure parts are here; the server applies them.
 
-use std::io;
-use std::path::PathBuf;
 use std::time::Duration;
-
-use log::{info, warn};
 
 use crate::content;
 use crate::nature::Rng;
-use crate::storage;
 use crate::world::NodePos;
 
 /// The fire mod's fire:basic_flame and fire:permanent_flame.
@@ -136,54 +130,6 @@ pub fn item_burns(item: u16, node: u16, rng: &mut Rng) -> bool {
     chance > 0 && rng.range(0, chance) != 0
 }
 
-/// The fire setting, minetest_game's enable_fire, kept in
-/// `world/settings.txt` as `enable_fire = true` or `false`. Fire is on
-/// unless it says otherwise.
-pub struct Settings {
-    path: Option<PathBuf>,
-    enabled: bool,
-}
-
-impl Settings {
-    pub fn open(path: impl Into<PathBuf>) -> Self {
-        let path = path.into();
-        let enabled = match storage::read(&path) {
-            Ok(text) => parse_enabled(&String::from_utf8_lossy(&text)).unwrap_or(true),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => true,
-            Err(e) => {
-                warn!("Reading {}: {e}", path.display());
-                true
-            }
-        };
-        if !enabled {
-            info!("Fire spreading is off (enable_fire = false in {})", path.display());
-        }
-        Self { path: Some(path), enabled }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn set_enabled(&mut self, on: bool) {
-        self.enabled = on;
-        let Some(path) = &self.path else {
-            return;
-        };
-        if let Err(e) = storage::write(path, format!("enable_fire = {on}\n").as_bytes()) {
-            warn!("Saving {}: {e}", path.display());
-            crate::status::problem();
-        }
-    }
-}
-
-fn parse_enabled(text: &str) -> Option<bool> {
-    text.lines().find_map(|l| {
-        let (k, v) = l.split_once('=')?;
-        (k.trim() == "enable_fire").then(|| matches!(v.trim(), "true" | "yes" | "1" | "on"))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,21 +159,5 @@ mod tests {
         // In a flame: flammable 2 (planks) times igniter 2, so 4 in 5.
         let burnt = (0..10_000).filter(|_| item_burns(content::CONTENT_APPLE_WOOD, BASIC_FLAME, &mut rng)).count();
         assert!((7500..8500).contains(&burnt), "{burnt}");
-    }
-
-    #[test]
-    fn settings() {
-        assert_eq!(parse_enabled("enable_fire = false\n"), Some(false));
-        assert_eq!(parse_enabled("x = 1\nenable_fire=true"), Some(true));
-        assert_eq!(parse_enabled(""), None);
-        let dir = std::env::temp_dir().join(format!("esp-fire-test-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("settings.txt");
-        let _ = std::fs::remove_file(&path);
-        let mut s = Settings::open(&path);
-        assert!(s.enabled());
-        s.set_enabled(false);
-        assert!(!Settings::open(&path).enabled());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -55,6 +55,7 @@ const COMMANDS: &[Command] = &[
     cmd("status", "", "Show server status", &[]),
     cmd("teleport", "<X>,<Y>,<Z> | <to_name> | <name> <X>,<Y>,<Z> | <name> <to_name>", "Teleport to position or player", &["teleport"]),
     cmd("time", "[<0..23>:<0..59> | <0..24000>]", "Show or set time of day", &[]),
+    cmd("tnt", "[on | off]", "Show whether TNT can be lit, or turn it on or off", &[]),
     cmd("unban", "<name> | <IP_address>", "Remove IP ban belonging to a player/IP", &["ban"]),
 ];
 
@@ -165,6 +166,7 @@ impl Server {
             "status" => Some(self.status_line()),
             "teleport" => Some(self.cmd_teleport(name, param)),
             "time" => Some(self.cmd_time(name, param)),
+            "tnt" => Some(self.cmd_tnt(name, param)),
             "unban" => Some(if self.privs.unban(param) {
                 info!("{name} unbans {param}");
                 format!("Unbanned {param}.")
@@ -548,19 +550,45 @@ impl Server {
             "" => {
                 let world = &self.world;
                 let burning = self.flames.iter().filter(|&&p| world.node(p) == fire::BASIC_FLAME).count();
-                let state = if self.fire.enabled() { "on" } else { "off" };
+                let state = if self.settings.fire() { "on" } else { "off" };
                 return format!("Fire spreading is {state}; {burning} flames burning (at most {}).", fire::MAX_FLAMES);
             }
             "on" => true,
             "off" => false,
             _ => return "Invalid parameters (see /help fire).".to_string(),
         };
-        if !self.privs_of(caller).has("server") {
-            return "You don't have permission to run this command (missing privilege: server).".to_string();
+        if !self.moderates(caller) {
+            return "You don't have permission to run this command (missing privilege: server or ban).".to_string();
         }
-        self.fire.set_enabled(on);
+        self.settings.set_fire(on);
         info!("{caller} turns fire spreading {param}");
         format!("Fire spreading is now {param}.")
+    }
+
+    /// Whether a player may turn fire and TNT on and off: an admin
+    /// (server) or a moderator (ban).
+    fn moderates(&self, name: &str) -> bool {
+        let privs = self.privs_of(name);
+        privs.has("server") || privs.has("ban")
+    }
+
+    /// /tnt (ours: minetest_game has the enable_tnt setting): whether TNT
+    /// and gunpowder can be lit; with "on" or "off" (and the server or ban
+    /// privilege), turn them on or off, kept in the world. Off, lit TNT
+    /// goes out rather than off.
+    fn cmd_tnt(&mut self, caller: &str, param: &str) -> String {
+        let on = match param {
+            "" => return format!("TNT is {}.", if self.settings.tnt() { "on" } else { "off" }),
+            "on" => true,
+            "off" => false,
+            _ => return "Invalid parameters (see /help tnt).".to_string(),
+        };
+        if !self.moderates(caller) {
+            return "You don't have permission to run this command (missing privilege: server or ban).".to_string();
+        }
+        self.settings.set_tnt(on);
+        info!("{caller} turns TNT {param}");
+        format!("TNT is now {param}.")
     }
 
     fn cmd_time(&mut self, caller: &str, param: &str) -> String {

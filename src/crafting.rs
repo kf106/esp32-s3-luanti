@@ -18,6 +18,7 @@ use crate::colours;
 use crate::farming;
 use crate::fences;
 use crate::plants;
+use crate::tnt;
 use crate::inventory::Stack;
 
 pub const GRID_WIDTH: usize = 3;
@@ -151,6 +152,15 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(ITEM_GOLD_INGOT)], output: ITEM_SKELETON_KEY, count: 1 },
     // screwdriver: a steel ingot on a stick.
     Recipe { width: 1, pattern: &[I(ITEM_STEEL_INGOT), G("stick")], output: TOOL_SCREWDRIVER, count: 1 },
+    // The tnt mod: six gunpowder either side of paper make 2 TNT sticks,
+    // and nine sticks TNT.
+    Recipe {
+        width: 3,
+        pattern: &[I(tnt::GUNPOWDER), E, I(tnt::GUNPOWDER), I(tnt::GUNPOWDER), I(ITEM_PAPER), I(tnt::GUNPOWDER), I(tnt::GUNPOWDER), E, I(tnt::GUNPOWDER)],
+        output: ITEM_TNT_STICK,
+        count: 2,
+    },
+    Recipe { width: 3, pattern: &[I(ITEM_TNT_STICK); 9], output: tnt::TNT, count: 1 },
     // Flint beside a steel ingot: flint and steel (fire mod).
     Recipe { width: 2, pattern: &[I(ITEM_FLINT), I(ITEM_STEEL_INGOT)], output: TOOL_FLINT_AND_STEEL, count: 1 },
     // binoculars: obsidian glass lenses either side of three bronze ingots.
@@ -459,6 +469,8 @@ pub struct Shapeless {
 
 /// minetest_game's shapeless recipes for what we have.
 pub const SHAPELESS: &[Shapeless] = &[
+    // Coal and gravel, anyhow, make 5 gunpowder (tnt mod).
+    Shapeless { items: &[I(ITEM_COAL_LUMP), I(CONTENT_GRAVEL)], output: tnt::GUNPOWDER, count: 5 },
     // A chest and a steel ingot make a locked chest (chests.lua).
     Shapeless { items: &[I(CONTENT_CHEST), I(ITEM_STEEL_INGOT)], output: CONTENT_CHEST_LOCKED, count: 1 },
     // A book and a written book make a copy of it; the original stays
@@ -693,6 +705,17 @@ mod tests {
         let mut full = ring.clone();
         full.push((4, c, 1));
         assert_eq!(result(&grid(&full)), None);
+    }
+
+    #[test]
+    fn tnt() {
+        let g = crate::tnt::GUNPOWDER;
+        assert_eq!(result(&grid(&[(3, ITEM_COAL_LUMP, 1), (7, CONTENT_GRAVEL, 1)])), Some((g, 5)));
+        let sticks = grid(&[(0, g, 1), (2, g, 1), (3, g, 1), (4, ITEM_PAPER, 1), (5, g, 1), (6, g, 1), (8, g, 1)]);
+        assert_eq!(result(&sticks), Some((ITEM_TNT_STICK, 2)));
+        let nine: Vec<(usize, u16, u16)> = (0..9).map(|i| (i, ITEM_TNT_STICK, 1)).collect();
+        assert_eq!(result(&grid(&nine)), Some((crate::tnt::TNT, 1)));
+        assert_eq!(result(&grid(&[(0, ITEM_FLINT, 1), (1, ITEM_STEEL_INGOT, 1)])), Some((TOOL_FLINT_AND_STEEL, 1)));
     }
 
     #[test]

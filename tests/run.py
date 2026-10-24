@@ -42,6 +42,7 @@ NETWORK = [
     ("craftguide", {}, [], False),
     ("weather", {}, [], False),
     ("fire", {"LUANTI_FIRE_FAST": "1"}, [], False),
+    ("tnt", {}, [], False),
     ("door", {}, [], False),
     ("falling", {}, [], False),
     ("chest", {}, [], False),
@@ -92,6 +93,10 @@ def prepare():
     for f in (ROOT / "media").iterdir():
         if f.is_file():
             copy_if_changed(f, WORK / "media" / f.name)
+    # Media since removed from the project go from the build folder too.
+    for f in (WORK / "media").iterdir():
+        if f.is_file() and not (ROOT / "media" / f.name).exists():
+            f.unlink()
     (WORK / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "stable"\n')
 
 

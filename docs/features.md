@@ -1,6 +1,6 @@
 # Features
 
-What the server does, as of now. It covers about three quarters of Minetest Game (28 of its 34 mods); what it lacks is at the end, under [What doesn't (yet)](#what-doesnt-yet).
+What the server does, as of now. It covers about three quarters of Minetest Game (29 of its 34 mods); what it lacks is at the end, under [What doesn't (yet)](#what-doesnt-yet).
 
 ![In game, connected to the ESP32 server](../assets/screen-002.png)
 
@@ -36,7 +36,13 @@ Contents: [The server](#the-server), [The world](#the-world), [Trees, plants and
 - **Fire:** Minetest Game's `fire`. Flint beside a steel ingot makes flint and steel (66 uses). Struck on anything flammable, it lights a flame on top; on a coal block, a permanent flame that burns until the block is dug. A flame glows (it lights nothing round it, as lava doesn't), burns 4 HP a second if you stand in it, is put out by flowing water with a hiss, and goes out 30 to 60 s after nothing flammable is left beside it. You hear it crackle within 8 nodes, louder the more there is. Dropped items that can burn go up in smoke in lava, and now and then in a flame.
   - **Spreading:** as in Minetest Game, flames and lava set flammable nodes beside them alight (every 7 s, one time in 12) and flames burn flammable nodes away (every 5 s, one time in 18), near players. Burnt nodes are gone, with nothing dropped: a bookshelf's books burn with it, and leaves decay when their trunk burns.
   - **Kept small:** unlike Minetest Game's, a fire burns out within 8 nodes of where it started (each flame keeps count of how far it is from the first), and at most 256 flames burn at once. On a PC, 32 nodes and 4096 flames.
-  - **Turning it off:** `/fire off` (with the `server` privilege) stops fire spreading and burning things; flames still light, burn players and go out. `/fire on` turns it back on, and `/fire` says which it is and how many flames are burning. The setting is kept in `world/settings.txt` (Minetest Game's `enable_fire`); fire is on in a new world.
+  - **Turning it off:** `/fire off` (for a moderator with `ban`, or an admin with `server`) stops fire spreading and burning things; flames still light, burn players and go out. `/fire on` turns it back on, and `/fire` says which it is and how many flames are burning. The setting is kept in `world/settings.txt` (Minetest Game's `enable_fire`); fire is on in a new world.
+- **TNT and gunpowder:** Minetest Game's `tnt`. Coal and gravel make 5 gunpowder, six gunpowder either side of paper 2 TNT sticks, and nine sticks TNT.
+  - **Gunpowder** lies on the ground in a trail that joins up as it is laid (like rails). Lit, it burns for a second, lights the gunpowder (or TNT) next to it, a node up or down too, and is gone.
+  - **TNT** is lit by a punch with a torch, flint and steel, a flame or lava beside it, burning gunpowder, or another blast. It hisses for 4 s, then explodes: everything within about 3 nodes is destroyed and thrown out as items (stone as cobblestone, and so on), flammable things catch fire, gunpowder in the blast is lit and other TNT goes off a moment later, and sand and gravel above come down. TNT within 2 nodes of each other goes off together, in a bigger blast (8 together make a radius of 6). Players within twice the radius lose up to 12 HP, less further off, and are pushed away; dropped items are thrown.
+  - Chests, furnaces and shelves in a blast are thrown out with what they hold. Locked chests, steel doors and trapdoors, open chests and bones are left alone, as in Minetest Game.
+  - **Turning it off:** `/tnt off` (for a moderator with `ban`, or an admin with `server`) stops anything lighting TNT or gunpowder, and fire leaves them alone; TNT already lit goes out instead of off. `/tnt on` turns it back on, and `/tnt` says which it is. It is kept in `world/settings.txt` (Minetest Game's `enable_tnt`); TNT is on in a new world. Unlike Minetest Game, which has no TNT at all when it is off, the recipes stay.
+  - Unlike Minetest Game's, lit TNT doesn't fall, and the blast has no smoke or flying debris (the client is sent no particles).
 - **Day and night:** a normal day and night cycle. Map blocks carry separate day and night light.
 - **Weather:** Minetest Game's `weather`. The clouds come and go over about ten minutes: how much of the sky they cover, how thick they are, and which way the wind takes them, all from slow noise, so every player sees the same sky; where the land is drier the clouds are fewer and thinner. With dynamic shadows on in the client, shadows are fainter the cloudier it is. Each player's sky is set when they join and every 8 s.
 
@@ -148,7 +154,7 @@ Contents: [The server](#the-server), [The world](#the-world), [Trees, plants and
 
 ## What doesn't (yet)
 
-- Much of Minetest Game is still missing: TNT, boats, carts, butterflies and fireflies (with the bug net), and creative mode.
+- Much of Minetest Game is still missing: boats, carts, butterflies and fireflies (with the bug net), and creative mode.
 - No Lua mods: the game content is built in.
 - One world per SD card (or in the board's flash).
 - Only tested with Luanti 5.17 clients. Older clients down to protocol 37 are accepted but untested.

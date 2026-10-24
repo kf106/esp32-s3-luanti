@@ -20,7 +20,8 @@ The commands, with Luanti's wording:
 | `/haspriv <privilege>` | `basic_privs` | Who online has a privilege |
 | `/sethome`, `/home` | `home` | Remember where you stand; go back there (one home each, kept over restarts) |
 | `/time <hh:mm \| 0..24000>` | `settime` | Set the time of day |
-| `/fire [on \| off]` | `server` (to change it) | Whether fire spreads and burns things, and how many flames burn; turn it on or off (ours: Minetest Game has the `enable_fire` setting) |
+| `/fire [on \| off]` | `server` or `ban` (to change it) | Whether fire spreads and burns things, and how many flames burn; turn it on or off (ours: Minetest Game has the `enable_fire` setting) |
+| `/tnt [on \| off]` | `server` or `ban` (to change it) | Whether TNT and gunpowder can be lit; turn them on or off, to stop a griefer (ours: Minetest Game has `enable_tnt`) |
 | `/teleport <x>,<y>,<z> \| <name>` | `teleport` | Go to a place (`~` for where you are: `~ ~20 ~`) or to a player |
 | `/teleport <name> <x>,<y>,<z> \| <name2>` | `bring` | Move another player (to a player: beside them, with room to stand) |
 | `/give <name> <item> [<count>]`, `/giveme <item> [<count>]` | `give` | Items, by their name: `esp:torch`, `default:torch` or just `torch` |

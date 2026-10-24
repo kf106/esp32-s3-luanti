@@ -87,6 +87,8 @@ mod protocol;
 mod screwdriver;
 #[path = "../../src/server.rs"]
 mod server;
+#[path = "../../src/settings.rs"]
+mod settings;
 #[path = "../../src/sha1.rs"]
 mod sha1;
 #[path = "../../src/sha256.rs"]
@@ -105,6 +107,8 @@ mod storage;
 mod terrain;
 #[path = "../../src/weather.rs"]
 mod weather;
+#[path = "../../src/tnt.rs"]
+mod tnt;
 #[path = "../../src/world.rs"]
 mod world;
 #[path = "../../src/zstd.rs"]
@@ -213,7 +217,7 @@ fn run(o: &Options) -> std::io::Result<()> {
         clock: clock::Clock::open(d("world/env_meta.txt")),
         door_owners: doors::Owners::open(d("world/doors.txt")),
         bed_spawns: beds::Spawns::open(d("world/beds_spawns")),
-        fire: fire::Settings::open(d("world/settings.txt")),
+        settings: settings::Settings::open(d("world/settings.txt")),
         media: content::Media::load(&d("media")),
         status: status::Status::new(address.clone()),
         max_players: o.max_players,

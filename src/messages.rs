@@ -54,6 +54,7 @@ pub const TOCLIENT_ANNOUNCE_MEDIA: u16 = 0x3c;
 pub const TOCLIENT_ITEMDEF: u16 = 0x3d;
 pub const TOCLIENT_PLAY_SOUND: u16 = 0x3f;
 pub const TOCLIENT_STOP_SOUND: u16 = 0x40;
+pub const TOCLIENT_PLAYER_SPEED: u16 = 0x2b;
 pub const TOCLIENT_FADE_SOUND: u16 = 0x55;
 pub const TOCLIENT_PRIVILEGES: u16 = 0x41;
 pub const TOCLIENT_INVENTORY_FORMSPEC: u16 = 0x42;
@@ -1151,6 +1152,14 @@ fn play_sound(id: i32, name: &str, gain: f32, pos_bs: [f32; 3], looped: bool) ->
         .f32(1.0) // pitch
         .u8((id < 0) as u8) // ephemeral
         .f32(0.0); // start time
+    w.into_inner()
+}
+
+/// TOCLIENT_PLAYER_SPEED: add to the player's velocity (BS units per
+/// second), as player:add_velocity (a blast throwing them back).
+pub fn build_player_speed(added_bs: [f32; 3]) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_PLAYER_SPEED);
+    w.f32(added_bs[0]).f32(added_bs[1]).f32(added_bs[2]);
     w.into_inner()
 }
 

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 mod auth; mod beds; mod binoculars; mod board; mod books; mod bones; mod chest; mod clock; mod colours; mod content; mod crafting; mod craftguide; mod doors; mod env_sounds; mod dungeons; mod falling; mod fire; mod farming; mod fences; mod fasthash; mod font; mod furnace; mod indicator; mod inventory; mod items; mod jsonstring; mod keys; mod liquids; mod messages; mod meta; mod nature; mod panes; mod plants; mod privs; mod player; mod protocol;
-mod screen; mod screwdriver; mod server; mod sha1; mod sha256; mod skins; mod srp; mod stairs; mod status; mod storage; mod terrain; mod weather; mod wifi_config; mod world; mod zstd;
+mod screen; mod screwdriver; mod server; mod settings; mod sha1; mod sha256; mod skins; mod srp; mod stairs; mod status; mod storage; mod terrain; mod tnt; mod weather; mod wifi_config; mod world; mod zstd;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -618,7 +618,7 @@ fn serve(port: &str) {
         clock: clock::Clock::open(format!("{d}/world/env_meta.txt")),
         door_owners: doors::Owners::open(format!("{d}/world/doors.txt")),
         bed_spawns: beds::Spawns::open(format!("{d}/world/beds_spawns")),
-        fire: fire::Settings::open(format!("{d}/world/settings.txt")),
+        settings: settings::Settings::open(format!("{d}/world/settings.txt")),
         media: content::Media::load(&format!("{d}/media")),
         status: status::Status::new(format!("127.0.0.1:{port}")),
         max_players: server::MAX_PLAYERS,

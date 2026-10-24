@@ -1,0 +1,38 @@
+TNT and gunpowder: textures and sounds from Minetest Game's tnt mod
+(https://github.com/luanti-org/minetest_game, mods/tnt), unchanged and under
+their original names:
+
+  tnt_top.png, tnt_bottom.png, tnt_side.png, tnt_top_burning_animated.png,
+  tnt_tnt_stick.png, tnt_gunpowder_inventory.png,
+  tnt_gunpowder_straight.png, tnt_gunpowder_curved.png,
+  tnt_gunpowder_t_junction.png, tnt_gunpowder_crossing.png,
+  tnt_gunpowder_burning_straight_animated.png,
+  tnt_gunpowder_burning_curved_animated.png,
+  tnt_gunpowder_burning_t_junction_animated.png,
+  tnt_gunpowder_burning_crossing_animated.png,
+  tnt_explode.ogg, tnt_ignite.ogg, tnt_gunpowder_burning.ogg
+
+Credits, from that mod's README.md:
+
+BlockMen (CC BY-SA 3.0): all textures not mentioned below.
+
+Wuzzy (CC BY-SA 3.0): all gunpowder textures except
+tnt_gunpowder_inventory.png.
+
+paramat (CC BY-SA 3.0): tnt_tnt_stick.png, derived from a texture by
+benrob0329.
+
+TumeniNodes (CC0 1.0):
+
+- tnt_explode.ogg: renamed, edited, and converted to .ogg from
+  Explosion2.wav by steveygos93 (CC0 1.0), https://freesound.org/s/80401/
+- tnt_ignite.ogg: renamed, edited, and converted to .ogg from
+  sparkler_fuse_nm.wav by theneedle.tv (CC0 1.0),
+  https://freesound.org/s/316682/
+- tnt_gunpowder_burning.ogg: renamed, edited, and converted to .ogg from
+  road flare ignite burns.wav by frankelmedico (CC0 1.0),
+  https://freesound.org/s/348767/
+
+Licences: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0),
+http://creativecommons.org/licenses/by-sa/3.0/, and CC0 1.0 Universal,
+https://creativecommons.org/publicdomain/zero/1.0/
