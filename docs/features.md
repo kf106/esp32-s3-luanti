@@ -1,6 +1,6 @@
 # Features
 
-What the server does, as of now. It covers roughly half of Minetest Game; what it lacks is at the end, under [What doesn't (yet)](#what-doesnt-yet).
+What the server does, as of now. It covers about three quarters of Minetest Game (27 of its 34 mods); what it lacks is at the end, under [What doesn't (yet)](#what-doesnt-yet).
 
 ![In game, connected to the ESP32 server](../assets/screen-002.png)
 
