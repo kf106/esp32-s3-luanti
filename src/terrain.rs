@@ -21,6 +21,7 @@ use crate::content::{
     CONTENT_CLAY, CONTENT_CONIFEROUS_LITTER, CONTENT_DESERT_SAND, CONTENT_DESERT_STONE, CONTENT_GRAVEL, CONTENT_ICE, CONTENT_PERMAFROST,
     CONTENT_PERMAFROST_MOSS, CONTENT_PERMAFROST_STONES, CONTENT_SILVER_SAND, CONTENT_SNOW_LAYER, CONTENT_WATER,
 };
+use crate::content::{CONTENT_CAVE_ICE, CONTENT_SNOW_BLOCK};
 use crate::world::CONTENT_AIR;
 
 /// Bump when the generator changes, so worlds made by an older one are set
@@ -33,7 +34,8 @@ use crate::world::CONTENT_AIR;
 /// replace the top of a lake bed or swampy shore, so a world's changes
 /// still fit around them.
 /// 4: dungeons (dungeons.rs).
-pub const GENERATOR_VERSION: u32 = 4;
+/// 5: rivers, the icesheet (with its cave ice), and emergent jungle trees.
+pub const GENERATOR_VERSION: u32 = 5;
 
 const SEED_HILLS: u32 = 0x1A2B_3C4D;
 const SEED_MOUNTAINS: u32 = 0x5E6F_7081;
@@ -52,6 +54,8 @@ const SEED_SEABED: u32 = 0x4A5B_6C7D;
 const SEED_SHORE: u32 = 0x8E9F_A0B1;
 const SEED_FLOWERS: u32 = 0xC2D3_E4F5;
 const SEED_SHRUBS: u32 = 0x0329_5157;
+const SEED_RIVERS: u32 = 0x6B7C_8D9E;
+const SEED_EMERGENT: u32 = 0x2685_0A0B;
 
 /// Deep caves are flooded with lava up to this height, in about half the
 /// land (where the "lava" noise is positive). Between flooded and dry
@@ -74,6 +78,15 @@ const SNOW_LINE: i32 = 36;
 const HUMID: f32 = 0.1;
 /// Desert stone goes down to here under deserts.
 const DESERT_STONE_BOTTOM: i32 = -256;
+/// The cold, wet land turns from snowy fir forest to icesheet below this
+/// temperature (minetest_game's icesheet: heat 0, beside the taiga's 25).
+const ICESHEET_COLD: f32 = -0.4;
+/// The icesheet's own nodes (snow blocks over cave ice) go down to here;
+/// below it is its "ocean": sand over stone (minetest_game's icesheet
+/// biome's y_min).
+pub const ICESHEET_BOTTOM: i32 = -8;
+/// How deep the icesheet's lakes are frozen (its depth_water_top).
+const ICESHEET_ICE: i32 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Biome {
@@ -89,6 +102,9 @@ pub enum Biome {
     Tundra,
     /// Cold and dry: silver sand (minetest_game's cold desert).
     ColdDesert,
+    /// The coldest and wet: snow blocks over cave ice, and frozen lakes
+    /// (minetest_game's icesheet).
+    Icesheet,
 }
 
 /// What is known about a column of nodes before looking at caves and ores.
@@ -243,6 +259,19 @@ pub fn fractal3(p: (i32, i32, i32), np: &NoiseParams, seed: u32) -> f32 {
     np.offset + np.scale * sum * VALUE_SPREAD
 }
 
+/// Luanti's NoiseFractal2D, as fractal3 in two dimensions.
+pub fn fractal2(x: i32, z: i32, np: &NoiseParams, seed: u32) -> f32 {
+    const VALUE_SPREAD: f32 = 1.8;
+    let (mut sum, mut amp, mut freq) = (0.0, 1.0, 1.0);
+    for o in 0..np.octaves {
+        let f = freq / np.spread;
+        sum += amp * noise2(x as f32 * f, z as f32 * f, seed.wrapping_add(np.seed).wrapping_add(o * 7919));
+        amp *= np.persistence;
+        freq *= np.lacunarity;
+    }
+    np.offset + np.scale * sum * VALUE_SPREAD
+}
+
 /// Luanti's NoiseParams (one spread for all three axes).
 pub struct NoiseParams {
     pub offset: f32,
@@ -258,14 +287,22 @@ pub struct NoiseParams {
 // Columns: height and biome
 // ---------------------------------------------------------------------------
 
-pub fn column(x: i32, z: i32) -> Column {
+/// The height of the land before rivers cut through it.
+pub fn land_height(x: i32, z: i32) -> i32 {
     let (fx, fz) = (x as f32, z as f32);
     // Rolling hills
     let hills = fbm2(fx / 160.0, fz / 160.0, 4, SEED_HILLS) * 22.0;
     // Mountain ranges rise where a broad noise is high
     let m = fbm2(fx / 600.0, fz / 600.0, 3, SEED_MOUNTAINS);
     let mountains = if m > 0.0 { m * m * 280.0 } else { 0.0 };
-    let height = (4.0 + hills + mountains).round() as i32;
+    (4.0 + hills + mountains).round() as i32
+}
+
+pub fn column(x: i32, z: i32) -> Column {
+    let (fx, fz) = (x as f32, z as f32);
+    let height = land_height(x, z);
+    // A river's channel cuts the land down to its bed.
+    let height = river_bed(x, z).map_or(height, |bed| height.min(bed));
 
     let temperature = fbm2(fx / 800.0, fz / 800.0, 2, SEED_TEMPERATURE);
     // The hot lands are desert where it's dry, rainforest where it's wet,
@@ -277,7 +314,9 @@ pub fn column(x: i32, z: i32) -> Column {
         Biome::Snow
     } else if temperature < -0.18 {
         let humidity = fbm2(fx / 700.0, fz / 700.0, 2, SEED_HUMIDITY);
-        if humidity > HUMID {
+        if humidity > HUMID && temperature < ICESHEET_COLD {
+            Biome::Icesheet
+        } else if humidity > HUMID {
             Biome::Snow
         } else if humidity < -HUMID {
             Biome::ColdDesert
@@ -308,7 +347,53 @@ pub fn column(x: i32, z: i32) -> Column {
         Deep::Air
     };
     let mossy = biome == Biome::Tundra && noise2(fx / 60.0, fz / 60.0, SEED_SHORE ^ 7) > 0.0;
+    // The icesheet's land has a snow block on top of its surface
+    // (minetest_game's node_dust), so stands one higher.
+    let height = if biome == Biome::Icesheet && height >= WATER_LEVEL { height + 1 } else { height };
     Column { height, biome, cave_top, deep, mossy }
+}
+
+/// mgv7's river noise (np_ridge_uwater: spread 1000, seed 85039, 5
+/// octaves, persistence 0.6).
+const NP_RIVERS: NoiseParams =
+    NoiseParams { offset: 0.0, scale: 1.0, spread: 1000.0, seed: 85039, octaves: 5, persistence: 0.6, lacunarity: 2.0 };
+const RIVER_SHIFT: (i32, i32) = (7391, -2853);
+/// mgv7's widest river channel (its "width").
+const RIVER_WIDTH: f32 = 0.2;
+
+/// The bed of the river channel in a column, if one runs through it: the
+/// highest node left below the channel. mgv7's getRiverChannelFromMap
+/// carves a node at height y where (width - |2 n|) * (y - water_level +
+/// 17) / 2.5 >= 0.6, with n the river noise: the channel is deepest (9
+/// below the water) where n is 0, and its sides climb ever more steeply
+/// out to where |2 n| reaches the width, cutting a valley through hills.
+/// Below the water level the channel fills with water, as mgv7's does.
+/// (mgv7 also adds a 3D "ridge" noise above the water, which leaves
+/// overhangs and arches in the valley's sides; here the sides are
+/// smooth.)
+pub fn river_bed(x: i32, z: i32) -> Option<i32> {
+    river_bed_seeded(x, z, SEED_RIVERS)
+}
+
+/// river_bed with another seed (for choosing one).
+pub fn river_bed_seeded(x: i32, z: i32, seed: u32) -> Option<i32> {
+    // Shifted off the noise's lattice, where gradient noise is always
+    // zero: else a river would run through the origin whatever the seed.
+    let a = fractal2(x + RIVER_SHIFT.0, z + RIVER_SHIFT.1, &NP_RIVERS, seed).abs() * 2.0;
+    channel_bed(a)
+}
+
+/// The bed of mgv7's river channel where |2 n| is `a`.
+fn channel_bed(a: f32) -> Option<i32> {
+    if a >= RIVER_WIDTH {
+        return None;
+    }
+    let reach = 1.5 / (RIVER_WIDTH - a);
+    if reach > 500.0 {
+        return None;
+    }
+    // The lowest carved node, less one.
+    Some(WATER_LEVEL - 17 + reach.ceil() as i32 - 1)
 }
 
 /// Lakes and ponds fill low ground with still water up to this height
@@ -321,6 +406,21 @@ fn layer(y: i32, col: &Column) -> u16 {
     let depth = col.height - y; // 0 at the surface
     if depth < 0 {
         return CONTENT_AIR;
+    }
+    // minetest_game's icesheet: snow blocks (four deep, and the dust on
+    // top on land), over cave ice down to ICESHEET_BOTTOM; its lake beds
+    // below that are sand over stone (icesheet_ocean).
+    if col.biome == Biome::Icesheet {
+        let snow = if col.height > WATER_LEVEL { 4 } else { 3 };
+        return match depth {
+            _ if col.height < ICESHEET_BOTTOM => match depth {
+                0..=3 => CONTENT_SAND,
+                _ => CONTENT_STONE,
+            },
+            d if d <= snow => CONTENT_SNOW_BLOCK,
+            _ if y >= ICESHEET_BOTTOM => CONTENT_CAVE_ICE,
+            _ => CONTENT_STONE,
+        };
     }
     // The rainforest's and savanna's shores are swampy dirt where papyrus
     // grows (minetest_game's rainforest_swamp and savanna_shore).
@@ -394,6 +494,8 @@ fn layer(y: i32, col: &Column) -> u16 {
             0..=1 => CONTENT_SILVER_SAND,
             _ => CONTENT_STONE,
         },
+        // (Handled above.)
+        Biome::Icesheet => CONTENT_SNOW_BLOCK,
     }
 }
 
@@ -559,11 +661,24 @@ fn gravel_at(x: i32, y: i32, z: i32) -> bool {
 /// The water of a lake at height y (at most WATER_LEVEL): frozen at the
 /// top in the cold lands.
 pub fn lake_node(y: i32, col: &Column) -> u16 {
+    // The icesheet's lakes are ice ten deep (its water_top).
+    if col.biome == Biome::Icesheet && y > WATER_LEVEL - ICESHEET_ICE {
+        return CONTENT_ICE;
+    }
     if y == WATER_LEVEL && matches!(col.biome, Biome::Snow | Biome::Tundra | Biome::ColdDesert) {
         CONTENT_ICE
     } else {
         CONTENT_WATER
     }
+}
+
+/// What lies on the lake over a column: the icesheet's snow block on its
+/// ice (minetest_game's node_dust), or a waterlily.
+pub fn on_lake(x: i32, z: i32, col: &Column) -> Option<u16> {
+    if col.biome == Biome::Icesheet {
+        return Some(CONTENT_SNOW_BLOCK);
+    }
+    lily_on(x, z, col)
 }
 
 /// A waterlily on the water over a column, if one floats there: on the
@@ -582,9 +697,9 @@ pub const KELP_TOP: i32 = -5;
 
 /// What grows on a lake bed (minetest_game's coral reef and kelp
 /// decorations): corals in warm water 2 to 8 nodes deep, kelp in cool
-/// water 6 or more deep, in patches.
+/// water 6 or more deep, in patches. Nothing under the icesheet's ice.
 fn seabed(x: i32, z: i32, col: &Column) -> Option<u16> {
-    if col.height > 0 {
+    if col.height > 0 || col.biome == Biome::Icesheet {
         return None;
     }
     let h = hash(x, 0x5EA, z, SEED_SEABED);
@@ -682,6 +797,8 @@ pub enum TreeKind {
     Cactus,
     LargeCactus,
     Papyrus,
+    /// minetest_game's emergent jungle tree: a giant above the jungle.
+    Emergent,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -712,12 +829,16 @@ impl Tree {
             TreeKind::BlueberryBush => 1,
             TreeKind::Cactus | TreeKind::Papyrus => self.height,
             TreeKind::LargeCactus => 6,
+            TreeKind::Emergent => emergent_slices(self).count_ones() as i32 - 5,
             _ => self.height + 1,
         }
     }
 
     /// The tree's node at (x, y, z), if it has one there.
     pub fn node_at(&self, x: i32, y: i32, z: i32) -> Option<u16> {
+        if self.kind == TreeKind::Emergent {
+            return emergent_node(self, x, y, z);
+        }
         let (dx, dz) = (x - self.x, z - self.z);
         let dy = y - self.ground; // 1 = just above the ground
         let h = self.height;
@@ -726,6 +847,8 @@ impl Tree {
         }
         let trunk = dx == 0 && dz == 0 && dy <= h;
         match self.kind {
+            // (Handled above.)
+            TreeKind::Emergent => None,
             TreeKind::Birch => {
                 if trunk {
                     return Some(CONTENT_BIRCH_TREE);
@@ -888,6 +1011,111 @@ impl Tree {
     }
 }
 
+/// minetest_game's emergent jungle tree decoration's noise.
+const NP_EMERGENT: NoiseParams =
+    NoiseParams { offset: 0.0, scale: 0.0025, spread: 250.0, seed: 2685, octaves: 3, persistence: 0.7, lacunarity: 2.0 };
+/// Emergent jungle trees grow on ground up to this height (its y_max).
+const EMERGENT_Y_MAX: i32 = 32;
+
+/// minetest_game's emergent_jungle_tree.mts, 7 x 37 x 7: one string per
+/// slice, bottom up, of 7 rows (z) of 7 nodes (x). '#' trunk, 't' trunk
+/// one time in two, '*' leaves, 'o' leaves 110 times in 127, 'l' leaves
+/// one time in two, '.' nothing. It stands 4 nodes into the ground (its
+/// place_offset_y), on buttress roots; slices 13 to 24, of the trunk, are
+/// each left out one time in two, so trees differ in height.
+const EMERGENT: [&str; 37] = [
+    "................#.#...........#.#................",
+    ".........#.#...##.##.........##.##...#.#.........",
+    "........##.##..##.##.........##.##..##.##........",
+    "#.....#.##.##..##.##.........##.##..##.##.#.....#",
+    "#.....#.##.##..#####...###...#####..##.##.#.....#",
+    "#.....#.##.##..#####...###...#####..##.##.#.....#",
+    "t.....t.##.##..#####...###...#####..##.##.t.....t",
+    "........t#.#t..#####...###...#####..t#.#t........",
+    ".........t.t...t###t...###...t###t...t.t.........",
+    "................###....###....###................",
+    "................###....###....###................",
+    "................###....###....###................",
+    "................###....###....###................",
+    "................###....###....###................",
+    "................###....###....###................",
+    "................###....###....###................",
+    "................###....###....###................",
+    "................###....###....###................",
+    "................###....###....###................",
+    "ooo....o#o....oo###....###....###................",
+    "................###....###....###....o#o....ooo..",
+    "....ooo....o#o...##oo..###.....#.................",
+    "..............ooo#...o####..ooo#.................",
+    ".................#.....###.....##oo....o#o....ooo",
+    "..ooo....o#o....o#o....###.....#.................",
+    ".................#.....###..oo##...o#o....ooo....",
+    ".................#ooo..####o...#ooo..............",
+    "ooo....o#o....oo##.....###.....#.................",
+    ".................#.....###....o#o....o#o....ooo..",
+    "....ooo....o#o...##oo..###.....#.................",
+    "..............ooo#...o####..ooo#.................",
+    ".................#.....###.....#.................",
+    ".lllll.l.....ll.###.ll.#.#.ll.###.ll.....l.lllll.",
+    ".ooooo.o*...*oo.#.#.oo.....oo.#.#.oo*...*o.ooooo.",
+    ".ooooo.o#***#oo**.**oo*...*oo**.**oo#***#o.ooooo.",
+    ".ooooo.o*****oo*****oo*****oo*****oo*****o.ooooo.",
+    "........ooooo..o***o..o***o..o***o..ooooo........",
+];
+/// The trunk slices that may be left out, and how often they stay.
+const EMERGENT_SLICES: std::ops::RangeInclusive<usize> = 13..=24;
+
+/// The schematic slices an emergent tree keeps, a bit each.
+fn emergent_slices(t: &Tree) -> u64 {
+    (0..EMERGENT.len())
+        .filter(|&s| !EMERGENT_SLICES.contains(&s) || chance(hash(t.x, t.ground * 64 + s as i32, t.z, SEED_EMERGENT ^ 0x51), 63))
+        .fold(0, |m, s| m | 1 << s)
+}
+
+/// The `k`th slice kept (0: the bottom one).
+fn kept_slice(mut mask: u64, k: u32) -> Option<usize> {
+    for _ in 0..k {
+        mask &= mask.checked_sub(1)?;
+    }
+    (mask != 0).then(|| mask.trailing_zeros() as usize)
+}
+
+/// Luanti's schematic probabilities: placed if `prob` > a random 1..127.
+fn chance(h: u32, prob: u32) -> bool {
+    prob >= 127 || h % 127 + 1 < prob
+}
+
+/// An emergent tree's node at (x, y, z): the schematic, centred on its
+/// trunk and turned one of four ways, from 4 nodes below its ground up.
+fn emergent_node(t: &Tree, x: i32, y: i32, z: i32) -> Option<u16> {
+    let (dx, dz) = (x - t.x + 3, z - t.z + 3);
+    if !(0..7).contains(&dx) || !(0..7).contains(&dz) {
+        return None;
+    }
+    let k = y - (t.ground - 4);
+    if k < 0 {
+        return None;
+    }
+    let slice = kept_slice(emergent_slices(t), k as u32)?;
+    // Rotation as Luanti's blitToVManip turns a schematic.
+    let (sx, sz) = match hash(t.x, t.ground, t.z, SEED_EMERGENT ^ 0x52) % 4 {
+        1 => (6 - dz, dx),
+        2 => (6 - dx, 6 - dz),
+        3 => (dz, 6 - dx),
+        _ => (dx, dz),
+    };
+    let c = EMERGENT[slice].as_bytes()[(sz * 7 + sx) as usize];
+    let h = hash(x, y, z, SEED_EMERGENT ^ 0x53);
+    match c {
+        b'#' => Some(CONTENT_JUNGLE_TREE),
+        b't' => chance(h, 63).then_some(CONTENT_JUNGLE_TREE),
+        b'*' => Some(CONTENT_JUNGLE_LEAVES),
+        b'o' => chance(h, 111).then_some(CONTENT_JUNGLE_LEAVES),
+        b'l' => chance(h, 63).then_some(CONTENT_JUNGLE_LEAVES),
+        _ => None,
+    }
+}
+
 /// The tree in a patch, if one grows there.
 fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
     let h = hash(cx, 0x7EE, cz, SEED_TREES);
@@ -915,6 +1143,16 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
             _ => None,
         };
     }
+    // Now and then an emergent jungle tree (minetest_game's decoration:
+    // noise offset 0, scale 0.0025, spread 250, 3 octaves, persistence
+    // 0.7, on rainforest litter from y 1 to 32), each one a patch's
+    // worth of its expected number per node.
+    if col.biome == Biome::Rainforest && (1..=EMERGENT_Y_MAX).contains(&col.height) {
+        let nval = fractal2(x, z, &NP_EMERGENT, SEED_EMERGENT) * (TREE_CELL * TREE_CELL) as f32;
+        if (hash(cx, 0xE3E, cz, SEED_EMERGENT) % 10_000) as f32 <= nval * 10_000.0 {
+            return Some(Tree { x, z, ground: col.height, kind: TreeKind::Emergent, height: 0 });
+        }
+    }
     let kind = match col.biome {
         Biome::Desert => return None,
         Biome::Snow => TreeKind::Fir,
@@ -922,8 +1160,8 @@ fn tree_in_cell(cx: i32, cz: i32) -> Option<Tree> {
         Biome::Grassland => TreeKind::Birch,
         Biome::Rainforest => TreeKind::Jungle,
         Biome::Savanna => TreeKind::Acacia,
-        // No trees on the tundra or in the cold desert.
-        Biome::Tundra | Biome::ColdDesert => return None,
+        // No trees on the tundra, in the cold desert or on the icesheet.
+        Biome::Tundra | Biome::ColdDesert | Biome::Icesheet => return None,
     };
     // A few percent of patches in the open, most of them in a wood. The
     // rainforest is jungle almost everywhere; the savanna has scattered
@@ -1044,6 +1282,15 @@ pub fn plant_on(x: i32, z: i32, col: &Column) -> Option<u16> {
     ((h >> 8) % 1000 < (density * 1000.0) as u32).then(|| grasses[((h >> 20) % 5) as usize])
 }
 
+/// An emergent jungle tree's trunk at (x, y, z) at or below the ground:
+/// the map generator force-places it (its roots), into whatever is there.
+pub fn forced_trunk_in(trees: &[Tree], x: i32, y: i32, z: i32) -> Option<u16> {
+    trees
+        .iter()
+        .filter(|t| t.kind == TreeKind::Emergent && y >= t.ground - 4)
+        .find_map(|t| t.node_at(x, y, z).filter(|&id| content::is_trunk(id)))
+}
+
 /// Every tree that could have a node in the columns from (x0, z0) to
 /// (x1, z1) inclusive.
 pub fn trees_in(x0: i32, z0: i32, x1: i32, z1: i32) -> Vec<Tree> {
@@ -1079,4 +1326,48 @@ pub fn tree_node_in(trees: &[Tree], x: i32, y: i32, z: i32) -> Option<u16> {
         found
     };
     pick(false).or_else(|| pick(true))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// mgv7's channel: (0.2 - a) * (y - water_level + 17) / 2.5 >= 0.6.
+    #[test]
+    fn river_channel() {
+        assert_eq!(channel_bed(0.0), Some(-9)); // carved from -8 up: 10 deep
+        assert_eq!(channel_bed(0.12), Some(2));
+        assert_eq!(channel_bed(0.16), Some(21));
+        assert_eq!(channel_bed(0.2), None);
+        for (a, bed) in [(0.0f32, -9), (0.12, 2), (0.16, 21)] {
+            let carved = |y: i32| (RIVER_WIDTH - a) * (y - WATER_LEVEL + 17) as f32 / 2.5 >= 0.6;
+            assert!(carved(bed + 1) && !carved(bed), "a {a}");
+        }
+        // The channel gets shallower towards its sides.
+        let beds: Vec<i32> = (0..20).map(|i| channel_bed(i as f32 / 100.0).unwrap()).collect();
+        assert!(beds.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    /// The emergent tree's schematic: 37 slices of 7 x 7, a trunk up the
+    /// middle, the crown at the top.
+    #[test]
+    fn emergent_schematic() {
+        assert!(EMERGENT.iter().all(|s| s.len() == 49 && s.bytes().all(|c| b".#t*ol".contains(&c))));
+        for s in 9..32 {
+            assert_eq!(EMERGENT[s].as_bytes()[3 * 7 + 3], b'#', "trunk in slice {s}");
+        }
+        let t = Tree { x: 100, z: -50, ground: 10, kind: TreeKind::Emergent, height: 0 };
+        // The trunk, at every turn; nothing outside the 7 x 7.
+        assert_eq!(t.node_at(100, 10, -50), Some(CONTENT_JUNGLE_TREE));
+        assert_eq!(t.node_at(104, 15, -50), None);
+        assert_eq!(t.node_at(100, 5, -50), None);
+        let leaves = (t.top() - 4..=t.top()).flat_map(|y| (-3..=3).flat_map(move |dz| (-3..=3).map(move |dx| (dx, y, dz))))
+            .filter(|&(dx, y, dz)| t.node_at(100 + dx, y, -50 + dz) == Some(CONTENT_JUNGLE_LEAVES)).count();
+        assert!(leaves > 40);
+        assert!((20..=32).contains(&(t.top() - t.ground)));
+        assert_eq!(t.node_at(100, t.top() + 1, -50), None);
+        assert_eq!(kept_slice(0b1011, 0), Some(0));
+        assert_eq!(kept_slice(0b1011, 2), Some(3));
+        assert_eq!(kept_slice(0b1011, 3), None);
+    }
 }

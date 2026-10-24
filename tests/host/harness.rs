@@ -302,6 +302,106 @@ fn torch_variants() {
     println!("TORCH VARIANTS OK");
 }
 
+/// Every node of the block columns around (x, z) from y0 to y1: built as a
+/// block and asked one at a time, the same.
+fn blocks_agree(w: &world::World, x: i32, z: i32, y0: i32, y1: i32) -> usize {
+    let mut n = 0;
+    for bz in [z.div_euclid(16) - 1, z.div_euclid(16), z.div_euclid(16) + 1] { for bx in [x.div_euclid(16) - 1, x.div_euclid(16), x.div_euclid(16) + 1] {
+        for by in world::block_of(y0)..=world::block_of(y1) {
+            let raw = w.block_raw((bx as i16, by, bz as i16));
+            for k in 0..4096usize {
+                let (zz, yy, xx) = ((k / 256) as i32, ((k / 16) % 16) as i32, (k % 16) as i32);
+                let got = u16::from_be_bytes([raw[5 + 2 * k], raw[6 + 2 * k]]);
+                let p = (bx * 16 + xx, by as i32 * 16 + yy, bz * 16 + zz);
+                assert_eq!(got, w.node(p), "block and node differ at {p:?}");
+                n += 1;
+            }
+        }
+    } }
+    n
+}
+
+/// Rivers, the icesheet (cave ice) and emergent jungle trees.
+fn new_terrain() {
+    use content::*;
+    use terrain::{Biome, WATER_LEVEL};
+    let w = world::World::builder();
+    let ring = |r: i32| (-r..=r).step_by(8).flat_map(move |a| [(a, -r), (a, r), (-r, a), (r, a)]);
+    let find = |want: &dyn Fn(i32, i32) -> bool| (0..6000).step_by(8).find_map(|r| ring(r).find(|&(x, z)| want(x, z))).unwrap();
+    // A river: cut down to its bed, with water up to the water level.
+    let (x, z) = find(&|x, z| terrain::river_bed(x, z).is_some_and(|b| b <= WATER_LEVEL - 6 && b < terrain::land_height(x, z) - 4)
+        && !matches!(terrain::column(x, z).biome, Biome::Icesheet | Biome::Snow | Biome::Tundra | Biome::ColdDesert));
+    let bed = terrain::river_bed(x, z).unwrap();
+    let c = terrain::column(x, z);
+    assert_eq!(c.height, bed);
+    assert!(content::walkable(w.node((x, bed, z))));
+    for y in bed + 1..=WATER_LEVEL { assert_eq!(w.node((x, y, z)), CONTENT_WATER, "river water at {y}"); }
+    assert!(!content::is_liquid(w.node((x, WATER_LEVEL + 1, z))));
+    println!("river at ({x}, {z}): bed {bed}, cut from {}, water above it", terrain::land_height(x, z));
+    let n = blocks_agree(&w, x, z, bed - 20, terrain::land_height(x, z) + 20);
+    // Its valley's side, above the water: cut down, dry.
+    let (x, z) = find(&|x, z| terrain::river_bed(x, z).is_some_and(|b| b > WATER_LEVEL + 2 && b < terrain::land_height(x, z) - 3));
+    let bed = terrain::river_bed(x, z).unwrap();
+    assert_eq!(terrain::column(x, z).height, bed);
+    println!("valley side at ({x}, {z}): {} cut down to {bed}; {n} river nodes agree", terrain::land_height(x, z));
+    // The icesheet: snow blocks over cave ice, to -8.
+    let (x, z) = find(&|x, z| { let c = terrain::column(x, z); c.biome == Biome::Icesheet && c.height > WATER_LEVEL + 3 && c.cave_top < c.height });
+    let h = terrain::column(x, z).height;
+    for d in 0..=4 { assert_eq!(w.node((x, h - d, z)), CONTENT_SNOW_BLOCK, "snow block {d} down"); }
+    let mut cave_ice = 0;
+    for y in terrain::ICESHEET_BOTTOM..h - 4 {
+        let id = w.node((x, y, z));
+        assert!(matches!(id, CONTENT_CAVE_ICE | world::CONTENT_AIR | CONTENT_GRAVEL) || id == crate::dungeons::MOSSYCOBBLE || id == CONTENT_ICE || crate::stairs::shape_of(id).is_some(), "{} at {y}", content::name_of(id));
+        cave_ice += (id == CONTENT_CAVE_ICE) as u32;
+    }
+    assert!(cave_ice > 0);
+    assert!(!matches!(w.node((x, terrain::ICESHEET_BOTTOM - 5, z)), CONTENT_CAVE_ICE));
+    let n = blocks_agree(&w, x, z, -24, h + 8);
+    println!("icesheet at ({x}, {h}, {z}): {cave_ice} cave ice under the snow; {n} nodes agree");
+    assert_eq!(content::drop_of(CONTENT_CAVE_ICE), Some((CONTENT_ICE, 1)));
+    // Its dungeons are of ice: look under the icesheet near there.
+    let ice_stair = crate::stairs::BUILDING.first_stair() + 14;
+    let mut walls = 0;
+    'd: for cz in (z - 160..z + 160).step_by(2) { for cx in (x - 160..x + 160).step_by(2) {
+        let c = terrain::column(cx, cz);
+        if c.biome != Biome::Icesheet || c.height <= WATER_LEVEL { continue; }
+        for y in -30..c.height - 6 {
+            let id = w.node((cx, y, cz));
+            if id == CONTENT_ICE || id == ice_stair { walls += 1; if walls > 50 { break 'd; } }
+        }
+    } }
+    // (A mapchunk's dungeons take their nodes from the biome at its middle,
+    // so one centred off the icesheet is cobblestone even under it.)
+    println!("icesheet dungeon walls of ice found: {walls}");
+    assert!(walls > 0);
+    // Its lakes: ice ten deep, a snow block on top.
+    let (x, z) = find(&|x, z| { let c = terrain::column(x, z); c.biome == Biome::Icesheet && c.height < WATER_LEVEL - 3 });
+    let bed = terrain::column(x, z).height;
+    for y in bed + 1..=WATER_LEVEL { assert_eq!(w.node((x, y, z)), if y > WATER_LEVEL - 10 { CONTENT_ICE } else { CONTENT_WATER }, "lake at {y}"); }
+    assert_eq!(w.node((x, bed, z)), CONTENT_SNOW_BLOCK);
+    assert_eq!(w.node((x, WATER_LEVEL + 1, z)), CONTENT_SNOW_BLOCK);
+    assert_eq!(w.highest_solid(x, z), WATER_LEVEL + 1);
+    println!("icesheet lake at ({x}, {z}): frozen to its bed at {bed}, snow on top");
+    // An emergent jungle tree: roots and trunk forced into the ground, a
+    // crown far above the jungle.
+    let mut emergent: Vec<_> = terrain::trees_in(-1500, -1500, 1500, 1500).into_iter().filter(|t| t.kind == terrain::TreeKind::Emergent).collect();
+    emergent.sort_by_key(|t| t.x.abs() + t.z.abs());
+    let t = emergent[0];
+    assert_eq!(w.node((t.x, t.ground, t.z)), CONTENT_JUNGLE_TREE, "trunk through the ground");
+    let roots = (t.ground - 4..t.ground).flat_map(|y| (-3..=3).flat_map(move |dz| (-3..=3).map(move |dx| (t.x + dx, y, t.z + dz)))).filter(|&p| w.node(p) == CONTENT_JUNGLE_TREE).count();
+    assert!(roots > 20, "roots {roots}");
+    assert!((20..=32).contains(&(t.top() - t.ground)), "top {}", t.top() - t.ground);
+    let crown = (t.top() - 4..=t.top()).flat_map(|y| (-3..=3).flat_map(move |dz| (-3..=3).map(move |dx| (t.x + dx, y, t.z + dz)))).filter(|&p| w.node(p) == CONTENT_JUNGLE_LEAVES).count();
+    assert!(crown > 40, "crown {crown}");
+    let n = blocks_agree(&w, t.x, t.z, t.ground - 8, t.top() + 2);
+    println!("emergent jungle tree at ({}, {}, {}): {} tall, {roots} root nodes, {crown} crown leaves; {n} nodes agree; {} within 1500", t.x, t.ground, t.z, t.top() - t.ground, emergent.len());
+    for y in (t.ground - 5..=t.top() + 1).rev() {
+        let row: String = (t.x - 4..=t.x + 4).map(|x| match w.node((x, y, t.z)) { CONTENT_JUNGLE_TREE => '#', CONTENT_JUNGLE_LEAVES => '*', world::CONTENT_AIR => '.', id if content::is_liquid(id) => '~', _ => '=' }).collect();
+        if std::env::var("SHOW_EMERGENT").is_ok() { println!("  {y:4} {row}"); }
+    }
+    println!("NEW TERRAIN OK");
+}
+
 fn trees() {
     use content::*;
     let d = format!("{OUT}/treeworld");
@@ -536,13 +636,61 @@ fn serve(port: &str) {
     server::Server::new(setup).run().unwrap();
 }
 
+/// RIVERS=1: rivers, the icesheet and emergent jungle trees: how much
+/// there is, where the nearest are, and a map (out/rivers.bin: per sample
+/// of a 1024 x 1024 grid every 4 nodes, biome, river flag, height).
+fn rivers() {
+    if std::env::var("RIVER_SEEDS").is_ok() {
+        // Seeds whose rivers carve nothing within 160 nodes of the spawn.
+        let mut best = Vec::new();
+        for k in 0..400u32 {
+            let seed = 0x6B7C_8D9Eu32.wrapping_add(k.wrapping_mul(0x9E37_79B9));
+            let mut near = i32::MAX;
+            for z in (-160..=176).step_by(4) { for x in (-160..=176).step_by(4) {
+                if let Some(b) = terrain::river_bed_seeded(x, z, seed) {
+                    if b < terrain::land_height(x, z) { near = near.min((x - 8).abs().max((z - 8).abs())); }
+                }
+            } }
+            best.push((near, seed));
+        }
+        best.sort();
+        for (near, seed) in best.iter().rev().take(8) { println!("seed {seed:#x}: nearest carved {near}"); }
+        return;
+    }
+    use terrain::Biome;
+    let (mut river, mut ice, mut total) = (0u32, 0u32, 0u32);
+    let mut nearest_river: Option<(i32, i32, i32)> = None;
+    let mut map = Vec::new();
+    for zi in 0..1024 { for xi in 0..1024 {
+        let (x, z) = ((xi - 512) * 4, (zi - 512) * 4);
+        let c = terrain::column(x, z);
+        let r = terrain::river_bed(x, z).is_some();
+        total += 1;
+        if r { river += 1; let d = x.abs() + z.abs(); if nearest_river.map_or(true, |(_, _, e)| d < e) { nearest_river = Some((x, z, d)); } }
+        if c.biome == Biome::Icesheet { ice += 1; }
+        map.push(c.biome as u8); map.push(r as u8); map.extend((c.height.clamp(-100, 200) as i16).to_be_bytes());
+    } }
+    std::fs::write(format!("{OUT}/rivers.bin"), &map).unwrap();
+    for z in (-24..=40).step_by(4) {
+        let row: String = (-40..=60).step_by(2).map(|x| match terrain::river_bed(x, z) { Some(b) if b < terrain::column(x, z).height + 1 && b <= terrain::column(x, z).height => if terrain::column(x, z).height <= terrain::WATER_LEVEL { '~' } else { '^' }, Some(_) => '-', None => '.' }).collect();
+        println!("z {z:4} {row}");
+    }
+    println!("river valleys {:.1}% and icesheet {:.1}% of 4096 x 4096 nodes; nearest river valley to the spawn {nearest_river:?}", river as f32 * 100.0 / total as f32, ice as f32 * 100.0 / total as f32);
+    // Emergent jungle trees in a 2048 x 2048 square.
+    let trees = terrain::trees_in(-1024, -1024, 1023, 1023);
+    let emergent: Vec<_> = trees.iter().filter(|t| t.kind == terrain::TreeKind::Emergent).collect();
+    let jungle = trees.iter().filter(|t| t.kind == terrain::TreeKind::Jungle).count();
+    println!("emergent jungle trees {} (jungle trees {jungle}); nearest {:?}", emergent.len(),
+        emergent.iter().min_by_key(|t| t.x.abs() + t.z.abs()).map(|t| (t.x, t.ground, t.z, t.top())));
+}
+
 fn biomes() {
     use content::*;
     use terrain::Biome;
     // A biome map: 512x512 samples, one every 16 nodes (8192 nodes across).
-    let code = |b: Biome| match b { Biome::Grassland => 0u8, Biome::Desert => 1, Biome::Snow => 2, Biome::Savanna => 3, Biome::Rainforest => 4, Biome::Tundra => 5, Biome::ColdDesert => 6 };
+    let code = |b: Biome| match b { Biome::Grassland => 0u8, Biome::Desert => 1, Biome::Snow => 2, Biome::Savanna => 3, Biome::Rainforest => 4, Biome::Tundra => 5, Biome::ColdDesert => 6, Biome::Icesheet => 7 };
     let mut map = Vec::new();
-    let mut counts = [0u32; 7];
+    let mut counts = [0u32; 8];
     let (mut rain, mut sav) = (None, None);
     for zi in 0..512 { for xi in 0..512 {
         let (x, z) = ((xi - 256) * 16, (zi - 256) * 16);
@@ -557,7 +705,7 @@ fn biomes() {
     } }
     std::fs::write(format!("{OUT}/biomes.bin"), &map).unwrap();
     let total: u32 = counts.iter().sum();
-    println!("biomes (grassland, desert, snow, savanna, rainforest, tundra, cold desert): {:?}%", counts.map(|c| (c * 1000 / total) as f32 / 10.0));
+    println!("biomes (grassland, desert, snow, savanna, rainforest, tundra, cold desert, icesheet): {:?}%", counts.map(|c| (c * 1000 / total) as f32 / 10.0));
     println!("nearest rainforest {rain:?}, savanna {sav:?}");
     let d = format!("{OUT}/biomeworld");
     let _ = std::fs::remove_dir_all(&d);
@@ -774,6 +922,7 @@ fn main() {
         return;
     }
     if std::env::var("COAL_STATS").is_ok() { coal_stats(); return; }
+    if std::env::var("RIVERS").is_ok() { rivers(); return; }
     if std::env::var("BIOMES").is_ok() { biomes(); return; }
     if std::env::var("ORE_STATS").is_ok() { ore_stats(); return; }
     if std::env::var("FIND_PLANTS").is_ok() { find_plants(); return; }
@@ -1088,6 +1237,7 @@ fn main() {
     content_dump();
     torch_variants();
     trees();
+    new_terrain();
     wifi_file();
     led();
     // The edge of the world: blocks -1937..=1937 on every axis.

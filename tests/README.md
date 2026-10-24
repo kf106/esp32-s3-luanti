@@ -60,6 +60,7 @@ The harness has a few tools besides the checks, chosen with an environment varia
 
 - `BIOMES=1`, `ORE_STATS=1`, `COAL_STATS=1`, `IRON_STATS=1`: statistics about the generated world.
 - `FIND_PLANTS=1`: where the plant tests' plants are.
+- `RIVERS=1`: how much of the land the river valleys and the icesheet take, the nearest river to the spawn, the emergent jungle trees, and a map in `out/rivers.bin`.
 - `DUNGEONS=1`: how many mapchunks near the spawn have dungeons, how big they are and how long they take to work out, and the nearest loot chest.
 - `BENCH=1`: how long map blocks take to build, at the surface and underground.
 - `SERVE=30000`: the server on the usual port, for a real Luanti client on this PC to join.

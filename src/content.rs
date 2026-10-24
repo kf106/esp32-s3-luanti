@@ -285,6 +285,11 @@ pub const VESSELS_GLASS_BOTTLE: u16 = CONTENT_MIST + 1;
 pub const VESSELS_DRINKING_GLASS: u16 = VESSELS_GLASS_BOTTLE + 1;
 pub const VESSELS_STEEL_BOTTLE: u16 = VESSELS_GLASS_BOTTLE + 2;
 pub const VESSELS_SHELF: u16 = VESSELS_GLASS_BOTTLE + 3;
+/// minetest_game's cave ice: the icesheet's ice underground, which gives
+/// ordinary ice when dug.
+pub const CONTENT_CAVE_ICE: u16 = VESSELS_SHELF + 1;
+/// minetest_game's emergent jungle tree sapling.
+pub const EMERGENT_JUNGLE_SAPLING: u16 = CONTENT_CAVE_ICE + 1;
 /// A vessel's selection box (vessels' {-0.25, -0.5, -0.25, 0.25, 0.3, 0.25}).
 const VESSEL_BOX: [f32; 6] = [-0.25, -0.5, -0.25, 0.25, 0.3, 0.25];
 /// The grey veil over the view of a player in mist (ARGB).
@@ -2997,6 +3002,26 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Shelf,
     },
+    Node {
+        id: CONTENT_CAVE_ICE,
+        name: "esp:cave_ice",
+        description: "Cave Ice",
+        tiles: ["default_ice.png"; 6],
+        groups: &[("cracky", 3), ("cools_lava", 1), ("slippery", 3), ("not_in_creative_inventory", 1)],
+        drop: CONTENT_ICE,
+        drop_count: 1,
+        kind: Kind::Solid,
+    },
+    Node {
+        id: EMERGENT_JUNGLE_SAPLING,
+        name: "esp:emergent_jungle_sapling",
+        description: "Emergent Jungle Tree Sapling",
+        tiles: ["default_emergent_jungle_sapling.png"; 6],
+        groups: &[("snappy", 2), ("dig_immediate", 3), ("flammable", 2), ("attached_node", 1), ("sapling", 1)],
+        drop: EMERGENT_JUNGLE_SAPLING,
+        drop_count: 1,
+        kind: Kind::Sapling,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -4607,6 +4632,7 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("default_jungleleaves.png", include_bytes!("../media/default_jungleleaves.png")),
     ("default_junglewood.png", include_bytes!("../media/default_junglewood.png")),
     ("default_junglesapling.png", include_bytes!("../media/default_junglesapling.png")),
+    ("default_emergent_jungle_sapling.png", include_bytes!("../media/default_emergent_jungle_sapling.png")),
     ("default_acacia_tree.png", include_bytes!("../media/default_acacia_tree.png")),
     ("default_acacia_tree_top.png", include_bytes!("../media/default_acacia_tree_top.png")),
     ("default_acacia_leaves.png", include_bytes!("../media/default_acacia_leaves.png")),
@@ -4963,7 +4989,7 @@ fn sounds_of(id: u16) -> Sounds {
             dug: ("default_gravel_dug", 1.0),
             place: ("default_place_node", 1.0),
         },
-        CONTENT_ICE => Sounds {
+        CONTENT_ICE | CONTENT_CAVE_ICE => Sounds {
             footstep: ("default_ice_footstep", 0.15),
             dig: ("default_ice_dig", 0.5),
             dug: ("default_ice_dug", 0.5),
@@ -4997,7 +5023,7 @@ fn sounds_of(id: u16) -> Sounds {
         },
         id if farming::is_attached_plant(id) || id == farming::STRAW => sounds_of(CONTENT_BIRCH_LEAVES),
         CONTENT_BIRCH_LEAVES | CONTENT_FIR_NEEDLES | CONTENT_BIRCH_SAPLING | CONTENT_FIR_SAPLING | CONTENT_APPLE_LEAVES
-        | CONTENT_APPLE | CONTENT_APPLE_SAPLING | CONTENT_JUNGLE_LEAVES | CONTENT_JUNGLE_SAPLING | CONTENT_ACACIA_LEAVES
+        | CONTENT_APPLE | CONTENT_APPLE_SAPLING | CONTENT_JUNGLE_LEAVES | CONTENT_JUNGLE_SAPLING | EMERGENT_JUNGLE_SAPLING | CONTENT_ACACIA_LEAVES
         | CONTENT_ACACIA_SAPLING => Sounds {
             footstep: ("default_grass_footstep", 0.45),
             dig: GROUP_DIG,

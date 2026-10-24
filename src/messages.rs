@@ -1373,9 +1373,11 @@ pub fn build_deathscreen() -> Vec<u8> {
     w.into_inner()
 }
 
-/// The health bar's HUD id. Ours is the only HUD element.
+/// Our HUD elements' ids: the health and breath bars, and the minimap.
 pub const HUD_HEALTH: u32 = 0;
 pub const HUD_BREATH: u32 = 1;
+pub const HUD_MINIMAP: u32 = 2;
+const HUD_ELEM_MINIMAP: u8 = 7;
 /// A player's breath when full (Luanti's PLAYER_MAX_BREATH_DEFAULT).
 pub const PLAYER_MAX_BREATH: u16 = 10;
 const HUD_ELEM_STATBAR: u8 = 2;
@@ -1452,6 +1454,39 @@ fn breath_units(breath: u16) -> u32 {
 pub fn build_breath_bar_change(breath: u16) -> Vec<u8> {
     let mut w = Writer::new(TOCLIENT_HUDCHANGE);
     w.u32(HUD_BREATH).u8(HUD_STAT_NUMBER).u32(breath_units(breath));
+    w.into_inner()
+}
+
+/// TOCLIENT_HUDADD for builtin's minimap element (hud.lua): since
+/// protocol 44 the client draws the minimap only as a HUD element, which
+/// builtin adds while the "minimap" HUD flag is set; in the top right
+/// corner, a quarter of the screen's height.
+pub fn build_minimap_hud() -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_HUDADD);
+    w.u32(HUD_MINIMAP)
+        .u8(HUD_ELEM_MINIMAP)
+        .f32(1.0)
+        .f32(0.0) // position: top right
+        .string16("")
+        .f32(0.0)
+        .f32(0.0) // scale
+        .string16("")
+        .u32(0) // number
+        .u32(0) // item
+        .u32(0) // direction
+        .f32(-1.0)
+        .f32(1.0) // align: left of and below the position
+        .f32(-10.0)
+        .f32(10.0) // offset
+        .f32(0.0)
+        .f32(0.0)
+        .f32(0.0) // world position
+        .f32(0.0)
+        .f32(-25.0) // size: 25% of the screen's height
+        .i16(0) // z index
+        .string16("") // text2
+        .u32(0) // style
+        .u8(1); // flags: hideable
     w.into_inner()
 }
 

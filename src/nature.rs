@@ -241,6 +241,7 @@ pub fn grow(pos: NodePos, sapling: u16, height: i32, node: &dyn Fn(NodePos) -> u
         CONTENT_FIR_SAPLING => TreeKind::Fir,
         CONTENT_APPLE_SAPLING => TreeKind::Apple,
         CONTENT_JUNGLE_SAPLING => TreeKind::Jungle,
+        content::EMERGENT_JUNGLE_SAPLING => TreeKind::Emergent,
         CONTENT_ACACIA_SAPLING => TreeKind::Acacia,
         _ => TreeKind::Birch,
     };
@@ -287,6 +288,23 @@ mod tests {
 
     fn world(nodes: &[(NodePos, u16, u8)]) -> HashMap<NodePos, (u16, u8)> {
         nodes.iter().map(|&(p, id, p2)| (p, (id, p2))).collect()
+    }
+
+    /// An emergent jungle sapling grows the emergent tree, into air only
+    /// (its schematic isn't force-placed), from where the sapling stood.
+    #[test]
+    fn emergent_from_sapling() {
+        let node = |p: NodePos| match p.1 {
+            y if y < 1 => CONTENT_DIRT,
+            1 if p.0 == 0 && p.2 == 0 => EMERGENT_JUNGLE_SAPLING,
+            _ => crate::world::CONTENT_AIR,
+        };
+        let tree = grow((0, 1, 0), EMERGENT_JUNGLE_SAPLING, 1, &node);
+        assert!(tree.contains(&((0, 1, 0), CONTENT_JUNGLE_TREE)));
+        assert!(tree.iter().all(|&(p, _)| p.1 >= 1), "nothing into the ground");
+        let top = tree.iter().map(|&(p, _)| p.1).max().unwrap();
+        assert!((21..=33).contains(&top), "top {top}");
+        assert!(tree.iter().filter(|&&(_, id)| id == CONTENT_JUNGLE_LEAVES).count() > 60);
     }
 
     #[test]

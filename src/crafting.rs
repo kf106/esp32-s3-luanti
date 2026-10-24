@@ -145,6 +145,8 @@ pub const RECIPES: &[Recipe] = &[
     },
     Recipe { width: 3, pattern: &bottle(I(ITEM_STEEL_INGOT)), output: VESSELS_STEEL_BOTTLE, count: 5 },
     Recipe { width: 3, pattern: &[G("wood"), G("wood"), G("wood"), G("vessel"), G("vessel"), G("vessel"), G("wood"), G("wood"), G("wood")], output: VESSELS_SHELF, count: 1 },
+    // Nine jungle saplings make an emergent jungle tree sapling.
+    Recipe { width: 3, pattern: &[I(CONTENT_JUNGLE_SAPLING); 9], output: EMERGENT_JUNGLE_SAPLING, count: 1 },
     // keys: a gold ingot makes a skeleton key.
     Recipe { width: 1, pattern: &[I(ITEM_GOLD_INGOT)], output: ITEM_SKELETON_KEY, count: 1 },
     // screwdriver: a steel ingot on a stick.
@@ -361,6 +363,7 @@ pub fn burn_time(id: u16) -> f32 {
         CONTENT_JUNGLE_WOOD => 9.0,
         CONTENT_ACACIA_WOOD => 8.0,
         CONTENT_JUNGLE_SAPLING | CONTENT_ACACIA_SAPLING => 6.0,
+        EMERGENT_JUNGLE_SAPLING => 7.0,
         farming::JUNGLEGRASS => 3.0,
         plants::BUSH_LEAVES | plants::BLUEBERRY_LEAVES | plants::BLUEBERRY_LEAVES_WITH_BERRIES | plants::ACACIA_BUSH_LEAVES
         | plants::FIR_BUSH_NEEDLES => 4.0,
@@ -905,6 +908,9 @@ mod tests {
         assert_eq!(cook_result(ITEM_GLASS_FRAGMENTS), Some((CONTENT_GLASS, 3.0)));
         assert_eq!(cook_result(VESSELS_STEEL_BOTTLE), Some((ITEM_STEEL_INGOT, 3.0)));
         assert_eq!(burn_time(VESSELS_SHELF), 30.0);
+        // Nine jungle saplings: an emergent one.
+        assert_eq!(result(&grid(&(0..9).map(|i| (i, CONTENT_JUNGLE_SAPLING, 1)).collect::<Vec<_>>())), Some((EMERGENT_JUNGLE_SAPLING, 1)));
+        assert_eq!(burn_time(EMERGENT_JUNGLE_SAPLING), 7.0);
         // keys
         assert_eq!(result(&grid(&[(4, ITEM_GOLD_INGOT, 1)])), Some((ITEM_SKELETON_KEY, 1)));
         assert_eq!(cook_result(ITEM_KEY), Some((ITEM_GOLD_INGOT, 5.0)));

@@ -656,11 +656,14 @@ pub fn generate(c: (i32, i32, i32), terrain: &mut dyn FnMut(NodePos) -> u16) -> 
     let holewidth = if diagonal_dirs { 2 } else { ps.range(1, 2) };
     // minetest_game's dungeon nodes for the biome in the middle of the
     // mapchunk: desert stone in the desert (down to its desert stone's
-    // bottom), else cobblestone, mossy in places.
+    // bottom), ice on the icesheet (down to its bottom), else cobblestone,
+    // mossy in places.
     let mid = (node_min.0 + 40, node_min.1 + 40, node_min.2 + 40);
-    let desert = terrain::column(mid.0, mid.2).biome == Biome::Desert && mid.1 > -256;
-    let (wall, alt_wall, stair) = if desert {
+    let biome = terrain::column(mid.0, mid.2).biome;
+    let (wall, alt_wall, stair) = if biome == Biome::Desert && mid.1 > -256 {
         (CONTENT_DESERT_STONE, None, crate::stairs::BUILDING.first_stair())
+    } else if biome == Biome::Icesheet && mid.1 >= terrain::ICESHEET_BOTTOM {
+        (content::CONTENT_ICE, None, crate::stairs::BUILDING.first_stair() + 14)
     } else {
         (CONTENT_COBBLE, Some(MOSSYCOBBLE), crate::stairs::FIRST_STAIR + 4)
     };
@@ -964,18 +967,32 @@ impl Rng {
     }
 }
 
+/// dungeon_loot's kinds of dungeon (its "types"; its "sandstone", for the
+/// sandstone desert, isn't generated here).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Normal,
+    Desert,
+    Ice,
+}
+
+const NORMAL: u8 = 1 << Kind::Normal as u8;
+const DESERT: u8 = 1 << Kind::Desert as u8;
+const ICE: u8 = 1 << Kind::Ice as u8;
+const ALL: u8 = NORMAL | DESERT | ICE;
+
 /// dungeon_loot's registered loot: item, chance, count range, depths, and
-/// which dungeons (None: all; else "normal" or "desert").
+/// which kinds of dungeon (a bit each).
 struct Loot {
     name: &'static str,
     chance: f32,
     count: (i32, i32),
     y: Option<(i32, i32)>,
-    desert: Option<bool>,
+    kinds: u8,
 }
 
 const fn loot(name: &'static str, chance: f32, count: (i32, i32)) -> Loot {
-    Loot { name, chance, count, y: None, desert: None }
+    Loot { name, chance, count, y: None, kinds: ALL }
 }
 
 const ABOVE_64: Option<(i32, i32)> = Some((-64, 32768));
@@ -985,7 +1002,7 @@ const LOOT: &[Loot] = &[
     loot("esp:stick", 0.6, (3, 6)),
     loot("esp:flint", 0.4, (1, 3)),
     loot("esp:apple", 0.4, (1, 4)),
-    Loot { desert: Some(true), ..loot("esp:cactus", 0.4, (1, 4)) },
+    Loot { kinds: DESERT, ..loot("esp:cactus", 0.4, (1, 4)) },
     loot("esp:coal_lump", 0.9, (1, 12)),
     loot("esp:gold_ingot", 0.5, (1, 1)),
     loot("esp:steel_ingot", 0.4, (1, 6)),
@@ -993,22 +1010,23 @@ const LOOT: &[Loot] = &[
     loot("esp:sword_wood", 0.6, (1, 1)),
     loot("esp:pick_stone", 0.3, (1, 1)),
     loot("esp:axe_diamond", 0.05, (1, 1)),
-    Loot { y: ABOVE_64, desert: Some(false), ..loot("esp:sand", 0.8, (4, 32)) },
-    Loot { desert: Some(true), ..loot("esp:desert_cobble", 0.8, (4, 32)) },
-    // (Its snow is only for the icesheet's dungeons, and its desert sand
-    // for the sandstone desert's; neither biome is generated here.)
-    Loot { y: ABOVE_64, ..loot("esp:dirt", 0.6, (2, 16)) },
+    Loot { y: ABOVE_64, kinds: NORMAL, ..loot("esp:sand", 0.8, (4, 32)) },
+    Loot { kinds: DESERT, ..loot("esp:desert_cobble", 0.8, (4, 32)) },
+    // (Its desert sand is for the sandstone desert's, which isn't
+    // generated here.)
+    Loot { y: ABOVE_64, kinds: ICE, ..loot("esp:snow", 0.8, (8, 64)) },
+    Loot { y: ABOVE_64, kinds: NORMAL | DESERT, ..loot("esp:dirt", 0.6, (2, 16)) },
     Loot { y: BELOW_512, ..loot("esp:obsidian", 0.25, (1, 3)) },
     Loot { y: BELOW_512, ..loot("esp:mese", 0.15, (1, 1)) },
     // Registered by the other mods: bucket's,
     loot("esp:bucket_empty", 0.55, (1, 1)),
-    Loot { desert: Some(true), ..loot("esp:bucket_water", 0.45, (1, 1)) },
-    Loot { y: Some((0, 32768)), desert: Some(false), ..loot("esp:bucket_water", 0.45, (1, 1)) },
-    Loot { y: Some((-32768, -1)), desert: Some(false), ..loot("esp:bucket_lava", 0.45, (1, 1)) },
+    Loot { kinds: DESERT | ICE, ..loot("esp:bucket_water", 0.45, (1, 1)) },
+    Loot { y: Some((0, 32768)), kinds: NORMAL, ..loot("esp:bucket_water", 0.45, (1, 1)) },
+    Loot { y: Some((-32768, -1)), kinds: NORMAL, ..loot("esp:bucket_lava", 0.45, (1, 1)) },
     // farming's,
     loot("esp:string", 0.5, (1, 8)),
     loot("esp:wheat", 0.5, (2, 5)),
-    Loot { desert: Some(false), ..loot("esp:seed_cotton", 0.4, (1, 4)) },
+    Loot { kinds: NORMAL, ..loot("esp:seed_cotton", 0.4, (1, 4)) },
     // and vessels'.
     loot("esp:glass_fragments", 0.35, (1, 4)),
 ];
@@ -1022,12 +1040,12 @@ fn loot_names() -> impl Iterator<Item = &'static str> {
 /// What a dungeon chest at `pos` holds (dungeon_loot's populate_chest):
 /// up to 8 kinds of item, from those found at its depth in its kind of
 /// dungeon, each with its chance; tools worn 20% to 75%.
-pub fn loot_for(pos: NodePos, desert: bool) -> [Option<Stack>; SLOTS] {
+pub fn loot_for(pos: NodePos, kind: Kind) -> [Option<Stack>; SLOTS] {
     let mut rand = Rng(terrain::hash(pos.0, pos.1, pos.2, SEED ^ 0x7007));
     let mut list: Vec<&Loot> = LOOT
         .iter()
         .filter(|l| l.y.map_or(true, |(lo, hi)| (lo..=hi).contains(&pos.1)))
-        .filter(|l| l.desert.map_or(true, |d| d == desert))
+        .filter(|l| l.kinds & 1 << kind as u8 != 0)
         .collect();
     let n = list.len().min(8);
     let mut chosen = Vec::new();
@@ -1067,8 +1085,12 @@ pub fn loot_for(pos: NodePos, desert: bool) -> [Option<Stack>; SLOTS] {
 }
 
 /// Whether a chest at `pos` is in the desert's kind of dungeon.
-pub fn desert_at(pos: NodePos) -> bool {
-    terrain::column(pos.0, pos.2).biome == Biome::Desert
+pub fn kind_at(pos: NodePos) -> Kind {
+    match terrain::column(pos.0, pos.2).biome {
+        Biome::Desert => Kind::Desert,
+        Biome::Icesheet => Kind::Ice,
+        _ => Kind::Normal,
+    }
 }
 
 #[cfg(test)]
@@ -1159,7 +1181,7 @@ mod tests {
         let mut kinds = std::collections::HashSet::new();
         let mut empty = 0;
         for i in 0..200 {
-            let slots = loot_for((i * 7, -600, i), false);
+            let slots = loot_for((i * 7, -600, i), Kind::Normal);
             if slots.iter().all(|s| s.is_none()) {
                 empty += 1;
             }
@@ -1175,11 +1197,14 @@ mod tests {
         assert!(kinds.contains(&content::id_of("esp:obsidian").unwrap()));
         assert!(!kinds.contains(&content::CONTENT_DIRT));
         // Near the surface, sand and dirt; desert cobble only in the desert.
-        let near: Vec<u16> = (0..100).flat_map(|i| loot_for((i, -10, 3), false)).flatten().map(|s| s.id).collect();
+        let near: Vec<u16> = (0..100).flat_map(|i| loot_for((i, -10, 3), Kind::Normal)).flatten().map(|s| s.id).collect();
         assert!(near.contains(&content::CONTENT_DIRT) && !near.contains(&content::CONTENT_DESERT_COBBLE));
-        let desert: Vec<u16> = (0..100).flat_map(|i| loot_for((i, -10, 3), true)).flatten().map(|s| s.id).collect();
+        let desert: Vec<u16> = (0..100).flat_map(|i| loot_for((i, -10, 3), Kind::Desert)).flatten().map(|s| s.id).collect();
         assert!(desert.contains(&content::CONTENT_DESERT_COBBLE));
+        // The icesheet's: snow, and no dirt or sand.
+        let ice: Vec<u16> = (0..100).flat_map(|i| loot_for((i, -10, 3), Kind::Ice)).flatten().map(|s| s.id).collect();
+        assert!(ice.contains(&content::CONTENT_SNOW_LAYER) && !ice.contains(&content::CONTENT_DIRT) && !ice.contains(&content::CONTENT_SAND));
         // The same chest always holds the same.
-        assert_eq!(loot_for((5, -20, 9), false), loot_for((5, -20, 9), false));
+        assert_eq!(loot_for((5, -20, 9), Kind::Normal), loot_for((5, -20, 9), Kind::Normal));
     }
 }

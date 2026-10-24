@@ -3402,9 +3402,18 @@ impl Server {
         if peer.minimap == Some(allowed) {
             return;
         }
+        let had = peer.minimap == Some(true);
         peer.minimap = Some(allowed);
         let (flags, mask) = binoculars::minimap_flags(allowed);
         self.send_command(addr, 0, &build_hud_set_flags(flags, mask));
+        // builtin's minimap HUD element, added and removed with the flag
+        // (the client shows the minimap only through it).
+        if allowed {
+            self.send_command(addr, 0, &build_minimap_hud());
+        } else if had {
+            self.send_command(addr, 0, &build_hud_remove(HUD_MINIMAP));
+        }
+        info!("{}: minimap {}", self.peers.get(&addr).map_or("", |p| p.display_name()), if allowed { "allowed" } else { "off" });
     }
 
     /// keys' skeleton key, used on a locked chest, steel door or steel
@@ -4241,7 +4250,7 @@ impl Server {
         if self.chests.get(pos).is_some() || !self.world.is_dungeon_chest(pos) {
             return;
         }
-        self.chests.get_or_add(pos).main = dungeons::loot_for(pos, dungeons::desert_at(pos));
+        self.chests.get_or_add(pos).main = dungeons::loot_for(pos, dungeons::kind_at(pos));
         self.chests.save();
         info!("Filled the dungeon chest at {pos:?}");
     }

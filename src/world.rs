@@ -112,9 +112,21 @@ struct BlockColumn {
     tree_top: Vec<i32>,
     /// The highest of those.
     max_tree_top: i32,
+    /// Whether any of the trees is an emergent jungle tree, whose trunk
+    /// and roots go into the ground.
+    has_emergent: bool,
 }
 
 impl BlockColumn {
+    /// An emergent jungle tree's trunk or root at or below the surface:
+    /// it replaces the ground (minetest_game force-places it).
+    fn forced_trunk(&self, x: i32, y: i32, z: i32) -> Option<u16> {
+        if !self.has_emergent {
+            return None;
+        }
+        terrain::forced_trunk_in(&self.trees, x, y, z)
+    }
+
     /// The generated node above the surface: a tree's, or air.
     /// A node above the surface (the caller checks that it is): part of a
     /// tree, lake water up to the water level, or air.
@@ -125,7 +137,7 @@ impl BlockColumn {
             if y <= terrain::WATER_LEVEL {
                 terrain::lake_node(y, col)
             } else if y == terrain::WATER_LEVEL + 1 && col.height < terrain::WATER_LEVEL {
-                terrain::lily_on(x, z, col).unwrap_or(CONTENT_AIR)
+                terrain::on_lake(x, z, col).unwrap_or(CONTENT_AIR)
             } else if y == col.height + 1 {
                 terrain::plant_on(x, z, col).unwrap_or(CONTENT_AIR)
             } else {
@@ -146,9 +158,13 @@ impl BlockColumn {
     }
 }
 
-/// The top of a column's ground, or of the lake over it.
+/// The top of a column's ground, or of the lake over it (and the snow
+/// block on the icesheet's frozen lakes).
 fn surface_or_lake(c: &Column) -> i32 {
-    c.height.max(terrain::WATER_LEVEL)
+    match c.height.max(terrain::WATER_LEVEL) {
+        top if c.biome == terrain::Biome::Icesheet && c.height < terrain::WATER_LEVEL => top + 1,
+        top => top,
+    }
 }
 
 /// How many recent changes are remembered for `changed_near_since`.
@@ -334,6 +350,9 @@ impl World {
             .any(|(_, p)| near(p.0, bx) && near(p.2, bz) && p.1 >= by - TORCH_REACH)
     }
 
+    /// The files beside the change log that describe nodes of the world.
+    const WORLD_FILES: [&str; 6] = ["chests.txt", "furnaces.txt", "doors.txt", "beds_spawns", "meta.txt", "items.txt"];
+
     /// If the change log was made with another terrain generator, rename it
     /// (it would make no sense on new terrain) and record the current one.
     fn check_generator(dir: &std::path::Path, log_path: &std::path::Path) -> io::Result<()> {
@@ -354,6 +373,19 @@ impl World {
             );
             let _ = fs::remove_file(&old);
             fs::rename(log_path, &old)?;
+            // What was kept about nodes of the old terrain goes with it:
+            // chests' and furnaces' contents, door owners, bed spawns,
+            // node metadata and dropped items would turn up in odd places
+            // (a new chest would hold an old one's things). Players keep
+            // their inventories; one inside the new ground is moved up.
+            for name in Self::WORLD_FILES {
+                let path = dir.join(name);
+                if path.exists() {
+                    let kept = dir.join(format!("{name}.v{stored}"));
+                    let _ = fs::remove_file(&kept);
+                    fs::rename(&path, &kept)?;
+                }
+            }
         }
         storage::write(&version_path, GENERATOR_VERSION.to_string().as_bytes())
     }
@@ -426,7 +458,8 @@ impl World {
             }
         }
         let max_tree_top = tree_top.iter().copied().max().unwrap_or(i32::MIN);
-        let bc = Arc::new(BlockColumn { columns, min_height, max_height, trees, tree_top, max_tree_top });
+        let has_emergent = trees.iter().any(|t| t.kind == terrain::TreeKind::Emergent);
+        let bc = Arc::new(BlockColumn { columns, min_height, max_height, trees, tree_top, max_tree_top, has_emergent });
         let mut cache = self.block_columns.borrow_mut();
         let made = self.columns_made.get().wrapping_add(1);
         self.columns_made.set(made);
@@ -516,6 +549,9 @@ impl World {
         if y > col.height {
             let id = self.block_column(block_of(x), block_of(z)).above_ground(x, y, z);
             return self.unless_unsupported(id, x, y, z, col);
+        }
+        if let Some(trunk) = self.block_column(block_of(x), block_of(z)).forced_trunk(x, y, z) {
+            return trunk;
         }
         let mut cache = self.cave_samples.borrow_mut();
         if cache.len() >= CAVE_CACHE_MAX {
@@ -961,6 +997,7 @@ impl World {
                         (Some(&id), _) => id,
                         (_, Some(d)) => d.id,
                         _ if wy > col.height => self.unless_unsupported(bc.above_ground(wx, wy, wz), wx, wy, wz, &col),
+                        _ if bc.has_emergent && bc.forced_trunk(wx, wy, wz).is_some() => bc.forced_trunk(wx, wy, wz).unwrap_or(CONTENT_AIR),
                         _ => {
                             let cell = ((z / 4) * 16 + (y / 4) * 4 + x / 4) as usize;
                             let corners = *cells[cell]
@@ -1122,4 +1159,29 @@ fn record(pos: NodePos, id: u16, param2: u8) -> Vec<u8> {
     r.push(field.len() as u8);
     r.extend_from_slice(&field);
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A world made by an older terrain generator: its changes, and what
+    /// was kept about its nodes, are set aside; players' files stay.
+    #[test]
+    fn new_generator_sets_the_old_world_aside() {
+        let dir = std::env::temp_dir().join(format!("esp-gen-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("generator"), "4").unwrap();
+        fs::write(dir.join("nodes.log"), b"").unwrap();
+        fs::write(dir.join("chests.txt"), "chest 1 2 3\n").unwrap();
+        fs::write(dir.join("doors.txt"), "1 2 3 Ann\n").unwrap();
+        fs::write(dir.join("env_meta.txt"), "time_of_day = 6000\n").unwrap();
+        let _world = World::open(&dir).unwrap();
+        assert!(dir.join("nodes-v4.log").exists() && dir.join("chests.txt.v4").exists() && dir.join("doors.txt.v4").exists());
+        assert!(!dir.join("chests.txt").exists() && !dir.join("doors.txt").exists());
+        assert!(dir.join("env_meta.txt").exists(), "the time of day carries on");
+        assert_eq!(fs::read_to_string(dir.join("generator")).unwrap().trim(), GENERATOR_VERSION.to_string());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

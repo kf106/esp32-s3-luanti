@@ -47,6 +47,8 @@ a = Client("Alice", port); a.login(); a.playerpos(); a.pump(0.3)
 lists(a.wait_for(0x27))
 # Alice carries a mapping kit: the minimap, but not its radar.
 flags, mask = minimap_flags(a); print(f"Alice's HUD flags {flags:#x} of {mask:#x}"); assert (flags, mask) == (0x20, 0x60)
+# ... shown as builtin's minimap HUD element (id 2, type 7).
+a.wait_for(0x49, cond=lambda m: struct.unpack_from(">IB", m, 2) == (2, 7)); print("minimap HUD element added")
 
 px, py, pz = (v / 10 for v in a.pos_bs)
 gx, gz, gy = round(px), round(pz), round(py - 0.6)
@@ -118,6 +120,11 @@ a.wait_for(0x32, cond=lambda m: ZOOM in m); print("zoom 10 with binoculars")
 # Dropped: within 4.7 s (binoculars' cyclic_update), no zoom.
 a.cmds.clear(); a.inventory_action("Drop 1 current_player main 7")
 a.wait_for(0x32, 7, cond=lambda m: struct.pack(">ff", 1.47, 0.0) in m); print("no zoom without them")
+# Without the mapping kit, within 5.3 s, no minimap.
+a.cmds.clear(); a.inventory_action("Drop 1 current_player main 6")
+a.wait_for(0x4a, 8, cond=lambda m: struct.unpack_from(">I", m, 2)[0] == 2)
+assert struct.unpack_from(">II", a.wait_for(0x4c, 1, cond=lambda m: struct.unpack_from(">I", m, 6)[0] & 0x60), 2) == (0, 0x60)
+print("minimap gone with the kit")
 a.raw(0, b"\x00\x03"); time.sleep(0.5)
 
 # Bob gets her keys.
