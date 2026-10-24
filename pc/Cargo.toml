@@ -5,8 +5,7 @@
 #     cd pc && cargo build --release
 #
 # pc/.cargo/config.toml builds for this computer rather than the ESP32, and
-# pc/rust-toolchain.toml uses stable Rust. See "Running on a PC or VPS" in
-# the README.
+# pc/rust-toolchain.toml uses stable Rust. See docs/pc.md.
 [package]
 name = "esp32-s3-minetest-pc"
 version = "0.1.0"

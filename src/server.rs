@@ -153,8 +153,8 @@ const HOTBAR_SIZE: usize = 8;
 /// How often a moving player's position is saved to the SD card.
 const SAVE_INTERVAL: Duration = Duration::from_secs(30);
 /// How many players can be in the game at once on the board (Luanti's
-/// max_users, default 15 there). More would overload the ESP32: see the
-/// README. The PC build can take more (Setup::max_players).
+/// max_users, default 15 there). More would overload the ESP32: see
+/// docs/features.md. The PC build can take more (Setup::max_players).
 pub const MAX_PLAYERS: usize = 6;
 /// Luanti's chat limits (chat_message_max_size, and
 /// chat_message_limit_per_10sec).
