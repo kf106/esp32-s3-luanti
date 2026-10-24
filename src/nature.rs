@@ -51,6 +51,8 @@ pub enum Job {
     Crop,
     /// Try to grow blueberries again on a picked bush (plants.rs).
     Berries,
+    /// See whether a flame still has something to burn (fire.rs).
+    Flame,
 }
 
 /// Node timers (minetest_game's are per node; here they are kept in one

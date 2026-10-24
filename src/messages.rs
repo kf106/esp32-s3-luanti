@@ -53,6 +53,7 @@ pub const TOCLIENT_NODEDEF: u16 = 0x3a;
 pub const TOCLIENT_ANNOUNCE_MEDIA: u16 = 0x3c;
 pub const TOCLIENT_ITEMDEF: u16 = 0x3d;
 pub const TOCLIENT_PLAY_SOUND: u16 = 0x3f;
+pub const TOCLIENT_STOP_SOUND: u16 = 0x40;
 pub const TOCLIENT_FADE_SOUND: u16 = 0x55;
 pub const TOCLIENT_PRIVILEGES: u16 = 0x41;
 pub const TOCLIENT_INVENTORY_FORMSPEC: u16 = 0x42;
@@ -1131,15 +1132,32 @@ pub fn build_removenode(pos: [i16; 3]) -> Vec<u8> {
 /// Server::playSound sends it. `id` -1 makes it a one-off ("ephemeral")
 /// sound; a positive id can be faded out later.
 pub fn build_play_sound(id: i32, name: &str, gain: f32, pos_bs: [f32; 3]) -> Vec<u8> {
+    play_sound(id, name, gain, pos_bs, false)
+}
+
+/// TOCLIENT_PLAY_SOUND for a sound that plays over and over until
+/// stopped (the fire's crackle).
+pub fn build_play_sound_looped(id: i32, name: &str, gain: f32, pos_bs: [f32; 3]) -> Vec<u8> {
+    play_sound(id, name, gain, pos_bs, true)
+}
+
+fn play_sound(id: i32, name: &str, gain: f32, pos_bs: [f32; 3], looped: bool) -> Vec<u8> {
     let mut w = Writer::new(TOCLIENT_PLAY_SOUND);
     w.i32(id).string16(name).f32(gain).u8(1); // positional
     w.f32(pos_bs[0]).f32(pos_bs[1]).f32(pos_bs[2]);
     w.u16(0) // object
-        .u8(0) // loop
+        .u8(looped as u8) // loop
         .f32(0.0) // fade
         .f32(1.0) // pitch
         .u8((id < 0) as u8) // ephemeral
         .f32(0.0); // start time
+    w.into_inner()
+}
+
+/// TOCLIENT_STOP_SOUND: stop a sound at once (minetest.sound_stop).
+pub fn build_stop_sound(id: i32) -> Vec<u8> {
+    let mut w = Writer::new(TOCLIENT_STOP_SOUND);
+    w.i32(id);
     w.into_inner()
 }
 

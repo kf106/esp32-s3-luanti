@@ -184,3 +184,7 @@ Yuval, https://freesound.org/people/Yuval/sounds/197023/
 Halion, https://freesound.org/people/Halion/sounds/17785/
 
 - env_sounds_lava.*.ogg
+
+default_item_smoke.ogg is from Minetest Game's default mod, unchanged. From
+its README.md: Ferk (CC0 1.0), based on a sound by
+http://opengameart.org/users/bart

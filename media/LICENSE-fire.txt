@@ -1,0 +1,35 @@
+Fire: textures and sounds from Minetest Game's fire mod
+(https://github.com/luanti-org/minetest_game, mods/fire), under their
+original names. The fire_fire.*.ogg sounds were re-encoded at Vorbis
+quality 3 (from about 110 kbit/s to 80) to save flash; the rest are
+unchanged:
+
+  fire_basic_flame.png, fire_basic_flame_animated.png, fire_flint_steel.png,
+  fire_fire.1.ogg, fire_fire.2.ogg, fire_fire.3.ogg,
+  fire_extinguish_flame.1.ogg, fire_extinguish_flame.2.ogg,
+  fire_extinguish_flame.3.ogg, fire_flint_and_steel.ogg
+
+Credits, from that mod's README.md:
+
+Everything not listed below:
+Copyright (C) 2012 Perttu Ahola (celeron55) <celeron55@gmail.com> (CC BY-SA 3.0)
+
+Muadtralk (CC BY-SA 3.0):
+
+- fire_basic_flame_animated.png
+
+Gambit (CC BY-SA 3.0):
+
+- fire_flint_steel.png
+
+Dynamicell (CC BY 3.0), http://www.freesound.org/people/Dynamicell/sounds/17548/
+
+- fire_fire.*.ogg
+
+Benboncan (CC BY 3.0), https://www.freesound.org/people/Benboncan/sounds/66457/
+
+- fire_flint_and_steel.ogg
+
+Licences: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0),
+http://creativecommons.org/licenses/by-sa/3.0/, and Attribution 3.0
+Unported (CC BY 3.0), http://creativecommons.org/licenses/by/3.0/

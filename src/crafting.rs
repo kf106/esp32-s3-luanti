@@ -151,6 +151,8 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { width: 1, pattern: &[I(ITEM_GOLD_INGOT)], output: ITEM_SKELETON_KEY, count: 1 },
     // screwdriver: a steel ingot on a stick.
     Recipe { width: 1, pattern: &[I(ITEM_STEEL_INGOT), G("stick")], output: TOOL_SCREWDRIVER, count: 1 },
+    // Flint beside a steel ingot: flint and steel (fire mod).
+    Recipe { width: 2, pattern: &[I(ITEM_FLINT), I(ITEM_STEEL_INGOT)], output: TOOL_FLINT_AND_STEEL, count: 1 },
     // binoculars: obsidian glass lenses either side of three bronze ingots.
     Recipe {
         width: 3,

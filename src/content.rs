@@ -16,6 +16,7 @@ use crate::sha1::sha1;
 use crate::beds;
 use crate::bones;
 use crate::doors;
+use crate::fire;
 use crate::dungeons;
 use crate::colours;
 use crate::farming;
@@ -138,6 +139,10 @@ pub enum Kind {
     /// is walked through, built into and not pointed at, and veils the
     /// view of a player inside it.
     Mist,
+    /// A flame (the fire mod's): drawn as crossed and boxed pictures
+    /// (firelike), walked through, built over, washed out by water, and
+    /// burning whoever stands in it. It glows, but lights nothing round it.
+    Fire,
     /// A bookshelf: a cube turned to face whoever placed it, opened with a
     /// right-click, holding books.
     Shelf,
@@ -403,6 +408,8 @@ pub const TOOL_AXE_DIAMOND: u16 = 0x2019;
 pub const TOOL_SWORD_DIAMOND: u16 = 0x201A;
 /// The screwdriver mod's screwdriver.
 pub const TOOL_SCREWDRIVER: u16 = 0x201B;
+/// The fire mod's flint and steel.
+pub const TOOL_FLINT_AND_STEEL: u16 = 0x201C;
 /// Light given off by a torch (minetest_game: LIGHT_MAX - 1 = 13; 12 is
 /// slightly gentler and keeps the lit area, and the work, smaller).
 pub const TORCH_LIGHT: u8 = 12;
@@ -3077,6 +3084,28 @@ pub const NODES: &[Node] = &[
         drop_count: 1,
         kind: Kind::Solid,
     },
+    // The fire mod's flames (fire.rs; pictures CC BY-SA 3.0, see
+    // media/LICENSE-fire.txt). They drop nothing.
+    Node {
+        id: fire::BASIC_FLAME,
+        name: "esp:basic_flame",
+        description: "Fire",
+        tiles: [fire::FLAME_TILE; 6],
+        groups: &[("igniter", 2), ("dig_immediate", 3), ("fire", 1), ("not_in_creative_inventory", 1)],
+        drop: 0,
+        drop_count: 0,
+        kind: Kind::Fire,
+    },
+    Node {
+        id: fire::PERMANENT_FLAME,
+        name: "esp:permanent_flame",
+        description: "Permanent Fire",
+        tiles: [fire::FLAME_TILE; 6],
+        groups: &[("igniter", 2), ("dig_immediate", 3), ("fire", 1)],
+        drop: 0,
+        drop_count: 0,
+        kind: Kind::Fire,
+    },
 ];
 
 /// minetest_game's savanna grass groups.
@@ -4047,6 +4076,17 @@ pub const TOOLS: &[Tool] = &[
         caps: HAND,
         groups: &[("tool", 1)],
     },
+    // The fire mod's flint and steel (fire.rs; its picture CC BY-SA 3.0,
+    // see media/LICENSE-fire.txt). It digs as the hand does.
+    Tool {
+        id: TOOL_FLINT_AND_STEEL,
+        name: "esp:flint_and_steel",
+        description: "Flint and Steel",
+        image: "fire_flint_steel.png",
+        wield_image: "fire_flint_steel.png",
+        caps: HAND,
+        groups: &[],
+    },
 ];
 
 /// The sound a tool makes when it wears out (minetest_game's sound.breaks).
@@ -4163,7 +4203,7 @@ pub fn light_source(id: u16) -> u8 {
 
 /// Whether light passes through a node (fading by one level per node).
 pub fn passes_light(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign | Kind::Mist))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Leaves | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Chest | Kind::ChestOpen | Kind::Glass | Kind::Ladder | Kind::Shaped | Kind::Door | Kind::DoorHidden | Kind::Trapdoor | Kind::Liquid | Kind::Plant | Kind::Seed | Kind::Bed | Kind::BedTop | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Wall | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire))
 }
 
 /// Whether a node is a liquid (water or lava).
@@ -4179,7 +4219,13 @@ pub fn is_lava(id: u16) -> bool {
 /// a burning furnace (which also light their surroundings), and lava
 /// (which doesn't, as far as the server is concerned).
 pub fn glow(id: u16) -> u8 {
-    if is_lava(id) { LAVA_GLOW } else { light_source(id) }
+    if is_lava(id) {
+        LAVA_GLOW
+    } else if fire::is_flame(id) {
+        fire::FLAME_GLOW
+    } else {
+        light_source(id)
+    }
 }
 
 /// Breath a node takes from a player whose head is in it, every 2 s once
@@ -4190,25 +4236,31 @@ pub fn drowning(id: u16) -> u16 {
 
 /// Damage a node does each second to a player in it.
 pub fn damage_per_second(id: u16) -> u16 {
-    if is_lava(id) { LAVA_DAMAGE } else { 0 }
+    if is_lava(id) {
+        LAVA_DAMAGE
+    } else if fire::is_flame(id) {
+        fire::FLAME_DAMAGE
+    } else {
+        0
+    }
 }
 
 /// Whether water washes a node away (minetest_game's floodable): torches
 /// and snow.
 pub fn floodable(id: u16) -> bool {
-    is_torch(id) || id == CONTENT_SNOW_LAYER || id == colours::WATERLILY
+    is_torch(id) || id == CONTENT_SNOW_LAYER || id == colours::WATERLILY || fire::is_flame(id)
 }
 
 /// Whether placing a node can replace this one (builtin's buildable_to):
 /// air, an apple mark, or water.
 pub fn buildable_to(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid | Kind::Plant | Kind::SnowLayer | Kind::Lily | Kind::Mist))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Mark | Kind::Liquid | Kind::Plant | Kind::SnowLayer | Kind::Lily | Kind::Mist | Kind::Fire))
 }
 
 /// Whether direct sunlight carries on down through a node at full
 /// strength. Leaves let light through but cast shade.
 pub fn passes_sunlight(id: u16) -> bool {
-    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist))
+    id == crate::world::CONTENT_AIR || def(id).is_some_and(|n| matches!(n.kind, Kind::Torch | Kind::Sapling | Kind::Vessel | Kind::Apple | Kind::Mark | Kind::Glass | Kind::Ladder | Kind::Door | Kind::DoorHidden | Kind::Plant | Kind::Seed | Kind::Fence | Kind::Gate | Kind::Stalk | Kind::Stem | Kind::Lamp | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire))
 }
 
 /// Whether players stand on a node (and so whether it can hold a torch).
@@ -4939,6 +4991,20 @@ const EMBEDDED_MEDIA: &[(&str, &[u8])] = &[
     ("farming_desert_sand_soil.png", include_bytes!("../media/farming_desert_sand_soil.png")),
     ("farming_desert_sand_soil_wet.png", include_bytes!("../media/farming_desert_sand_soil_wet.png")),
     ("farming_desert_sand_soil_wet_side.png", include_bytes!("../media/farming_desert_sand_soil_wet_side.png")),
+    // The fire mod's flames, flint and steel and sounds, and default's
+    // smoke (CC BY-SA 3.0, CC BY 3.0 and CC0, see media/LICENSE-fire.txt
+    // and media/LICENSE-sounds.txt).
+    ("fire_basic_flame.png", include_bytes!("../media/fire_basic_flame.png")),
+    ("fire_basic_flame_animated.png", include_bytes!("../media/fire_basic_flame_animated.png")),
+    ("fire_flint_steel.png", include_bytes!("../media/fire_flint_steel.png")),
+    ("fire_fire.1.ogg", include_bytes!("../media/fire_fire.1.ogg")),
+    ("fire_fire.2.ogg", include_bytes!("../media/fire_fire.2.ogg")),
+    ("fire_fire.3.ogg", include_bytes!("../media/fire_fire.3.ogg")),
+    ("fire_extinguish_flame.1.ogg", include_bytes!("../media/fire_extinguish_flame.1.ogg")),
+    ("fire_extinguish_flame.2.ogg", include_bytes!("../media/fire_extinguish_flame.2.ogg")),
+    ("fire_extinguish_flame.3.ogg", include_bytes!("../media/fire_extinguish_flame.3.ogg")),
+    ("fire_flint_and_steel.ogg", include_bytes!("../media/fire_flint_and_steel.ogg")),
+    ("default_item_smoke.ogg", include_bytes!("../media/default_item_smoke.ogg")),
     ("env_sounds_water.1.ogg", include_bytes!("../media/env_sounds_water.1.ogg")),
     ("env_sounds_water.2.ogg", include_bytes!("../media/env_sounds_water.2.ogg")),
     ("env_sounds_water.3.ogg", include_bytes!("../media/env_sounds_water.3.ogg")),
@@ -5179,6 +5245,8 @@ fn sounds_of(id: u16) -> Sounds {
             ..stone
         },
         id if fences::burn_time(id) > 0.0 || fences::is_gate(id) => wood,
+        // Flames: none, but the group dig sound.
+        id if fire::is_flame(id) => Sounds { footstep: ("", 1.0), dig: GROUP_DIG, dug: ("", 1.0), place: ("", 1.0) },
         // stone, sandstone, ores
         _ => stone,
     }
@@ -5313,6 +5381,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 // A pane's item is its picture (xpanes' inventory_image).
                 Kind::Pane => n.tiles[4],
                 Kind::Sign => sign_image(n.id),
+                Kind::Fire => fire::FLAME_IMAGE,
                 _ => "",
             },
             wield_image: match n.kind {
@@ -5331,6 +5400,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
                 Kind::Lily => "flowers_waterlily.png",
                 Kind::Pane => n.tiles[4],
                 Kind::Sign => sign_image(n.id),
+                Kind::Fire => fire::FLAME_IMAGE,
                 _ => "",
             },
             wield_scale: [1.0, 1.0, 1.0],
@@ -5384,7 +5454,7 @@ pub fn itemdef_bytes() -> Vec<u8> {
             stack_max: stack_max(t.id),
             groups: t.groups,
             // Hoes are used (left-click) on dirt.
-            usable: farming::hoe_uses(t.id).is_some() || t.id == TOOL_SCREWDRIVER,
+            usable: farming::hoe_uses(t.id).is_some() || t.id == TOOL_SCREWDRIVER || t.id == TOOL_FLINT_AND_STEEL,
             liquids_pointable: false,
         });
     }
@@ -5411,6 +5481,7 @@ const POINTABLE: u8 = 1;
 const ALPHAMODE_OPAQUE: u8 = 2;
 const ALPHAMODE_CLIP: u8 = 1;
 const NDT_MESH: u8 = 16;
+const NDT_FIRELIKE: u8 = 14;
 const NDT_PLANTLIKE_ROOTED: u8 = 17;
 const NDT_GLASSLIKE: u8 = 4;
 const CPT2_LEVELED: u8 = 5;
@@ -5458,6 +5529,7 @@ fn animation_length(tile: &str) -> Option<f32> {
         WATER_FLOWING_TILE => Some(0.5),
         LAVA_SOURCE_TILE => Some(3.0),
         LAVA_FLOWING_TILE => Some(3.3),
+        fire::FLAME_TILE => Some(1.0),
         _ => None,
     }
 }
@@ -5677,7 +5749,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         w.u8(CPT_LIGHT).u8(if wheat { CPT2_MESHOPTIONS } else { 0 });
     } else if seed {
         w.u8(CPT_LIGHT).u8(CPT2_WALLMOUNTED);
-    } else if fence || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Post | Kind::Mist) {
+    } else if fence || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Post | Kind::Mist | Kind::Fire) {
         w.u8(CPT_LIGHT).u8(0);
     } else if n.kind == Kind::Lily || flat_pane {
         // Turned any way (facedir), as minetest_game places it.
@@ -5716,6 +5788,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         Kind::Stalk | Kind::Stem => (NDT_PLANTLIKE, ""),
         Kind::Rooted => (NDT_PLANTLIKE_ROOTED, ""),
         Kind::Lamp | Kind::Mist => (NDT_GLASSLIKE, ""),
+        Kind::Fire => (NDT_FIRELIKE, ""),
         Kind::SnowLayer => (NDT_NODEBOX, ""),
         Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign => (NDT_NODEBOX, ""),
         Kind::Liquid if flowing => (NDT_FLOWINGLIQUID, ""),
@@ -5817,7 +5890,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
 
     // lighting
     let doorway = door.is_some() || hidden;
-    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist)) as u8) // light_propagates
+    w.u8((torch || leaves || sapling || mark || chest || glass || ladder || shaped.is_some() || doorway || trapdoor.is_some() || liquid || plant || seed || bed || fence || gate.is_some() || stalk || matches!(n.kind, Kind::Lamp | Kind::SnowLayer | Kind::Lily | Kind::Pane | Kind::Post | Kind::Sign | Kind::Mist | Kind::Fire)) as u8) // light_propagates
         .u8(passes_sunlight(n.id) as u8) // sunlight_propagates
         .u8(glow(n.id));
 
@@ -5831,7 +5904,7 @@ fn serialize_node(n: &Node) -> Vec<u8> {
         .u8(if mark || hidden || liquid || n.kind == Kind::Mist { 0 } else { POINTABLE })
         .u8(!(mark || hidden || liquid || n.kind == Kind::Mist) as u8) // diggable
         .u8(ladder as u8) // climbable
-        .u8((mark || liquid || plant || n.kind == Kind::Mist) as u8) // buildable_to
+        .u8((mark || liquid || plant || matches!(n.kind, Kind::Mist | Kind::Fire)) as u8) // buildable_to
         .u8(matches!(n.kind, Kind::Furnace | Kind::Chest | Kind::ChestOpen | Kind::Door | Kind::Trapdoor | Kind::Bed | Kind::Gate | Kind::Bones | Kind::Shelf) as u8) // rightclickable
         .u32(damage_per_second(n.id) as u32); // damage_per_second
 

@@ -47,6 +47,8 @@ mod dungeons;
 mod env_sounds;
 #[path = "../../src/falling.rs"]
 mod falling;
+#[path = "../../src/fire.rs"]
+mod fire;
 #[path = "../../src/farming.rs"]
 mod farming;
 #[path = "../../src/fasthash.rs"]
@@ -211,6 +213,7 @@ fn run(o: &Options) -> std::io::Result<()> {
         clock: clock::Clock::open(d("world/env_meta.txt")),
         door_owners: doors::Owners::open(d("world/doors.txt")),
         bed_spawns: beds::Spawns::open(d("world/beds_spawns")),
+        fire: fire::Settings::open(d("world/settings.txt")),
         media: content::Media::load(&d("media")),
         status: status::Status::new(address.clone()),
         max_players: o.max_players,

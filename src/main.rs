@@ -14,6 +14,7 @@ mod doors;
 mod env_sounds;
 mod dungeons;
 mod falling;
+mod fire;
 mod farming;
 mod fences;
 mod fasthash;
@@ -237,6 +238,7 @@ fn main() -> anyhow::Result<()> {
     let clock = clock::Clock::open(format!("{MOUNT}/world/env_meta.txt"));
     let door_owners = doors::Owners::open(format!("{MOUNT}/world/doors.txt"));
     let bed_spawns = beds::Spawns::open(format!("{MOUNT}/world/beds_spawns"));
+    let fire = fire::Settings::open(format!("{MOUNT}/world/settings.txt"));
     let media = content::Media::load(&format!("{MOUNT}/media"));
     let socket = UdpSocket::bind(("0.0.0.0", PORT))?;
     let sent = std::sync::Arc::as_ptr(&status) as usize;
@@ -245,7 +247,7 @@ fn main() -> anyhow::Result<()> {
     if motd.is_some() {
         info!("Welcome message from {MOUNT}/motd.txt");
     }
-    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, furnaces, chests, items, clock, door_owners, bed_spawns, media, status, max_players: server::MAX_PLAYERS });
+    let mut server = server::Server::new(server::Setup { socket, motd, auth, world, inventories, players, furnaces, chests, items, clock, door_owners, bed_spawns, fire, media, status, max_players: server::MAX_PLAYERS });
     // Guard against the compiler problem that once lost an argument on the
     // way into Server::new (see server::Setup).
     if server.status_data_addr() != sent {

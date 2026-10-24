@@ -21,6 +21,7 @@ use crate::srp;
 use crate::craftguide;
 use crate::weather;
 use crate::env_sounds;
+use crate::fire;
 use crate::beds;
 use crate::binoculars;
 use crate::keys;
@@ -320,6 +321,8 @@ struct Peer {
     /// last allowed the minimap (binoculars.rs).
     zoom_fov: f32,
     minimap: Option<bool>,
+    /// The fire's crackle playing to this player, if any.
+    fire_sound: Option<i32>,
     /// The inventory window's Recipes tab: what it shows.
     guide: craftguide::Guide,
     /// The bed they lie in, if any.
@@ -384,6 +387,7 @@ impl Peer {
             wield: 0,
             zoom_fov: 0.0,
             minimap: None,
+            fire_sound: None,
             guide: craftguide::Guide::default(),
             in_bed: None,
             quiet_reported: false,
@@ -512,6 +516,14 @@ pub struct Server {
     /// Cactus and papyrus players planted, which grow (plants.rs).
     climbers: BTreeSet<NodePos>,
     climbers_checked: Instant,
+    /// Fire: the setting, every flame there is, and when the fire mod's
+    /// ABMs, crackle and burning of dropped items last ran.
+    fire: fire::Settings,
+    flames: BTreeSet<NodePos>,
+    fire_ignited: Instant,
+    fire_burned: Instant,
+    fire_sounded: Instant,
+    items_burned: Instant,
     /// When the liquids last flowed.
     liquids_flowed: Instant,
     /// When lava touching water was last looked at.
@@ -582,6 +594,8 @@ pub struct Setup {
     pub clock: Clock,
     pub door_owners: doors::Owners,
     pub bed_spawns: beds::Spawns,
+    /// Whether fire spreads (world/settings.txt).
+    pub fire: fire::Settings,
     pub media: Media,
     pub status: SharedStatus,
     /// How many players may be in the game at once (MAX_PLAYERS on the
@@ -766,7 +780,7 @@ impl Server {
     /// convention passes in registers, and the seventh (the status) arrived
     /// as garbage on the ESP32.
     pub fn new(setup: Setup) -> Self {
-        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, bed_spawns, media, status, max_players } = setup;
+        let Setup { socket, motd, auth, world, inventories, players, furnaces, chests, mut items, clock, door_owners, bed_spawns, fire, media, status, max_players } = setup;
         // Items dropped before a restart: out of any block built over them.
         items.settle(&|x, y, z| content::walkable(world.node((x, y, z))));
         let itemdef = build_itemdef(&content::itemdef_bytes());
@@ -801,6 +815,16 @@ impl Server {
         }
         for pos in world.changed_nodes(content::is_mark) {
             timers.start(pos, Job::Regrow, nature::grow_delay(&mut rng));
+        }
+        // Flames go on burning, and look for something to burn again.
+        let flames: BTreeSet<NodePos> = world.changed_nodes(fire::is_flame).into_iter().collect();
+        for &pos in &flames {
+            if world.node(pos) == fire::BASIC_FLAME {
+                timers.start(pos, Job::Flame, fire::flame_timer(&mut rng));
+            }
+        }
+        if !flames.is_empty() {
+            info!("Fire: {} flames burning", flames.len());
         }
         // Seeds and crops carry on growing; soil is looked after again.
         let crops = world.changed_nodes(farming::is_growing);
@@ -870,6 +894,12 @@ impl Server {
             fields_checked: Instant::now(),
             climbers,
             climbers_checked: Instant::now(),
+            fire,
+            flames,
+            fire_ignited: Instant::now(),
+            fire_burned: Instant::now(),
+            fire_sounded: Instant::now(),
+            items_burned: Instant::now(),
             liquids_flowed: Instant::now(),
             lava_cooled: Instant::now(),
             moss_checked: Instant::now(),
@@ -1942,6 +1972,14 @@ impl Server {
                         return;
                     }
                     (Some(content::ITEM_SKELETON_KEY), _) => return,
+                    (Some(content::TOOL_FLINT_AND_STEEL), pointed) => {
+                        let target = match pointed {
+                            Pointed::Node { under, above } if near(*under) => Some((*under, *above)),
+                            _ => None,
+                        };
+                        self.strike(from, slot, target, body);
+                        return;
+                    }
                     (Some(content::ITEM_BINOCULARS), _) => {
                         self.update_zoom(from);
                         return;
@@ -2115,6 +2153,9 @@ impl Server {
                     self.world.set_node(node_pos(under), world::CONTENT_AIR, 0);
                     self.broadcast_node(under, &build_removenode(under));
                 }
+                // A coal block's permanent flame goes with it (fire's
+                // after_destruct).
+                self.put_out_above(node_pos(under), current);
                 // Items resting on the dug node fall.
                 self.wake_items(node_pos(under));
                 // Panes beside it take their new shape.
@@ -2774,6 +2815,14 @@ impl Server {
                     self.play_sound_near(-1, "default_cool_lava", 0.07, at.map(|v| v * 10.0), 16.0);
                 }
             }
+            // A flame washed out goes with a hiss (on_flood), unless lava
+            // took it.
+            if fire::is_flame(c.was) {
+                self.flames.remove(&c.pos);
+                if !content::is_lava(c.id) {
+                    self.play_sound_near(-1, "fire_extinguish_flame", 0.15, p16.map(|v| v as f32 * 10.0), 16.0);
+                }
+            }
             // Items lying where it went may now float off or fall.
             self.wake_items(c.pos);
         }
@@ -2963,6 +3012,313 @@ impl Server {
             self.world.set_node(pos, to, 0);
             let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
             self.broadcast_node(p16, &build_addnode(p16, to, 0));
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Fire (fire.rs)
+    // -------------------------------------------------------------------
+
+    /// Light a flame (basic or permanent) at `pos`, `step` from where its
+    /// fire started, if there is air there and, for a basic flame, fewer
+    /// than fire::MAX_FLAMES burning. Returns whether it did.
+    fn light_flame(&mut self, pos: NodePos, flame: u16, step: u8) -> bool {
+        if self.world.node(pos) != world::CONTENT_AIR {
+            return false;
+        }
+        if flame == fire::BASIC_FLAME {
+            let world = &self.world;
+            self.flames.retain(|&p| fire::is_flame(world.node(p)));
+            let basic = self.flames.iter().filter(|&&p| world.node(p) == fire::BASIC_FLAME).count();
+            if basic >= fire::MAX_FLAMES {
+                debug!("Fire: {basic} flames burning, the most there may be; none at {pos:?}");
+                return false;
+            }
+        }
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.world.set_node(pos, flame, step);
+        self.broadcast_node(p16, &build_addnode(p16, flame, step));
+        self.flames.insert(pos);
+        if flame == fire::BASIC_FLAME {
+            self.timers.start(pos, Job::Flame, fire::flame_timer(&mut self.rng));
+        }
+        true
+    }
+
+    /// Put a flame out: it simply goes.
+    fn put_out(&mut self, pos: NodePos) {
+        self.flames.remove(&pos);
+        if !fire::is_flame(self.world.node(pos)) {
+            return;
+        }
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        self.world.set_node(pos, world::CONTENT_AIR, 0);
+        self.broadcast_node(p16, &build_removenode(p16));
+    }
+
+    /// A coal block gone from `pos`: the permanent flame on it goes too.
+    fn put_out_above(&mut self, pos: NodePos, was: u16) {
+        let above = (pos.0, pos.1 + 1, pos.2);
+        if was == content::CONTENT_COAL_BLOCK && self.world.node(above) == fire::PERMANENT_FLAME {
+            self.put_out(above);
+        }
+    }
+
+    /// A basic flame's timer: with nothing flammable beside it, it goes
+    /// out; otherwise it looks again later.
+    fn check_flame(&mut self, pos: NodePos) {
+        if self.world.node(pos) != fire::BASIC_FLAME {
+            self.flames.remove(&pos);
+            return;
+        }
+        if self.flammable_near(pos).is_some() {
+            self.timers.start(pos, Job::Flame, fire::flame_timer(&mut self.rng));
+        } else {
+            self.put_out(pos);
+        }
+    }
+
+    /// The first flammable node beside `pos` (find_node_near, radius 1).
+    fn flammable_near(&self, pos: NodePos) -> Option<NodePos> {
+        nature::AROUND
+            .iter()
+            .map(|d| (pos.0 + d.0, pos.1 + d.1, pos.2 + d.2))
+            .find(|&p| fire::flammable(self.world.node(p)) > 0)
+    }
+
+    /// Whether a node is in a block near a player (within 4 map blocks:
+    /// Luanti's active_block_range), where ABMs run.
+    fn active_test(&self) -> impl Fn(NodePos) -> bool {
+        let players: Vec<BlockPos> = self
+            .peers
+            .values()
+            .filter(|p| p.ready)
+            .map(|p| world::block_of_node(((p.pos_bs[0] / 10.0).round() as i32, (p.pos_bs[1] / 10.0).round() as i32, (p.pos_bs[2] / 10.0).round() as i32)))
+            .collect();
+        move |pos| {
+            let b = world::block_of_node(pos);
+            players.iter().any(|c| (b.0 - c.0).abs() <= 4 && (b.1 - c.1).abs() <= 4 && (b.2 - c.2).abs() <= 4)
+        }
+    }
+
+    /// The "Ignite flame" ABM: a flammable node beside a flame or lava
+    /// catches fire, one time in `chance`, in the air beside it; the new
+    /// flame is a step further from where the fire began than the flame
+    /// that lit it (lava starts afresh), and at MAX_STEPS it lights no
+    /// more. Not while fire is off.
+    fn ignite(&mut self, chance: u32) {
+        if !self.fire.enabled() {
+            return;
+        }
+        let active = self.active_test();
+        let world = &self.world;
+        let mut igniters: Vec<NodePos> = self.flames.iter().copied().filter(|&p| active(p)).collect();
+        igniters.extend(world.changed_nodes(content::is_lava).into_iter().filter(|&p| active(p)));
+        // Each flammable node beside an igniter, with the igniter nearest
+        // the start of its fire. A new flame is as many steps further on
+        // as it is nodes from the igniter (the air it takes may be two
+        // nodes off), so it is never further than its step from where the
+        // fire began; lava starts a fire afresh.
+        let mut burning: std::collections::BTreeMap<NodePos, (NodePos, Option<u8>)> = std::collections::BTreeMap::new();
+        for q in igniters {
+            let id = world.node(q);
+            if fire::igniter(id) == 0 {
+                continue;
+            }
+            let base = (!content::is_lava(id)).then(|| world.param2(q));
+            for d in nature::AROUND {
+                let p = (q.0 + d.0, q.1 + d.1, q.2 + d.2);
+                if fire::flammable(world.node(p)) > 0 {
+                    let e = burning.entry(p).or_insert((q, base));
+                    if base.map_or(0, |b| b as u16 + 1) < e.1.map_or(0, |b| b as u16 + 1) {
+                        *e = (q, base);
+                    }
+                }
+            }
+        }
+        for (p, (q, base)) in burning {
+            if base.is_some_and(|b| b >= fire::MAX_STEPS) || !self.rng.one_in(chance) {
+                continue;
+            }
+            let air = nature::AROUND
+                .iter()
+                .map(|d| (p.0 + d.0, p.1 + d.1, p.2 + d.2))
+                .find(|&a| self.world.node(a) == world::CONTENT_AIR);
+            let Some(a) = air else {
+                continue;
+            };
+            let step = match base {
+                None => 0,
+                Some(b) => b as u16 + fire::distance(q, a) as u16,
+            };
+            if step <= fire::MAX_STEPS as u16 {
+                self.light_flame(a, fire::BASIC_FLAME, step as u8);
+            }
+        }
+    }
+
+    /// The "Remove flammable nodes" ABM: a basic flame burns away a
+    /// flammable node beside it, one time in `chance`. Not while fire is
+    /// off.
+    fn burn_flammables(&mut self, chance: u32) {
+        if !self.fire.enabled() {
+            return;
+        }
+        let active = self.active_test();
+        let flames: Vec<NodePos> =
+            self.flames.iter().copied().filter(|&p| active(p) && self.world.node(p) == fire::BASIC_FLAME).collect();
+        for pos in flames {
+            if !self.rng.one_in(chance) {
+                continue;
+            }
+            if let Some(p) = self.flammable_near(pos) {
+                self.burn_away(p);
+            }
+        }
+    }
+
+    /// A flammable node burnt away (minetest.remove_node, and
+    /// check_for_falling): as if dug, but with no drops, and what was in
+    /// it (a bookshelf's books) is lost. A bed someone lies in doesn't
+    /// burn.
+    fn burn_away(&mut self, pos: NodePos) {
+        let id = self.world.node(pos);
+        let p16 = [pos.0 as i16, pos.1 as i16, pos.2 as i16];
+        if let Some((_, top)) = beds::bed_of(id) {
+            let param2 = self.world.param2(pos);
+            let other = beds::other_half(pos, param2, top);
+            let paired = beds::is_bed(self.world.node(other)) && self.world.param2(other) == param2;
+            let bottom = if top { paired.then_some(other) } else { Some(pos) };
+            if bottom.is_some_and(|b| self.bed_occupied(b)) {
+                return;
+            }
+            if paired {
+                let o16 = [other.0 as i16, other.1 as i16, other.2 as i16];
+                self.world.set_node(other, world::CONTENT_AIR, 0);
+                self.broadcast_node(o16, &build_removenode(o16));
+                self.bed_spawns.remove_at(other);
+            }
+            self.bed_spawns.remove_at(pos);
+        }
+        if doors::is_door(id) {
+            let top = (pos.0, pos.1 + 1, pos.2);
+            if self.world.node(top) == doors::HIDDEN {
+                let t16 = [top.0 as i16, top.1 as i16, top.2 as i16];
+                self.world.set_node(top, world::CONTENT_AIR, 0);
+                self.broadcast_node(t16, &build_removenode(t16));
+            }
+        }
+        if doors::is_door(id) || doors::is_trapdoor(id) {
+            self.door_owners.remove(pos);
+        }
+        if content::is_chest(id) || content::shelf_of(id).is_some() {
+            self.close_chest_windows(pos);
+            self.chests.remove(pos);
+        }
+        debug!("Fire burnt {} at {pos:?}", content::name_of(id));
+        let above = (pos.0, pos.1 + 1, pos.2);
+        let on_top = self.world.node(above);
+        self.world.set_node(pos, world::CONTENT_AIR, 0);
+        self.broadcast_node(p16, &build_removenode(p16));
+        self.wake_items(pos);
+        self.update_panes_near(pos);
+        self.check_falling(above);
+        self.drop_attached(p16);
+        // A generated plant that stood on it (see the digging).
+        if farming::is_attached_plant(on_top) && self.world.node(above) == world::CONTENT_AIR {
+            let a16 = [p16[0], p16[1] + 1, p16[2]];
+            self.broadcast_node(a16, &build_removenode(a16));
+        }
+        self.start_leaf_decay(pos, id);
+    }
+
+    /// Flint and steel (its on_use): pointed at something flammable with
+    /// air above, a flame there; at a coal block, a permanent flame on it.
+    /// It strikes, and wears, whatever it points at.
+    fn strike(&mut self, from: SocketAddr, slot: usize, target: Option<([i16; 3], [i16; 3])>, body: [f32; 3]) {
+        let at = target.map_or(body.map(|v| v * 10.0), |(_, above)| above.map(|v| v as f32 * 10.0));
+        self.play_sound_near(-1, "fire_flint_and_steel", 0.2, at, 8.0);
+        if let Some((under, above)) = target {
+            let (u, a) = ((under[0] as i32, under[1] as i32, under[2] as i32), (above[0] as i32, above[1] as i32, above[2] as i32));
+            let node = self.world.node(u);
+            let name = self.peers.get(&from).map(|p| p.display_name().to_string()).unwrap_or_default();
+            if node == content::CONTENT_COAL_BLOCK {
+                if self.light_flame((u.0, u.1 + 1, u.2), fire::PERMANENT_FLAME, 0) {
+                    info!("{name} lit a permanent flame at {:?}", (u.0, u.1 + 1, u.2));
+                }
+            } else if fire::flammable(node) >= 1 && self.light_flame(a, fire::BASIC_FLAME, 0) {
+                info!("{name} lit a fire at {a:?}");
+            }
+        }
+        let Some(peer) = self.peers.get_mut(&from) else {
+            return;
+        };
+        let Some(mut tool) = peer.inventory.get(slot) else {
+            return;
+        };
+        let intact = tool.add_wear(content::use_wear(fire::FLINT_USES, tool.wear));
+        peer.inventory.set(slot, intact.then_some(tool));
+        if !intact {
+            self.play_sound_near(-1, content::TOOL_BREAKS, 0.5, at, HEARING);
+        }
+        self.inventory_changed(from);
+    }
+
+    /// The fire's crackle (fire.update_player_sound): for each player, the
+    /// last one stops, and if flames burn within SOUND_RADIUS a new one
+    /// plays from the middle of them, louder the more there are.
+    fn crackle(&mut self) {
+        let world = &self.world;
+        self.flames.retain(|&p| fire::is_flame(world.node(p)));
+        let r = fire::SOUND_RADIUS;
+        let mut plays = Vec::new();
+        for (&addr, peer) in self.peers.iter_mut().filter(|(_, p)| p.ready) {
+            let me = peer.pos_bs.map(|v| (v / 10.0).round() as i32);
+            let near: Vec<&NodePos> = self
+                .flames
+                .iter()
+                .filter(|p| (p.0 - me[0]).abs() <= r && (p.1 - me[1]).abs() <= r && (p.2 - me[2]).abs() <= r)
+                .collect();
+            let stop = peer.fire_sound.take();
+            if near.is_empty() {
+                plays.push((addr, stop, None));
+                continue;
+            }
+            let lo = [near.iter().map(|p| p.0).min().unwrap(), near.iter().map(|p| p.1).min().unwrap(), near.iter().map(|p| p.2).min().unwrap()];
+            let hi = [near.iter().map(|p| p.0).max().unwrap(), near.iter().map(|p| p.1).max().unwrap(), near.iter().map(|p| p.2).max().unwrap()];
+            let mid = [0, 1, 2].map(|i| (lo[i] + hi[i]) as f32 * 5.0);
+            let id = self.next_sound_id;
+            self.next_sound_id = if id == i32::MAX { 1 } else { id + 1 };
+            peer.fire_sound = Some(id);
+            plays.push((addr, stop, Some((id, fire::sound_gain(near.len()), mid))));
+        }
+        for (addr, stop, play) in plays {
+            if let Some(id) = stop {
+                self.send_command(addr, 0, &build_stop_sound(id));
+            }
+            if let Some((id, gain, mid)) = play {
+                self.send_command(addr, 0, &build_play_sound_looped(id, "fire_fire", gain, mid));
+            }
+        }
+    }
+
+    /// Dropped items that can burn, burning up in lava, or now and then in
+    /// a flame, with a puff of smoke (default's item_entity).
+    fn burn_items(&mut self) {
+        let world = &self.world;
+        let mut burnt = Vec::new();
+        for d in self.items.iter() {
+            let node = world.node((d.pos[0].round() as i32, d.pos[1].round() as i32, d.pos[2].round() as i32));
+            if fire::igniter(node) > 0 && fire::item_burns(d.item, node, &mut self.rng) {
+                burnt.push((d.id, d.pos_bs()));
+            }
+        }
+        for (id, at) in burnt {
+            if let Some(d) = self.items.remove(id) {
+                debug!("{} {} burnt up", d.count, content::name_of(d.item));
+                self.send_to_players(&build_remove_add(&[id], &[]));
+                self.play_sound_near(-1, "default_item_smoke", 1.0, at, 8.0);
+            }
         }
     }
 
@@ -3207,6 +3563,7 @@ impl Server {
                 Job::Regrow => self.regrow_apple(pos),
                 Job::Crop => self.grow_crop(pos),
                 Job::Berries => self.grow_berries(pos),
+                Job::Flame => self.check_flame(pos),
             }
         }
     }
@@ -5444,6 +5801,25 @@ impl Server {
             for addr in all {
                 self.update_minimap(addr);
             }
+        }
+        // The fire mod's ABMs and crackle, and burning dropped items.
+        let (every, chance) = fire::ignite_every();
+        if now.duration_since(self.fire_ignited) >= every {
+            self.fire_ignited = now;
+            self.ignite(chance);
+        }
+        let (every, chance) = fire::burn_every();
+        if now.duration_since(self.fire_burned) >= every {
+            self.fire_burned = now;
+            self.burn_flammables(chance);
+        }
+        if now.duration_since(self.fire_sounded) >= fire::SOUND_EVERY {
+            self.fire_sounded = now;
+            self.crackle();
+        }
+        if now.duration_since(self.items_burned) >= fire::ITEMS_EVERY {
+            self.items_burned = now;
+            self.burn_items();
         }
         // env_sounds' cyclic_update.
         if now.duration_since(self.sounds_played) >= env_sounds::EVERY {

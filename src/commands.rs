@@ -35,6 +35,7 @@ const COMMANDS: &[Command] = &[
     cmd("ban", "[<name>]", "Ban the IP of a player or show the ban list", &["ban"]),
     cmd("clearinv", "[<name>]", "Clear the inventory of yourself or another player", &["give"]),
     cmd("clearpassword", "<name>", "Set empty password for a player", &["password"]),
+    cmd("fire", "[on | off]", "Show whether fire spreads, or turn it on or off", &[]),
     cmd("give", "<name> <ItemString> [<count>]", "Give item to player", &["give"]),
     cmd("giveme", "<ItemString> [<count>]", "Give item to yourself", &["give"]),
     cmd("grant", "<name> (<privilege> [, <privilege2> [<...>]] | all)", "Give privileges to player", &[]),
@@ -104,6 +105,7 @@ impl Server {
             "clearinv" => Some(self.cmd_clearinv(name, param)),
             "clearpassword" if param.is_empty() => Some("Name field required.".to_string()),
             "clearpassword" => Some(self.set_password(name, param, None)),
+            "fire" => Some(self.cmd_fire(name, param)),
             "give" => Some(match param.split_once(' ') {
                 Some((to, item)) => self.give(name, to, item.trim()),
                 None => "Name and ItemString required.".to_string(),
@@ -536,6 +538,29 @@ impl Server {
         info!("DM from {name} to {to}: {message}");
         self.tell(addr, &format!("DM from {name}: {message}"));
         "Message sent.".to_string()
+    }
+
+    /// /fire (ours: minetest_game has the enable_fire setting): whether
+    /// fire spreads, and how many flames burn; with "on" or "off" (and the
+    /// server privilege), turn spreading on or off, kept in the world.
+    fn cmd_fire(&mut self, caller: &str, param: &str) -> String {
+        let on = match param {
+            "" => {
+                let world = &self.world;
+                let burning = self.flames.iter().filter(|&&p| world.node(p) == fire::BASIC_FLAME).count();
+                let state = if self.fire.enabled() { "on" } else { "off" };
+                return format!("Fire spreading is {state}; {burning} flames burning (at most {}).", fire::MAX_FLAMES);
+            }
+            "on" => true,
+            "off" => false,
+            _ => return "Invalid parameters (see /help fire).".to_string(),
+        };
+        if !self.privs_of(caller).has("server") {
+            return "You don't have permission to run this command (missing privilege: server).".to_string();
+        }
+        self.fire.set_enabled(on);
+        info!("{caller} turns fire spreading {param}");
+        format!("Fire spreading is now {param}.")
     }
 
     fn cmd_time(&mut self, caller: &str, param: &str) -> String {

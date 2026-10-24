@@ -41,6 +41,7 @@ NETWORK = [
     ("keys", {}, [], False),
     ("craftguide", {}, [], False),
     ("weather", {}, [], False),
+    ("fire", {"LUANTI_FIRE_FAST": "1"}, [], False),
     ("door", {}, [], False),
     ("falling", {}, [], False),
     ("chest", {}, [], False),

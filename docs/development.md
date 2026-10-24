@@ -30,6 +30,7 @@ src/binoculars.rs  binoculars and the mapping kit
 src/craftguide.rs  the crafting guide (the inventory's Recipes tab)
 src/weather.rs     the weather: clouds and shadows
 src/env_sounds.rs  running water and lava sounds near players
+src/fire.rs        fire: flames, flint and steel, spreading
 src/farming.rs     farming: soil, seeds, crops, hoes
 src/beds.rs        beds, sleeping and respawn points
 src/fences.rs      fences, fence rails, fence gates and walls
